@@ -1,13 +1,12 @@
-/// Native GPU surface handles produced by CEF's `OnAcceleratedPaint` callback,
-/// plus the wgpu import infrastructure.
-///
-/// This module mirrors `wgpu-scry::native_frame` and `wgpu-graft::grafting`'s
-/// frame-import layer. The GPU import paths (D3D11 → D3D12, IOSurface → Metal,
-/// DMABUF → Vulkan) are structurally identical to those in wgpu-scry; only the
-/// source — how the handle is obtained — differs (CEF callback vs WGC capture /
-/// ScreenCaptureKit). Implementation bodies are stubs until CEF integration is
-/// active.
-use wgpu;
+//! Native GPU surface handles produced by CEF's `OnAcceleratedPaint` callback,
+//! plus the wgpu import infrastructure.
+//!
+//! This is the CEF-shaped analogue of `wgpu-scry::native_frame` and
+//! `wgpu-graft::grafting`: the producer gives us a borrowed native resource in
+//! the paint callback, `weld` duplicates or retains that resource immediately,
+//! and the host later imports the owned handle into its `wgpu::Device`.
+
+use dpi::PhysicalSize;
 
 // ── Backend detection ─────────────────────────────────────────────────────────
 
@@ -22,12 +21,24 @@ pub enum InteropBackend {
 
 impl InteropBackend {
     pub fn detect(device: &wgpu::Device) -> Self {
-        match device.get_info().backend {
-            wgpu::Backend::Vulkan => InteropBackend::Vulkan,
-            wgpu::Backend::Metal => InteropBackend::Metal,
-            wgpu::Backend::Dx12 => InteropBackend::Dx12,
-            _ => InteropBackend::Unknown,
+        unsafe {
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "windows"))]
+            if device.as_hal::<wgpu::wgc::api::Vulkan>().is_some() {
+                return InteropBackend::Vulkan;
+            }
+
+            #[cfg(target_vendor = "apple")]
+            if device.as_hal::<wgpu::wgc::api::Metal>().is_some() {
+                return InteropBackend::Metal;
+            }
+
+            #[cfg(target_os = "windows")]
+            if device.as_hal::<wgpu::wgc::api::Dx12>().is_some() {
+                return InteropBackend::Dx12;
+            }
         }
+
+        InteropBackend::Unknown
     }
 }
 
@@ -35,6 +46,7 @@ impl InteropBackend {
 
 /// A GPU surface handle emitted by CEF's `OnAcceleratedPaint` callback,
 /// ready to be imported into the host's wgpu pipeline.
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum NativeFrame {
     /// Windows: shared D3D11 texture handle from `CefAcceleratedPaintInfo`.
@@ -48,8 +60,8 @@ pub enum NativeFrame {
     /// macOS: `IOSurfaceRef` from `CefAcceleratedPaintInfo`.
     /// Imported as a Metal-backed wgpu texture.
     MetalTextureRef(MetalTextureRef),
-    /// Linux: DMABUF file descriptor (planned; CEF API still stabilising).
-    VulkanExternalImage(VulkanExternalImage),
+    /// Linux: native pixmap / DMABUF planes from accelerated OSR.
+    DmaBufImage(DmaBufImage),
     /// CPU bitmap from `OnPaint` (requires `feature = "cpu-paint-fallback"`).
     #[cfg(feature = "cpu-paint-fallback")]
     CpuBitmap(CpuBitmap),
@@ -60,7 +72,7 @@ pub enum NativeFrame {
 pub enum NativeFrameKind {
     Dx12SharedTexture,
     MetalTextureRef,
-    VulkanExternalImage,
+    DmaBufImage,
     #[cfg(feature = "cpu-paint-fallback")]
     CpuBitmap,
 }
@@ -70,51 +82,128 @@ impl NativeFrame {
         match self {
             NativeFrame::Dx12SharedTexture(_) => NativeFrameKind::Dx12SharedTexture,
             NativeFrame::MetalTextureRef(_) => NativeFrameKind::MetalTextureRef,
-            NativeFrame::VulkanExternalImage(_) => NativeFrameKind::VulkanExternalImage,
+            NativeFrame::DmaBufImage(_) => NativeFrameKind::DmaBufImage,
             #[cfg(feature = "cpu-paint-fallback")]
             NativeFrame::CpuBitmap(_) => NativeFrameKind::CpuBitmap,
+        }
+    }
+
+    pub fn size(&self) -> PhysicalSize<u32> {
+        match self {
+            NativeFrame::Dx12SharedTexture(frame) => frame.size,
+            NativeFrame::MetalTextureRef(frame) => frame.size,
+            NativeFrame::DmaBufImage(frame) => frame.size,
+            #[cfg(feature = "cpu-paint-fallback")]
+            NativeFrame::CpuBitmap(frame) => frame.size,
+        }
+    }
+
+    pub fn format(&self) -> wgpu::TextureFormat {
+        match self {
+            NativeFrame::Dx12SharedTexture(frame) => frame.format,
+            NativeFrame::MetalTextureRef(frame) => frame.format,
+            NativeFrame::DmaBufImage(frame) => frame.format,
+            #[cfg(feature = "cpu-paint-fallback")]
+            NativeFrame::CpuBitmap(frame) => frame.format,
+        }
+    }
+
+    pub fn generation(&self) -> u64 {
+        match self {
+            NativeFrame::Dx12SharedTexture(frame) => frame.generation,
+            NativeFrame::MetalTextureRef(frame) => frame.generation,
+            NativeFrame::DmaBufImage(frame) => frame.generation,
+            #[cfg(feature = "cpu-paint-fallback")]
+            NativeFrame::CpuBitmap(frame) => frame.generation,
         }
     }
 }
 
 // Windows
+#[derive(Clone, Copy, Debug)]
 pub struct Dx12SharedTexture {
-    /// Win32 HANDLE to a shared D3D11 texture.
-    /// Either the original (valid only during OnAcceleratedPaint) or a
-    /// DuplicateHandle'd copy held until import completes.
+    /// Owned duplicated Win32 `HANDLE` to CEF's shared D3D texture.
+    ///
+    /// CEF's callback-scoped handle is not stored directly. The Windows
+    /// producer must call `DuplicateHandle` before building this frame, and the
+    /// importer closes this owned duplicate after opening its D3D12 resource.
     pub handle: *mut std::os::raw::c_void,
-    pub width: u32,
-    pub height: u32,
+    pub size: PhysicalSize<u32>,
+    pub format: wgpu::TextureFormat,
+    pub generation: u64,
 }
 
 unsafe impl Send for Dx12SharedTexture {}
 
 // macOS
+#[derive(Clone, Copy, Debug)]
 pub struct MetalTextureRef {
-    /// Retained IOSurfaceRef. Released after wgpu import.
+    /// Retained `IOSurfaceRef`. Released after wgpu import once the Metal path
+    /// is wired.
     pub io_surface: *mut std::os::raw::c_void,
-    pub width: u32,
-    pub height: u32,
+    pub size: PhysicalSize<u32>,
+    pub format: wgpu::TextureFormat,
+    pub generation: u64,
 }
 
 unsafe impl Send for MetalTextureRef {}
 
+#[derive(Clone, Copy, Debug)]
+pub struct DmaBufPlane {
+    /// Owned DMABUF file descriptor. `weld` duplicates callback-scoped FDs
+    /// before storing them here; the Vulkan importer closes them after import.
+    pub fd: i32,
+    pub offset: u32,
+    pub stride: u32,
+}
+
 // Linux
-pub struct VulkanExternalImage {
-    /// DMABUF file descriptor. Closed after Vulkan import.
-    pub dmabuf_fd: std::os::unix::io::RawFd,
-    pub width: u32,
-    pub height: u32,
-    pub format: u32,   // DRM fourcc
-    pub modifier: u64, // DRM format modifier
+#[derive(Clone, Debug)]
+pub struct DmaBufImage {
+    pub planes: Vec<DmaBufPlane>,
+    pub size: PhysicalSize<u32>,
+    pub format: wgpu::TextureFormat,
+    pub drm_format: u32,
+    pub modifier: u64,
+    pub generation: u64,
 }
 
 #[cfg(feature = "cpu-paint-fallback")]
+#[derive(Clone, Debug)]
 pub struct CpuBitmap {
     /// BGRA8 pixel data (matches CEF's OnPaint buffer format).
     pub data: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
+    pub size: PhysicalSize<u32>,
+    pub format: wgpu::TextureFormat,
+    pub generation: u64,
+}
+
+/// Single-slot latest-frame mailbox used by the CEF render callback and host
+/// thread. New paints replace old paints; browser hosts normally only want the
+/// newest frame available at render time.
+#[derive(Debug, Default)]
+pub struct PendingFrameSlot {
+    frame: Option<NativeFrame>,
+    next_generation: u64,
+}
+
+impl PendingFrameSlot {
+    pub fn next_generation(&mut self) -> u64 {
+        self.next_generation += 1;
+        self.next_generation
+    }
+
+    pub fn store(&mut self, frame: NativeFrame) {
+        self.frame = Some(frame);
+    }
+
+    pub fn take(&mut self) -> Option<NativeFrame> {
+        self.frame.take()
+    }
+
+    pub fn has_frame(&self) -> bool {
+        self.frame.is_some()
+    }
 }
 
 // ── Host context ──────────────────────────────────────────────────────────────
@@ -130,7 +219,11 @@ pub struct HostWgpuContext {
 impl HostWgpuContext {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         let backend = InteropBackend::detect(&device);
-        HostWgpuContext { device, queue, backend }
+        HostWgpuContext {
+            device,
+            queue,
+            backend,
+        }
     }
 }
 
@@ -140,6 +233,8 @@ pub struct ImportedTexture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub size: wgpu::Extent3d,
+    pub format: wgpu::TextureFormat,
+    pub generation: u64,
 }
 
 // ── Importer ─────────────────────────────────────────────────────────────────
@@ -148,9 +243,18 @@ pub struct ImportedTexture {
 #[non_exhaustive]
 pub enum ImportError {
     #[error("backend mismatch: frame is {frame:?} but wgpu reports {wgpu:?}")]
-    BackendMismatch { frame: NativeFrameKind, wgpu: InteropBackend },
+    BackendMismatch {
+        frame: NativeFrameKind,
+        wgpu: InteropBackend,
+    },
+    #[error("invalid native frame: {0}")]
+    InvalidFrame(&'static str),
+    #[error("native import is not implemented for {0:?}")]
+    Unsupported(NativeFrameKind),
     #[error("D3D11 open-shared-resource failed: {0}")]
     D3d11OpenShared(String),
+    #[error("D3D12 open-shared-handle failed: {0}")]
+    D3d12OpenShared(String),
     #[error("Metal IOSurface import failed: {0}")]
     MetalImport(String),
     #[error("Vulkan external memory import failed: {0}")]
@@ -172,59 +276,151 @@ impl WgpuTextureImporter {
         match frame {
             NativeFrame::Dx12SharedTexture(f) => Self::import_dx12(f, ctx),
             NativeFrame::MetalTextureRef(f) => Self::import_metal(f, ctx),
-            NativeFrame::VulkanExternalImage(f) => Self::import_vulkan(f, ctx),
+            NativeFrame::DmaBufImage(f) => Self::import_vulkan(f, ctx),
             #[cfg(feature = "cpu-paint-fallback")]
             NativeFrame::CpuBitmap(f) => Self::upload_cpu(f, ctx),
         }
     }
 
     fn import_dx12(
-        _frame: Dx12SharedTexture,
-        _ctx: &HostWgpuContext,
+        frame: Dx12SharedTexture,
+        ctx: &HostWgpuContext,
     ) -> Result<ImportedTexture, ImportError> {
-        // Mirrors wgpu-scry's windows_capture + native_frame D3D12 path:
-        // 1. ID3D11Device::OpenSharedResource1 → ID3D11Texture2D
-        // 2. QueryInterface → IDXGIResource1 → CreateSharedHandle (NT handle)
-        // 3. wgpu-hal Dx12: Device::create_texture_from_raw with the NT handle
-        // 4. wgpu::Device::create_texture_from_hal → wgpu::Texture
-        todo!("D3D11 open-shared → D3D12 import (mirrors wgpu-scry::native_frame)")
+        #[cfg(windows)]
+        {
+            use windows::Win32::Foundation::{CloseHandle, HANDLE};
+            use windows::Win32::Graphics::Direct3D12::ID3D12Resource;
+
+            if frame.handle.is_null() {
+                return Err(ImportError::InvalidFrame("D3D shared handle is null"));
+            }
+            if frame.size.width == 0 || frame.size.height == 0 {
+                return Err(ImportError::InvalidFrame(
+                    "D3D shared texture has zero size",
+                ));
+            }
+            if ctx.backend != InteropBackend::Dx12 {
+                return Err(ImportError::BackendMismatch {
+                    frame: NativeFrameKind::Dx12SharedTexture,
+                    wgpu: ctx.backend,
+                });
+            }
+
+            struct OwnedHandle(HANDLE);
+            impl Drop for OwnedHandle {
+                fn drop(&mut self) {
+                    if !self.0.is_invalid() {
+                        unsafe {
+                            let _ = CloseHandle(self.0);
+                        }
+                    }
+                }
+            }
+
+            let owned = OwnedHandle(HANDLE(frame.handle));
+            let texture = unsafe {
+                let hal_device = ctx.device.as_hal::<wgpu::wgc::api::Dx12>().ok_or(
+                    ImportError::BackendMismatch {
+                        frame: NativeFrameKind::Dx12SharedTexture,
+                        wgpu: ctx.backend,
+                    },
+                )?;
+
+                let d3d_device = hal_device.raw_device().clone();
+                let mut resource: Option<ID3D12Resource> = None;
+                d3d_device
+                    .OpenSharedHandle(owned.0, &mut resource)
+                    .map_err(|err| ImportError::D3d12OpenShared(err.to_string()))?;
+                let resource = resource.ok_or_else(|| {
+                    ImportError::D3d12OpenShared("OpenSharedHandle returned null".into())
+                })?;
+
+                let hal_texture = wgpu_hal::dx12::Device::texture_from_raw(
+                    resource,
+                    frame.format,
+                    wgpu::TextureDimension::D2,
+                    wgpu::Extent3d {
+                        width: frame.size.width,
+                        height: frame.size.height,
+                        depth_or_array_layers: 1,
+                    },
+                    1,
+                    1,
+                );
+
+                ctx.device.create_texture_from_hal::<wgpu::wgc::api::Dx12>(
+                    hal_texture,
+                    &wgpu::TextureDescriptor {
+                        label: Some("weld-cef-dx12-shared-texture-import"),
+                        size: wgpu::Extent3d {
+                            width: frame.size.width,
+                            height: frame.size.height,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: frame.format,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+                        view_formats: &[],
+                    },
+                )
+            };
+
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            return Ok(ImportedTexture {
+                texture,
+                view,
+                size: wgpu::Extent3d {
+                    width: frame.size.width,
+                    height: frame.size.height,
+                    depth_or_array_layers: 1,
+                },
+                format: frame.format,
+                generation: frame.generation,
+            });
+        }
+
+        #[cfg(not(windows))]
+        {
+            let _ = (frame, ctx);
+            Err(ImportError::BackendMismatch {
+                frame: NativeFrameKind::Dx12SharedTexture,
+                wgpu: InteropBackend::Unknown,
+            })
+        }
     }
 
     fn import_metal(
-        _frame: MetalTextureRef,
-        _ctx: &HostWgpuContext,
+        frame: MetalTextureRef,
+        ctx: &HostWgpuContext,
     ) -> Result<ImportedTexture, ImportError> {
-        // Mirrors wgpu-scry's WKWebView macOS path:
-        // 1. IOSurface::new_texture_with_descriptor on the MTLDevice
-        // 2. wgpu-hal Metal: Device::texture_from_raw(Retained<ProtocolObject<dyn MTLTexture>>)
-        // 3. wgpu::Device::create_texture_from_hal → wgpu::Texture
-        todo!("IOSurface → MTLTexture import (mirrors wgpu-scry::native_frame)")
+        let _ = (frame, ctx);
+        Err(ImportError::Unsupported(NativeFrameKind::MetalTextureRef))
     }
 
     fn import_vulkan(
-        _frame: VulkanExternalImage,
-        _ctx: &HostWgpuContext,
+        frame: DmaBufImage,
+        ctx: &HostWgpuContext,
     ) -> Result<ImportedTexture, ImportError> {
-        // VK_KHR_external_memory_fd + VK_EXT_image_drm_format_modifier:
-        // 1. vkCreateImage with VkExternalMemoryImageCreateInfo (DMABUF fd type)
-        // 2. vkAllocateMemory with VkImportMemoryFdInfoKHR
-        // 3. wgpu-hal Vulkan: Device::texture_from_raw
-        todo!("DMABUF → Vulkan external memory import")
+        let _ = (frame, ctx);
+        Err(ImportError::Unsupported(NativeFrameKind::DmaBufImage))
     }
 
     #[cfg(feature = "cpu-paint-fallback")]
-    fn upload_cpu(
-        frame: CpuBitmap,
-        ctx: &HostWgpuContext,
-    ) -> Result<ImportedTexture, ImportError> {
-        let size = wgpu::Extent3d { width: frame.width, height: frame.height, depth_or_array_layers: 1 };
+    fn upload_cpu(frame: CpuBitmap, ctx: &HostWgpuContext) -> Result<ImportedTexture, ImportError> {
+        let size = wgpu::Extent3d {
+            width: frame.size.width,
+            height: frame.size.height,
+            depth_or_array_layers: 1,
+        };
         let texture = ctx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("cef_cpu_bitmap"),
             size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8Unorm,
+            format: frame.format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -233,12 +429,47 @@ impl WgpuTextureImporter {
             &frame.data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(frame.width * 4),
+                bytes_per_row: Some(frame.size.width * 4),
                 rows_per_image: None,
             },
             size,
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Ok(ImportedTexture { texture, view, size })
+        Ok(ImportedTexture {
+            texture,
+            view,
+            size,
+            format: frame.format,
+            generation: frame.generation,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_frame_slot_keeps_latest_frame() {
+        let mut slot = PendingFrameSlot::default();
+        let first = slot.next_generation();
+        slot.store(NativeFrame::Dx12SharedTexture(Dx12SharedTexture {
+            handle: std::ptr::null_mut(),
+            size: PhysicalSize::new(10, 10),
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            generation: first,
+        }));
+        let second = slot.next_generation();
+        slot.store(NativeFrame::Dx12SharedTexture(Dx12SharedTexture {
+            handle: std::ptr::null_mut(),
+            size: PhysicalSize::new(20, 10),
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            generation: second,
+        }));
+
+        let frame = slot.take().expect("latest frame should be present");
+        assert_eq!(frame.generation(), second);
+        assert_eq!(frame.size(), PhysicalSize::new(20, 10));
+        assert!(!slot.has_frame());
     }
 }

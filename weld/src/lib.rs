@@ -19,21 +19,14 @@ pub mod linux_cef;
 
 #[cfg(windows)]
 pub use windows_cef::{
-    WindowsCefConfig as PlatformCefConfig,
-    WindowsCefProducer as PlatformCefProducer,
+    WindowsCefConfig as PlatformCefConfig, WindowsCefProducer as PlatformCefProducer,
 };
 
 #[cfg(target_os = "macos")]
-pub use macos_cef::{
-    MacosCefConfig as PlatformCefConfig,
-    MacosCefProducer as PlatformCefProducer,
-};
+pub use macos_cef::{MacosCefConfig as PlatformCefConfig, MacosCefProducer as PlatformCefProducer};
 
 #[cfg(target_os = "linux")]
-pub use linux_cef::{
-    LinuxCefConfig as PlatformCefConfig,
-    LinuxCefProducer as PlatformCefProducer,
-};
+pub use linux_cef::{LinuxCefConfig as PlatformCefConfig, LinuxCefProducer as PlatformCefProducer};
 
 // ── Flat re-exports ───────────────────────────────────────────────────────────
 

@@ -10,7 +10,7 @@
 /// inside `CefRuntime` for the process lifetime.
 pub mod types;
 
-use std::os::raw::c_int;
+use std::os::raw::{c_int, c_void};
 
 use libloading::{Library, Symbol};
 
@@ -20,8 +20,7 @@ use types::{CefMainArgs, CefSettings};
 // ── Function pointer type aliases ─────────────────────────────────────────────
 
 type FnExecuteProcess =
-    unsafe extern "C" fn(args: *const CefMainArgs, app: *mut c_void, sandbox: *mut c_void)
-        -> c_int;
+    unsafe extern "C" fn(args: *const CefMainArgs, app: *mut c_void, sandbox: *mut c_void) -> c_int;
 
 type FnInitialize = unsafe extern "C" fn(
     args: *const CefMainArgs,
@@ -65,9 +64,12 @@ impl CefFunctions {
             // Strip the lifetime from the Symbol so we can store the fn pointer
             // independently. Safety: `CefFunctions` is always stored alongside
             // the owning `Library` inside `CefRuntime`.
-            let s: Symbol<T> = lib
-                .get(name)
-                .map_err(|e| WeldError::LibraryLoad { path: "<symbol>".into(), source: e })?;
+            let s: Symbol<T> = unsafe {
+                lib.get(name).map_err(|e| WeldError::LibraryLoad {
+                    path: format!("symbol {}", String::from_utf8_lossy(name)),
+                    source: e,
+                })?
+            };
             Ok(*s)
         }
 
@@ -79,10 +81,7 @@ impl CefFunctions {
                 run_message_loop: sym(lib, b"cef_run_message_loop\0")?,
                 quit_message_loop: sym(lib, b"cef_quit_message_loop\0")?,
                 do_message_loop_work: sym(lib, b"cef_do_message_loop_work\0")?,
-                browser_host_create_browser: sym(
-                    lib,
-                    b"cef_browser_host_create_browser\0",
-                )?,
+                browser_host_create_browser: sym(lib, b"cef_browser_host_create_browser\0")?,
             })
         }
     }
@@ -91,7 +90,7 @@ impl CefFunctions {
     /// invocation is a CEF subprocess, or -1 for the host process.
     pub unsafe fn execute_process(&self) -> c_int {
         let args = CefMainArgs::for_current_process();
-        (self.execute_process)(&args, std::ptr::null_mut(), std::ptr::null_mut())
+        unsafe { (self.execute_process)(&args, std::ptr::null_mut(), std::ptr::null_mut()) }
     }
 
     /// Call `cef_initialize`. Returns 1 on success, 0 on failure.
@@ -99,7 +98,7 @@ impl CefFunctions {
         // Build CefSettings from CefRuntimeConfig.
         // The zero-initialised struct is safe: CEF reads only fields up to
         // `settings.size`, and all booleans default to false/0.
-        let mut settings = std::mem::zeroed::<CefSettings>();
+        let mut settings = unsafe { std::mem::zeroed::<CefSettings>() };
         settings.size = std::mem::size_of::<CefSettings>();
         settings.windowless_rendering_enabled = 1;
         if config.single_process {
@@ -108,6 +107,6 @@ impl CefFunctions {
         settings.log_severity = config.log_severity as c_int;
 
         let args = CefMainArgs::for_current_process();
-        (self.initialize)(&args, &settings, std::ptr::null_mut(), std::ptr::null_mut())
+        unsafe { (self.initialize)(&args, &settings, std::ptr::null_mut(), std::ptr::null_mut()) }
     }
 }

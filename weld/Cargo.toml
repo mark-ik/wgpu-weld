@@ -8,6 +8,12 @@ description = "CEF surface adapter — weld Chromium Embedded Framework renders 
 
 [features]
 default = []
+# Real CEF integration via the `cef`/`cef-dll-sys` crate family.
+# Enables the `cef` crate (which downloads / links libcef at build time via
+# cef-dll-sys) and activates working implementations of CefRuntime and the
+# platform producers. Without this feature the crate still compiles but all
+# producer constructors return a pending-wiring error.
+cef-runtime = ["dep:cef"]
 # Enable the OnPaint CPU-bitmap fallback path. Always available regardless of
 # GPU support, but requires a texture upload per frame.
 cpu-paint-fallback = []
@@ -17,9 +23,12 @@ dpi = "0.1.2"
 thiserror = "2.0.17"
 wgpu = { version = "29.0.1", features = ["metal"] }
 wgpu-hal = "29.0"
-# CEF is distributed as a shared library that must be present at runtime.
-# weld loads it dynamically so there is no link-time dependency on libcef.
+# Scaffold / non-cef-runtime path only: loads CEF function pointers at runtime
+# from a caller-supplied path. Superseded by the `cef` crate under cef-runtime.
 libloading = "0.8"
+# Real CEF ABI layer: generated bindings + wrap_* handler macros + typed
+# AcceleratedPaintInfo. Only active under the `cef-runtime` feature.
+cef = { version = "148", features = ["accelerated_osr"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

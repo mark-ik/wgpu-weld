@@ -9,18 +9,20 @@ This repo was created as a sibling to [`wgpu-graft`](https://github.com/mark-ik/
 adapter — WebView2 / WKWebView / WebKitGTK).
 
 `wgpu-weld` covers the CEF side: rather than using the OS's built-in webview,
-the embedder bundles Chromium and routes CEF's `OnAcceleratedPaint` callback
-directly into wgpu with no copy. The trade-off is binary size and a more
-complex process model (see **CEF Foibles** in the `weld` crate docs) in exchange
-for a single cross-platform producer, uniform browser behaviour, and direct
-access to the CEF DevTools protocol.
+the embedder bundles Chromium and routes CEF's `OnAcceleratedPaint` output into
+host-owned `wgpu` textures. CEF hands out callback-scoped native handles, so the
+core rule is "duplicate or retain inside the paint callback, then import into
+wgpu from the host side." The trade-off is binary size and a more complex
+process model (see **CEF Foibles** in the `weld` crate docs) in exchange for a
+single cross-platform producer, uniform browser behaviour, and direct access to
+the CEF DevTools protocol.
 
 ## Workspace
 
 | Crate | Purpose |
 | --- | --- |
-| [`weld`](weld/) | The library. `CefRuntime` initialization and subprocess detection, per-platform `OnAcceleratedPaint` → wgpu texture import, `CefSurfaceProducer` trait. |
-| [`demo-weld-win`](demo-weld-win/) | Windows runtime probe. Exercises the CEF accelerated OSR path into a wgpu D3D12 texture under winit. |
+| [`weld`](weld/) | The library. `CefRuntime` initialization/subprocess detection, native-frame mailbox, Windows D3D shared-handle → `wgpu` D3D12 import, and the `CefSurfaceProducer` trait. CEF vtable/browser creation is still pending. |
+| [`demo-weld-win`](demo-weld-win/) | Windows runtime probe. Currently validates the subprocess/runtime entry shape; live CEF frame rendering waits on the client/render-handler wiring. |
 
 See [`weld/README.md`](weld/README.md) for the producer/consumer contract and
 the platform texture paths.
@@ -28,8 +30,8 @@ the platform texture paths.
 ## Quick start
 
 ```bash
-# Set CEF_PATH to your CEF binary distribution before building
-set CEF_PATH=C:\path\to\cef_binary_133.x_windows64
+# cargo check does not require CEF_PATH; runtime initialization does.
+set CEF_PATH=C:\path\to\cef_binary_147.x_windows64
 
 cargo check -p weld
 cargo run -p demo-weld-win
@@ -48,8 +50,10 @@ pipeline — but serve different niches:
 | `wgpu-weld` | Chromium (CEF) | bundled | 1 cross-platform |
 
 `wgpu-weld` ships the engine; `wgpu-scry` uses the OS's. CEF's single
-cross-platform producer means one implementation to maintain, and
-`OnAcceleratedPaint` gives a more direct texture path than WGC capture.
+cross-platform producer means one implementation family to maintain, and
+`OnAcceleratedPaint` gives a more direct texture source than WGC capture. The
+hard part moves to CEF's C ABI/vtable ownership and callback-scoped handle
+lifetime.
 
 ## License
 

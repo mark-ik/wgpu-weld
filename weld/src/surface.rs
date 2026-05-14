@@ -36,7 +36,26 @@ impl CefSurfaceCapabilities {
     /// definitively confirmed after creating a browser and observing whether
     /// `OnAcceleratedPaint` fires; this probe returns the best static estimate.
     pub fn probe() -> Self {
-        todo!("query cef_command_line for --disable-gpu; check platform GPU support")
+        let accelerated_paint_available = cfg!(target_os = "windows");
+        let cpu_paint_available = cfg!(feature = "cpu-paint-fallback");
+        let preferred_mode = if accelerated_paint_available {
+            CefSurfaceMode::AcceleratedPaint
+        } else {
+            #[cfg(feature = "cpu-paint-fallback")]
+            {
+                CefSurfaceMode::CpuPaint
+            }
+            #[cfg(not(feature = "cpu-paint-fallback"))]
+            {
+                CefSurfaceMode::Unsupported
+            }
+        };
+
+        Self {
+            preferred_mode,
+            accelerated_paint_available,
+            cpu_paint_available,
+        }
     }
 }
 
@@ -83,20 +102,20 @@ pub trait CefSurfaceProducer: Send {
         ctx: &HostWgpuContext,
     ) -> Result<Option<ImportedTexture>, WeldError>;
 
-    fn resize(&mut self, size: PhysicalSize<u32>);
+    fn resize(&mut self, size: PhysicalSize<u32>) -> Result<(), WeldError>;
 
-    fn navigate_to_url(&mut self, url: &str);
-    fn navigate_to_string(&mut self, content: &str, mime_type: &str);
-    fn reload(&mut self);
-    fn stop(&mut self);
-    fn go_back(&mut self);
-    fn go_forward(&mut self);
+    fn navigate_to_url(&mut self, url: &str) -> Result<(), WeldError>;
+    fn navigate_to_string(&mut self, content: &str, mime_type: &str) -> Result<(), WeldError>;
+    fn reload(&mut self) -> Result<(), WeldError>;
+    fn stop(&mut self) -> Result<(), WeldError>;
+    fn go_back(&mut self) -> Result<(), WeldError>;
+    fn go_forward(&mut self) -> Result<(), WeldError>;
 
-    fn send_mouse_input(&mut self, event: MouseEvent);
-    fn send_keyboard_input(&mut self, event: KeyEvent);
-    fn move_focus(&mut self, direction: FocusDirection);
+    fn send_mouse_input(&mut self, event: MouseEvent) -> Result<(), WeldError>;
+    fn send_keyboard_input(&mut self, event: KeyEvent) -> Result<(), WeldError>;
+    fn move_focus(&mut self, direction: FocusDirection) -> Result<(), WeldError>;
 
-    fn post_web_message(&mut self, message: &str);
+    fn post_web_message(&mut self, message: &str) -> Result<(), WeldError>;
     fn poll_web_message(&mut self) -> Option<String>;
 
     fn poll_navigation_event(&mut self) -> Option<NavigationEvent>;
@@ -104,15 +123,15 @@ pub trait CefSurfaceProducer: Send {
     /// Execute a JavaScript expression in the browser's main frame. CEF
     /// provides this natively (`cef_frame_t::execute_java_script`) without
     /// requiring a CDP round-trip.
-    fn execute_script(&mut self, script: &str, source_url: &str);
+    fn execute_script(&mut self, script: &str, source_url: &str) -> Result<(), WeldError>;
 
-    fn open_devtools(&self);
+    fn open_devtools(&self) -> Result<(), WeldError>;
 
     /// CEF-internal browser identifier. Useful for routing multi-browser
     /// callback events in the `CefClient` vtable.
     fn browser_id(&self) -> i32;
 
-    fn close(&mut self);
+    fn close(&mut self) -> Result<(), WeldError>;
 }
 
 // ── Input event types ────────────────────────────────────────────────────────
@@ -177,13 +196,34 @@ pub enum FocusDirection {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum NavigationEvent {
-    LoadStart { url: String },
-    LoadEnd { url: String, http_status: i32 },
-    LoadError { url: String, error_code: i32, error_text: String },
-    TitleChanged { title: String },
-    AddressChanged { url: String },
+    LoadStart {
+        url: String,
+    },
+    LoadEnd {
+        url: String,
+        http_status: i32,
+    },
+    LoadError {
+        url: String,
+        error_code: i32,
+        error_text: String,
+    },
+    TitleChanged {
+        title: String,
+    },
+    AddressChanged {
+        url: String,
+    },
     /// CEF browser process terminated unexpectedly.
     ContentProcessTerminated,
-    NewWindowRequested { url: String, user_gesture: bool },
-    ConsoleMessage { level: i32, message: String, source: String, line: i32 },
+    NewWindowRequested {
+        url: String,
+        user_gesture: bool,
+    },
+    ConsoleMessage {
+        level: i32,
+        message: String,
+        source: String,
+        line: i32,
+    },
 }

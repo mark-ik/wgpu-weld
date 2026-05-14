@@ -2,15 +2,17 @@
 ///
 /// CEF's C API uses reference-counted structs with function-pointer vtables.
 /// Every CEF object begins with `cef_base_ref_counted_t`. The structs defined
-/// here cover only the subset needed for accelerated OSR; they are sized to
-/// match the CEF headers for the target CEF version (pinned in Cargo.toml).
+/// here cover only the subset needed for accelerated OSR. They are a temporary
+/// bridge until the client/render-handler layer uses generated CEF bindings.
 ///
 /// Layout notes:
 /// - All structs use `#[repr(C)]` to match the C ABI.
 /// - Function pointers use `extern "C"` calling convention.
 /// - `*mut T` fields in vtables are always nullable (CEF uses NULL to indicate
 ///   "not implemented" for optional callbacks).
-use std::os::raw::{c_char, c_int, c_void};
+#[cfg(not(windows))]
+use std::os::raw::c_char;
+use std::os::raw::{c_int, c_void};
 
 // ── Base ──────────────────────────────────────────────────────────────────────
 
@@ -20,8 +22,7 @@ pub struct CefBaseRefCounted {
     pub add_ref: Option<unsafe extern "C" fn(this: *mut CefBaseRefCounted)>,
     pub release: Option<unsafe extern "C" fn(this: *mut CefBaseRefCounted) -> c_int>,
     pub has_one_ref: Option<unsafe extern "C" fn(this: *mut CefBaseRefCounted) -> c_int>,
-    pub has_at_least_one_ref:
-        Option<unsafe extern "C" fn(this: *mut CefBaseRefCounted) -> c_int>,
+    pub has_at_least_one_ref: Option<unsafe extern "C" fn(this: *mut CefBaseRefCounted) -> c_int>,
 }
 
 // ── Strings ───────────────────────────────────────────────────────────────────
@@ -47,6 +48,13 @@ pub struct CefRect {
     pub height: c_int,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CefSize {
+    pub width: c_int,
+    pub height: c_int,
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 /// `cef_settings_t` — subset of fields used by weld.
@@ -58,7 +66,6 @@ pub struct CefSettings {
     pub browser_subprocess_path: CefString,
     pub framework_dir_path: CefString,
     pub main_bundle_path: CefString,
-    pub chrome_runtime: c_int,
     pub multi_threaded_message_loop: c_int,
     pub external_message_pump: c_int,
     pub windowless_rendering_enabled: c_int,
@@ -71,10 +78,10 @@ pub struct CefSettings {
     pub locale: CefString,
     pub log_file: CefString,
     pub log_severity: c_int, // cef_log_severity_t
+    pub log_items: c_int,
     pub javascript_flags: CefString,
     pub resources_dir_path: CefString,
     pub locales_dir_path: CefString,
-    pub pack_loading_disabled: c_int,
     pub remote_debugging_port: c_int,
     pub uncaught_exception_stack_size: c_int,
     pub background_color: u32,
@@ -83,6 +90,8 @@ pub struct CefSettings {
     pub cookieable_schemes_exclude_defaults: c_int,
     pub chrome_policy_id: CefString,
     pub chrome_app_icon_id: c_int,
+    pub disable_signal_handlers: c_int,
+    pub use_views_default_popup: c_int,
 }
 
 /// `cef_browser_settings_t` — subset used by weld.
@@ -101,25 +110,33 @@ pub struct CefBrowserSettings {
 /// `windowless_rendering_enabled` is the key field.
 #[repr(C)]
 pub struct CefWindowInfo {
+    pub size: usize,
     #[cfg(windows)]
     pub ex_style: u32,
-    #[cfg(windows)]
     pub window_name: CefString,
     #[cfg(windows)]
     pub style: u32,
-    #[cfg(windows)]
     pub bounds: CefRect,
     #[cfg(windows)]
     pub parent_window: *mut c_void, // HWND
     #[cfg(windows)]
-    pub menu: *mut c_void,          // HMENU
+    pub menu: *mut c_void, // HMENU
+    #[cfg(target_os = "linux")]
+    pub parent_window: std::os::raw::c_ulong,
+    #[cfg(target_os = "macos")]
+    pub hidden: c_int,
+    #[cfg(target_os = "macos")]
+    pub parent_view: *mut c_void,
     pub windowless_rendering_enabled: c_int,
     pub shared_texture_enabled: c_int,
     pub external_begin_frame_enabled: c_int,
     #[cfg(windows)]
     pub window: *mut c_void, // HWND (output)
-    #[cfg(not(windows))]
-    _platform: [u8; 64],
+    #[cfg(target_os = "linux")]
+    pub window: std::os::raw::c_ulong,
+    #[cfg(target_os = "macos")]
+    pub view: *mut c_void,
+    pub runtime_style: c_int,
 }
 
 // ── Main args ─────────────────────────────────────────────────────────────────
@@ -137,16 +154,21 @@ pub struct CefMainArgs {
 impl CefMainArgs {
     #[cfg(windows)]
     pub fn for_current_process() -> Self {
-        extern "system" {
+        unsafe extern "system" {
             fn GetModuleHandleW(name: *const u16) -> *mut c_void;
         }
-        CefMainArgs { instance: unsafe { GetModuleHandleW(std::ptr::null()) } }
+        CefMainArgs {
+            instance: unsafe { GetModuleHandleW(std::ptr::null()) },
+        }
     }
 
     #[cfg(not(windows))]
     pub fn for_current_process() -> Self {
         // argc/argv sourced from std::env::args_os at call site
-        CefMainArgs { argc: 0, argv: std::ptr::null_mut() }
+        CefMainArgs {
+            argc: 0,
+            argv: std::ptr::null_mut(),
+        }
     }
 }
 
@@ -160,17 +182,50 @@ impl CefMainArgs {
 /// **only for the duration of the `OnAcceleratedPaint` callback**. It must be
 /// imported or duplicated before the callback returns.
 ///
-/// On macOS, `shared_texture_handle` is an `IOSurfaceRef` (a `*mut c_void`
+/// On macOS, `shared_texture_io_surface` is an `IOSurfaceRef` (a `*mut c_void`
 /// whose underlying object is ref-counted). `weld` retains it before the
 /// callback returns and releases it after import.
 #[repr(C)]
 pub struct CefAcceleratedPaintInfo {
-    /// Platform-specific shared texture handle.
-    ///
-    /// - Windows: `HANDLE` to a shared D3D11 texture.
-    /// - macOS:   `IOSurfaceRef` (a `CFTypeRef` / `*mut c_void`).
-    /// - Linux:   DMABUF fd (planned; not yet standardised in CEF).
+    pub size: usize,
+    #[cfg(windows)]
     pub shared_texture_handle: *mut c_void,
+    #[cfg(target_os = "macos")]
+    pub shared_texture_io_surface: *mut c_void,
+    #[cfg(target_os = "linux")]
+    pub planes: [CefAcceleratedPaintNativePixmapPlaneInfo; 4],
+    #[cfg(target_os = "linux")]
+    pub plane_count: c_int,
+    #[cfg(target_os = "linux")]
+    pub modifier: u64,
     /// Pixel format of the texture (`BGRA8` on all current platforms).
-    pub color_type: c_int, // cef_color_type_t
+    pub format: c_int, // cef_color_type_t
+    pub extra: CefAcceleratedPaintInfoCommon,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CefAcceleratedPaintNativePixmapPlaneInfo {
+    pub stride: u32,
+    pub offset: u64,
+    pub size: u64,
+    pub fd: c_int,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CefAcceleratedPaintInfoCommon {
+    pub size: usize,
+    pub timestamp: u64,
+    pub coded_size: CefSize,
+    pub visible_rect: CefRect,
+    pub content_rect: CefRect,
+    pub source_size: CefSize,
+    pub capture_update_rect: CefRect,
+    pub region_capture_rect: CefRect,
+    pub capture_counter: u64,
+    pub has_capture_update_rect: u8,
+    pub has_region_capture_rect: u8,
+    pub has_source_size: u8,
+    pub has_capture_counter: u8,
 }

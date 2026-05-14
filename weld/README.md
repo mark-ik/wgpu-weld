@@ -1,8 +1,13 @@
 # weld
 
 CEF surface adapter: drives Chromium Embedded Framework in accelerated
-off-screen rendering (OSR) mode and imports each rendered frame into the host's
-wgpu pipeline as a GPU texture.
+off-screen rendering (OSR) mode and imports rendered frames into the host's
+wgpu pipeline as GPU textures.
+
+Current implementation checkpoint: runtime loading/subprocess probing, the
+native-frame mailbox, and the Windows D3D shared-handle → `wgpu` D3D12 importer
+are present. CEF client/render-handler vtable wiring and live browser creation
+are still pending.
 
 ## CEF Foibles
 
@@ -16,7 +21,7 @@ binary**. The embedder must call `CefRuntime::execute_process_from` at the
 absolute start of `main()`, before any other initialization, and exit immediately
 if it returns `Some(exit_code)`:
 
-```rust
+```rust,no_run
 fn main() {
     let cef_path = std::env::var("CEF_PATH").expect("CEF_PATH required");
     if let Some(code) = weld::CefRuntime::execute_process_from(cef_path.as_ref())
@@ -33,10 +38,11 @@ starts; you get a blank OSR surface and no `OnAcceleratedPaint` callbacks.
 
 ### 2. Handle Lifetime
 
-On Windows, `OnAcceleratedPaint` provides a `HANDLE` to a shared D3D11 texture.
-**The handle is valid only for the duration of the callback.** `weld` imports
-it synchronously (or `DuplicateHandle`s it) inside the callback before returning.
-Never store the raw handle across the callback boundary.
+On Windows, `OnAcceleratedPaint` provides a `HANDLE` to a shared D3D texture.
+**The handle is valid only for the duration of the callback.** `weld` duplicates
+it inside the callback before returning, stores the duplicate in a
+`PendingFrameSlot`, and closes that duplicate after the host-side D3D12 import.
+Never store CEF's raw callback handle across the callback boundary.
 
 On macOS the analogous constraint is: the `IOSurfaceRef` passed to
 `OnAcceleratedPaint` is retained for the duration of the callback. `weld` calls
@@ -56,13 +62,14 @@ when `CefRuntime::initialize` is called.
 
 | Platform | CEF output | Import path |
 | --- | --- | --- |
-| Windows | `HANDLE` (shared D3D11 texture) | D3D11 open-shared → D3D12 resource → wgpu |
-| macOS | `IOSurfaceRef` | IOSurface → MTLTexture → wgpu Metal |
-| Linux | DMABUF fd (planned) | VK_EXT_external_memory_dma_buf → wgpu Vulkan |
+| Windows | `HANDLE` (shared D3D texture) | D3D12 `OpenSharedHandle` → `wgpu` D3D12 texture |
+| macOS | `IOSurfaceRef` | Planned: IOSurface → MTLTexture → wgpu Metal |
+| Linux | native pixmap / DMABUF planes | Planned: `VK_EXT_external_memory_dma_buf` → wgpu Vulkan |
 
-Both the Windows and macOS paths follow the same pattern as `wgpu-scry`'s
-`native_frame` module. The GPU import bodies are structurally identical; only
-how the handle is obtained differs (CEF callback vs WGC capture / SCKit).
+The Windows path follows the same shape as `wgpu-scry`'s `native_frame` module.
+The source differs: CEF gives a callback-scoped shared handle, while scrying's
+WebView2 path receives a capture-owned shared texture after WGC has copied the
+composited visual.
 
 ## Producer / consumer contract
 

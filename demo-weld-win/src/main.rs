@@ -3,12 +3,12 @@
 //! # Running
 //!
 //! ```text
-//! set CEF_PATH=C:\path\to\cef_binary_130.x.x_windows64
+//! set CEF_PATH=C:\path\to\cef_binary_147.x_windows64
 //! cargo run -p demo-weld-win
 //! ```
 //!
-//! CEF must be built with `--enable-shared-texture` and
-//! `--enable-osr`. Use the standard "Release" distribution.
+//! `cargo check` does not require CEF to be installed. Running the demo does,
+//! because `CefRuntime` loads `libcef.dll` from `CEF_PATH`.
 //!
 //! # Subprocess tax
 //!
@@ -40,8 +40,7 @@ fn main() {
 
     // ── 3. CEF runtime ─────────────────────────────────────────────────────────
     let config = weld::CefRuntimeConfig::new(&cef_path);
-    let runtime = weld::CefRuntime::initialize(config)
-        .expect("weld: CEF initialisation failed");
+    let runtime = weld::CefRuntime::initialize(config).expect("weld: CEF initialisation failed");
 
     // ── 4. Browser surface ─────────────────────────────────────────────────────
     // (WindowsCefProducer::new is todo!() until vtable wiring is done)
