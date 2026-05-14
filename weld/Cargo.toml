@@ -1,0 +1,49 @@
+[package]
+name = "weld"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+repository = "https://github.com/mark-ik/wgpu-weld"
+description = "CEF surface adapter — weld Chromium Embedded Framework renders into wgpu-importable frames via accelerated off-screen rendering"
+
+[features]
+default = []
+# Enable the OnPaint CPU-bitmap fallback path. Always available regardless of
+# GPU support, but requires a texture upload per frame.
+cpu-paint-fallback = []
+
+[dependencies]
+dpi = "0.1.2"
+thiserror = "2.0.17"
+wgpu = { version = "29.0.1", features = ["metal"] }
+wgpu-hal = "29.0"
+# CEF is distributed as a shared library that must be present at runtime.
+# weld loads it dynamically so there is no link-time dependency on libcef.
+libloading = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.3"
+objc2-foundation = "0.3.2"
+objc2-io-surface = "0.3.2"
+objc2-metal = { version = "0.3.2", features = [
+    "MTLAllocation",
+    "MTLDevice",
+    "MTLPixelFormat",
+    "MTLResource",
+    "MTLTexture",
+    "objc2-io-surface",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ash = "0.38.0"

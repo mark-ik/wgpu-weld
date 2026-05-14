@@ -1,0 +1,20 @@
+[package]
+name = "demo-weld-win"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Windows demo: CEF accelerated OSR rendered into a wgpu surface via weld"
+
+[[bin]]
+name = "demo-weld-win"
+path = "src/main.rs"
+
+[dependencies]
+weld = { path = "../weld" }
+wgpu = { version = "29.0.1" }
+winit = { version = "0.30" }
+pollster = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+# raw-window-handle for the wgpu surface (winit 0.30 uses rwh 0.6)
+raw-window-handle = "0.6"
