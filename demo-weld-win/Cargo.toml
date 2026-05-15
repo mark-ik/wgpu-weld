@@ -10,7 +10,7 @@ name = "demo-weld-win"
 path = "src/main.rs"
 
 [dependencies]
-weld = { path = "../weld" }
+weld = { path = "../weld", features = ["cef-runtime"] }
 wgpu = { version = "29.0.1" }
 winit = { version = "0.30" }
 pollster = "0.4"

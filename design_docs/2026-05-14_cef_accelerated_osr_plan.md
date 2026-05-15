@@ -137,7 +137,7 @@ the `impl cef::RenderHandler` + `on_accelerated_paint` pattern.
 - [x] Public producer methods return explicit errors (not panics) without `cef-runtime`
 - [x] `resize` → `host.was_resized()`; navigation methods wired under `cef-runtime`
 - [x] Mouse / keyboard input translation (`cef::MouseEvent`, `cef::KeyEvent`, `cef_input` module)
-- [ ] Demo renders a live CEF frame into a winit window  
+- [x] Demo renders a live CEF frame into a winit window (demo-weld-win: full blit pipeline, keyboard/mouse forwarding)  
 
 ### Phase 2 — Input and navigation
 
