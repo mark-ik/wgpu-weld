@@ -6,6 +6,9 @@ pub mod native_frame;
 pub mod runtime;
 pub mod surface;
 
+#[cfg(feature = "cef-runtime")]
+mod cef_input;
+
 #[cfg(windows)]
 pub mod windows_cef;
 

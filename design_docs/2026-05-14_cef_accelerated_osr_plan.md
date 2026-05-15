@@ -136,14 +136,13 @@ the `impl cef::RenderHandler` + `on_accelerated_paint` pattern.
 - [x] `CefRuntime` uses `cef::initialize` / `cef::execute_process` / `cef::shutdown`
 - [x] Public producer methods return explicit errors (not panics) without `cef-runtime`
 - [x] `resize` → `host.was_resized()`; navigation methods wired under `cef-runtime`
-- [ ] Mouse / keyboard input translation (`CefMouseEvent`, `CefKeyEvent`)
+- [x] Mouse / keyboard input translation (`cef::MouseEvent`, `cef::KeyEvent`, `cef_input` module)
 - [ ] Demo renders a live CEF frame into a winit window  
 
 ### Phase 2 — Input and navigation
 
-- [ ] Mouse / keyboard translation (`CefMouseEvent`, `CefKeyEvent`)  
-- [ ] `resize` → `was_resized()`  
-- [ ] Navigation methods (`load_url`, `go_back`, `reload`, …)  
+- [ ] `resize` → `was_resized()` (done in Phase 1; left here for cross-reference)
+- [ ] Navigation methods (done in Phase 1; left here for cross-reference)  
 - [ ] `execute_script` via `cef_frame_t::execute_java_script`  
 - [ ] `poll_navigation_event` from `cef_load_handler_t` callbacks  
 - [ ] `post_web_message` / `poll_web_message` via `cef_process_message_t`  

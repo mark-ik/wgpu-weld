@@ -396,16 +396,31 @@ impl CefSurfaceProducer for WindowsCefProducer {
         Err(pending("cef_browser_t::go_forward"))
     }
 
-    fn send_mouse_input(&mut self, _event: MouseEvent) -> Result<(), WeldError> {
+    fn send_mouse_input(&mut self, event: MouseEvent) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser.host() {
+            crate::cef_input::send_mouse(&host, &event);
+            return Ok(());
+        }
         Err(pending("cef_browser_host_t mouse input"))
     }
 
-    fn send_keyboard_input(&mut self, _event: KeyEvent) -> Result<(), WeldError> {
+    fn send_keyboard_input(&mut self, event: KeyEvent) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser.host() {
+            crate::cef_input::send_key(&host, &event);
+            return Ok(());
+        }
         Err(pending("cef_browser_host_t::send_key_event"))
     }
 
-    fn move_focus(&mut self, _direction: FocusDirection) -> Result<(), WeldError> {
-        Err(pending("cef_browser_host_t::set_focus/move_focus"))
+    fn move_focus(&mut self, direction: FocusDirection) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser.host() {
+            crate::cef_input::set_focus(&host, direction);
+            return Ok(());
+        }
+        Err(pending("cef_browser_host_t::set_focus"))
     }
 
     fn post_web_message(&mut self, _message: &str) -> Result<(), WeldError> {
