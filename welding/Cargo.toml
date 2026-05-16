@@ -1,10 +1,13 @@
 [package]
-name = "weld"
+name = "welding"
 version = "0.1.0"
 edition = "2024"
 license = "MPL-2.0"
 repository = "https://github.com/mark-ik/wgpu-weld"
-description = "CEF surface adapter — weld Chromium Embedded Framework renders into wgpu-importable frames via accelerated off-screen rendering"
+description = "Embed Chromium Embedded Framework (CEF) into wgpu via accelerated off-screen rendering"
+keywords = ["cef", "chromium", "wgpu", "webview", "osr"]
+categories = ["rendering", "web-programming", "multimedia"]
+readme = "README.md"
 
 [features]
 default = []
@@ -19,9 +22,9 @@ cef-runtime = ["dep:cef"]
 cpu-paint-fallback = []
 
 [dependencies]
-dpi = "0.1.2"
+dpi.workspace = true
 thiserror = "2.0.17"
-wgpu = { version = "29.0.1", features = ["metal"] }
+wgpu = { workspace = true, features = ["metal"] }
 wgpu-hal = "29.0"
 # Scaffold / non-cef-runtime path only: loads CEF function pointers at runtime
 # from a caller-supplied path. Superseded by the `cef` crate under cef-runtime.

@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use crate::error::WeldError;
 
@@ -77,8 +77,8 @@ pub enum CefLogSeverity {
 #[cfg(feature = "cef-runtime")]
 mod cef_backed {
     use super::*;
+    use cef::*;
     use cef::args::Args;
-    use std::os::raw::c_int;
 
     // Minimal no-op App impl: CEF requires an App on all initialize paths; this
     // satisfies that without requiring callers to depend on the cef crate.
@@ -89,7 +89,7 @@ mod cef_backed {
         struct WeldAppWrapper {
             app: WeldApp,
         }
-        impl cef::App {}
+        impl App {}
     }
 
     impl WeldAppWrapper {
@@ -167,15 +167,20 @@ mod cef_backed {
     }
 
     fn build_settings(config: &CefRuntimeConfig) -> cef::Settings {
-        let mut s = cef::Settings {
+        let s = cef::Settings {
             windowless_rendering_enabled: 1,
             external_message_pump: 1,
-            log_severity: config.log_severity as c_int,
+            log_severity: match config.log_severity {
+                CefLogSeverity::Default => LogSeverity::DEFAULT,
+                CefLogSeverity::Verbose => LogSeverity::VERBOSE,
+                CefLogSeverity::Info    => LogSeverity::INFO,
+                CefLogSeverity::Warning => LogSeverity::WARNING,
+                CefLogSeverity::Error   => LogSeverity::ERROR,
+                CefLogSeverity::Fatal   => LogSeverity::FATAL,
+                CefLogSeverity::Disable => LogSeverity::DISABLE,
+            },
             ..Default::default()
         };
-        if config.single_process {
-            s.single_process = 1;
-        }
         s
     }
 
@@ -221,6 +226,7 @@ pub use cef_backed::CefRuntime;
 #[cfg(not(feature = "cef-runtime"))]
 mod scaffold {
     use super::*;
+    use std::sync::Arc;
     use libloading::Library;
     use crate::cef_ffi::CefFunctions;
 

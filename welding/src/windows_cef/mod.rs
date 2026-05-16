@@ -33,8 +33,9 @@ use crate::{
 
 #[cfg(not(feature = "cef-runtime"))]
 use crate::cef_ffi::CefFunctions;
-#[cfg(not(feature = "cef-runtime"))]
-use std::sync::Arc as ArcCefFns;
+
+#[cfg(feature = "cef-runtime")]
+use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 
 // ── Public config ─────────────────────────────────────────────────────────────
 
@@ -70,6 +71,7 @@ struct WeldRenderHandlerInner {
 #[cfg(feature = "cef-runtime")]
 mod cef_backed {
     use super::*;
+    use cef::*;
     use std::ffi::c_void;
 
     cef::wrap_render_handler! {
@@ -77,7 +79,7 @@ mod cef_backed {
             handler: WeldRenderHandlerInner,
         }
 
-        impl cef::RenderHandler {
+        impl RenderHandler {
             fn view_rect(
                 &self,
                 _browser: Option<&mut cef::Browser>,
@@ -133,13 +135,14 @@ mod cef_backed {
                 // DuplicateHandle: the original is callback-scoped; we need an
                 // owned copy that lives until acquire_frame imports it.
                 use windows::Win32::Foundation::{
-                    CloseHandle, DuplicateHandle, GetCurrentProcess, DUPLICATE_SAME_ACCESS, HANDLE,
+                    DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE,
                 };
+                use windows::Win32::System::Threading::GetCurrentProcess;
                 let mut dup = HANDLE::default();
                 let ok = unsafe {
                     DuplicateHandle(
                         GetCurrentProcess(),
-                        HANDLE(info.shared_texture_handle as isize),
+                        HANDLE(info.shared_texture_handle),
                         GetCurrentProcess(),
                         &mut dup,
                         0,
@@ -185,18 +188,163 @@ mod cef_backed {
     cef::wrap_client! {
         pub(super) struct WeldClient {
             render_handler: cef::RenderHandler,
+            load_handler: cef::LoadHandler,
+            display_handler: cef::DisplayHandler,
+            events: Arc<Mutex<EventQueues>>,
         }
 
-        impl cef::Client {
+        impl Client {
             fn render_handler(&self) -> Option<cef::RenderHandler> {
                 Some(self.render_handler.clone())
+            }
+
+            fn load_handler(&self) -> Option<cef::LoadHandler> {
+                Some(self.load_handler.clone())
+            }
+
+            fn display_handler(&self) -> Option<cef::DisplayHandler> {
+                Some(self.display_handler.clone())
+            }
+
+            fn on_process_message_received(
+                &self,
+                _browser: Option<&mut cef::Browser>,
+                _frame: Option<&mut cef::Frame>,
+                source_process: cef::ProcessId,
+                message: Option<&mut cef::ProcessMessage>,
+            ) -> ::std::os::raw::c_int {
+                if source_process != cef::ProcessId::RENDERER { return 0; }
+                let Some(msg) = message else { return 0 };
+                if cef::CefString::from(&msg.name()).to_string() != "weld.message" { return 0; }
+                if let Some(args) = msg.argument_list() {
+                    let text = cef::CefString::from(&args.string(0)).to_string();
+                    self.events.lock().unwrap().web_messages.push_back(text);
+                }
+                1
             }
         }
     }
 
     impl WeldClient {
-        pub fn build(render_handler: cef::RenderHandler) -> cef::Client {
-            Self::new(render_handler)
+        pub fn build(
+            render_handler: cef::RenderHandler,
+            load_handler: cef::LoadHandler,
+            display_handler: cef::DisplayHandler,
+            events: Arc<Mutex<EventQueues>>,
+        ) -> cef::Client {
+            Self::new(render_handler, load_handler, display_handler, events)
+        }
+    }
+
+    // ── Load handler ─────────────────────────────────────────────────────────
+
+    cef::wrap_load_handler! {
+        pub(super) struct WeldLoadHandler {
+            inner: WeldRenderHandlerInner,
+        }
+
+        impl LoadHandler {
+            fn on_load_start(
+                &self,
+                _browser: Option<&mut cef::Browser>,
+                frame: Option<&mut cef::Frame>,
+                _transition_type: cef::TransitionType,
+            ) {
+                let is_main = frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false);
+                if !is_main { return; }
+                let url = frame.map(|f| cef::CefString::from(&f.url()).to_string()).unwrap_or_default();
+                self.inner.events.lock().unwrap().nav.push_back(
+                    crate::surface::NavigationEvent::LoadStart { url }
+                );
+            }
+
+            fn on_load_end(
+                &self,
+                _browser: Option<&mut cef::Browser>,
+                frame: Option<&mut cef::Frame>,
+                http_status_code: ::std::os::raw::c_int,
+            ) {
+                let is_main = frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false);
+                if !is_main { return; }
+                let url = frame.map(|f| cef::CefString::from(&f.url()).to_string()).unwrap_or_default();
+                self.inner.events.lock().unwrap().nav.push_back(
+                    crate::surface::NavigationEvent::LoadEnd {
+                        url,
+                        http_status: http_status_code,
+                    }
+                );
+            }
+
+            fn on_load_error(
+                &self,
+                _browser: Option<&mut cef::Browser>,
+                frame: Option<&mut cef::Frame>,
+                _error_code: cef::Errorcode,
+                error_text: Option<&cef::CefString>,
+                failed_url: Option<&cef::CefString>,
+            ) {
+                let is_main = frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false);
+                if !is_main { return; }
+                let url = failed_url.map(|u| u.to_string()).unwrap_or_default();
+                let text = error_text.map(|t| t.to_string()).unwrap_or_default();
+                // Safety: Errorcode wraps cef_errorcode_t which wraps c_int;
+                // both are #[repr(transparent)] around a 4-byte integer.
+                let code: i32 = unsafe { std::mem::transmute(_error_code) };
+                self.inner.events.lock().unwrap().nav.push_back(
+                    crate::surface::NavigationEvent::LoadError {
+                        url,
+                        error_code: code,
+                        error_text: text,
+                    }
+                );
+            }
+        }
+    }
+
+    impl WeldLoadHandler {
+        pub fn build(inner: WeldRenderHandlerInner) -> cef::LoadHandler {
+            Self::new(inner)
+        }
+    }
+
+    // ── Display handler ───────────────────────────────────────────────────────
+
+    cef::wrap_display_handler! {
+        pub(super) struct WeldDisplayHandler {
+            inner: WeldRenderHandlerInner,
+        }
+
+        impl DisplayHandler {
+            fn on_address_change(
+                &self,
+                _browser: Option<&mut cef::Browser>,
+                frame: Option<&mut cef::Frame>,
+                url: Option<&cef::CefString>,
+            ) {
+                let is_main = frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false);
+                if !is_main { return; }
+                let url = url.map(|u| u.to_string()).unwrap_or_default();
+                self.inner.events.lock().unwrap().nav.push_back(
+                    crate::surface::NavigationEvent::AddressChanged { url }
+                );
+            }
+
+            fn on_title_change(
+                &self,
+                _browser: Option<&mut cef::Browser>,
+                title: Option<&cef::CefString>,
+            ) {
+                let title = title.map(|t| t.to_string()).unwrap_or_default();
+                self.inner.events.lock().unwrap().nav.push_back(
+                    crate::surface::NavigationEvent::TitleChanged { title }
+                );
+            }
+        }
+    }
+
+    impl WeldDisplayHandler {
+        pub fn build(inner: WeldRenderHandlerInner) -> cef::DisplayHandler {
+            Self::new(inner)
         }
     }
 }
@@ -231,7 +379,7 @@ impl WindowsCefProducer {
     ///
     /// Without `cef-runtime`: returns `Err(SurfaceCreation(...))` — vtable
     /// wiring is pending `cef-runtime` enablement.
-    pub fn new(runtime: &CefRuntime, config: WindowsCefConfig) -> Result<Self, WeldError> {
+    pub fn new(_runtime: &CefRuntime, config: WindowsCefConfig) -> Result<Self, WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
             let initial_size = config.surface.initial_size;
@@ -240,14 +388,21 @@ impl WindowsCefProducer {
                 Arc::new(Mutex::new(EventQueues { nav: VecDeque::new(), web_messages: VecDeque::new() }));
             let cef_size = Arc::new(Mutex::new(initial_size));
 
-            let inner = cef_backed::WeldRenderHandlerInner {
+            let inner = WeldRenderHandlerInner {
                 frame_slot: frame_slot.clone(),
                 events: events.clone(),
                 size: cef_size.clone(),
             };
 
-            let render_handler = cef_backed::WeldRenderHandler::build(inner);
-            let mut client = cef_backed::WeldClient::build(render_handler);
+            let render_handler = cef_backed::WeldRenderHandler::build(inner.clone());
+            let load_handler = cef_backed::WeldLoadHandler::build(inner.clone());
+            let display_handler = cef_backed::WeldDisplayHandler::build(inner);
+            let mut client = cef_backed::WeldClient::build(
+                render_handler,
+                load_handler,
+                display_handler,
+                events.clone(),
+            );
 
             let window_info = cef::WindowInfo {
                 windowless_rendering_enabled: 1,
@@ -286,7 +441,7 @@ impl WindowsCefProducer {
 
         #[cfg(not(feature = "cef-runtime"))]
         {
-            let _ = (runtime, config);
+            let _ = (_runtime, config);
             Err(WeldError::SurfaceCreation(
                 "Windows CEF vtable wiring requires the `cef-runtime` feature".into(),
             ))
@@ -313,6 +468,9 @@ impl WindowsCefProducer {
 
 // ── CefSurfaceProducer impl ───────────────────────────────────────────────────
 
+// unreachable_code: cfg-gated fallback Errs are unreachable on the cef-runtime path.
+// unused_variables/mut: parameters used only in cfg(cef-runtime) branches appear unused on scaffold path.
+#[allow(unreachable_code, unused_mut, unused_variables)]
 impl CefSurfaceProducer for WindowsCefProducer {
     fn surface_mode(&self) -> CefSurfaceMode {
         CefSurfaceMode::AcceleratedPaint
@@ -423,8 +581,14 @@ impl CefSurfaceProducer for WindowsCefProducer {
         Err(pending("cef_browser_host_t::set_focus"))
     }
 
-    fn post_web_message(&mut self, _message: &str) -> Result<(), WeldError> {
-        Err(pending("cef_frame_t::send_process_message"))
+    fn post_web_message(&mut self, message: &str) -> Result<(), WeldError> {
+        // Escape the message as a JS string literal and dispatch a MessageEvent
+        // on window so that `window.addEventListener("message", ...)` works.
+        let escaped = escape_js_string(message);
+        let script = format!(
+            "window.dispatchEvent(new MessageEvent('message',{{data:{escaped},origin:'weld'}}));"
+        );
+        self.execute_script(&script, "weld://post_web_message")
     }
 
     fn poll_web_message(&mut self) -> Option<String> {
@@ -435,7 +599,14 @@ impl CefSurfaceProducer for WindowsCefProducer {
         self.events.lock().unwrap().nav.pop_front()
     }
 
-    fn execute_script(&mut self, _script: &str, _source_url: &str) -> Result<(), WeldError> {
+    fn execute_script(&mut self, script: &str, source_url: &str) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(frame) = self.browser.main_frame() {
+            let code: cef::CefString = script.into();
+            let url: cef::CefString = source_url.into();
+            frame.execute_java_script(Some(&code), Some(&url), 0);
+            return Ok(());
+        }
         Err(pending("cef_frame_t::execute_java_script"))
     }
 
@@ -463,6 +634,29 @@ impl CefSurfaceProducer for WindowsCefProducer {
 
 fn pending(op: &'static str) -> WeldError {
     WeldError::BrowserOp(format!("{op}: requires `cef-runtime` feature or pending wiring"))
+}
+
+/// Encode `s` as a JSON string literal (double-quoted, backslash-escapes only).
+/// Used to build a JS snippet that dispatches a MessageEvent without eval-injection risk.
+fn escape_js_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"'  => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                use std::fmt::Write;
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c    => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

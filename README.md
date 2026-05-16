@@ -13,7 +13,7 @@ the embedder bundles Chromium and routes CEF's `OnAcceleratedPaint` output into
 host-owned `wgpu` textures. CEF hands out callback-scoped native handles, so the
 core rule is "duplicate or retain inside the paint callback, then import into
 wgpu from the host side." The trade-off is binary size and a more complex
-process model (see **CEF Foibles** in the `weld` crate docs) in exchange for a
+process model (see **CEF Foibles** in the `welding` crate docs) in exchange for a
 single cross-platform producer, uniform browser behaviour, and direct access to
 the CEF DevTools protocol.
 
@@ -21,10 +21,10 @@ the CEF DevTools protocol.
 
 | Crate | Purpose |
 | --- | --- |
-| [`weld`](weld/) | The library. `CefRuntime` initialization/subprocess detection, native-frame mailbox, Windows D3D shared-handle → `wgpu` D3D12 import, and the `CefSurfaceProducer` trait. CEF vtable/browser creation is still pending. |
+| [`welding`](welding/) | The library. `CefRuntime` initialization/subprocess detection, native-frame mailbox, Windows D3D shared-handle → `wgpu` D3D12 import, and the `CefSurfaceProducer` trait. CEF vtable/browser creation is still pending. |
 | [`demo-weld-win`](demo-weld-win/) | Windows runtime probe. Currently validates the subprocess/runtime entry shape; live CEF frame rendering waits on the client/render-handler wiring. |
 
-See [`weld/README.md`](weld/README.md) for the producer/consumer contract and
+See [`welding/README.md`](welding/README.md) for the producer/consumer contract and
 the platform texture paths.
 
 ## Quick start
@@ -33,7 +33,7 @@ the platform texture paths.
 # cargo check does not require CEF_PATH; runtime initialization does.
 set CEF_PATH=C:\path\to\cef_binary_147.x_windows64
 
-cargo check -p weld
+cargo check -p welding
 cargo run -p demo-weld-win
 ```
 

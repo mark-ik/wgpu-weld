@@ -1,4 +1,4 @@
-//! Windows demo: CEF accelerated OSR → wgpu surface via `weld`.
+//! Windows demo: CEF accelerated OSR → wgpu surface via `welding`.
 //!
 //! # Running
 //!
@@ -18,7 +18,7 @@ use winit::{
     window::{Window, WindowAttributes},
 };
 
-use weld::{
+use welding::{
     windows_cef::{WindowsCefConfig, WindowsCefProducer},
     CefRuntime, CefRuntimeConfig, CefSurfaceConfig, CefSurfaceProducer, EventModifiers,
     FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent, KeyEventKind, MouseAction,

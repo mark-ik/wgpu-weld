@@ -1,14 +1,14 @@
 # wgpu-weld: CEF accelerated OSR → wgpu
 
 **Date:** 2026-05-14  
-**Status:** `cef-runtime` feature added; `cef`/`cef-dll-sys` elected as ABI layer; render-handler vtables wired for Windows (DuplicateHandle) and macOS (CFRetain); Linux scaffold under `cef-runtime`; input methods pending
+**Status:** Phase 1 + 2 complete (Windows); crate renamed `welding`; Phase 3 handler wiring + `import_metal` implemented (pending macOS compile validation); Phase 4 (Linux) scaffold
 **Sibling crates:** `wgpu-graft` (Servo / GL-FBO interop), `wgpu-scry` (system webviews / WGC / ScreenCaptureKit)
 
 ---
 
 ## Goal
 
-Provide a clean, cross-platform Rust crate (`weld`) that routes CEF's
+Provide a clean, cross-platform Rust crate (`welding`) that routes CEF's
 `OnAcceleratedPaint` GPU texture handles into a caller-supplied wgpu pipeline.
 CEF's handles are callback-scoped, so the real contract is: duplicate/retain in
 the callback, store only an owned handle, then import from the host renderer.
@@ -25,7 +25,7 @@ CEF re-executes the host binary as its renderer, GPU, and utility subprocesses.
 framework initialisation (winit, wgpu, thread pools). If subprocesses run host
 initialisation code, the results are undefined.
 
-**Consequence for `weld`:**  
+**Consequence for `welding`:**  
 `CefRuntime::execute_process_from(path)` is a static method that loads
 `libcef` temporarily, calls `execute_process`, and returns
 `Ok(Some(exit_code))` for subprocesses before any `CefRuntime` is constructed.
@@ -55,7 +55,7 @@ macros that eliminate hand-written vtable allocation.
 **Dividing line:**
 
 - **`cef` crate owns:** runtime calls (`initialize`, `execute_process`, `shutdown`), ref-counted object wrappers, handler vtable macros, `WindowInfo`, `BrowserSettings`, `AcceleratedPaintInfo`.
-- **`weld` owns:** callback handle duplication/retain policy, `PendingFrameSlot`, normalized `NativeFrame` variants, `WgpuTextureImporter`, `CefSurfaceProducer` public trait, event queues.
+- **`welding` owns:** callback handle duplication/retain policy, `PendingFrameSlot`, normalized `NativeFrame` variants, `WgpuTextureImporter`, `CefSurfaceProducer` public trait, event queues.
 
 **Build-time tradeoff:** `cef-dll-sys` downloads/links CEF at build time (or uses
 `CEF_PATH`). The old `cef_ffi/` `libloading` skeleton remains as the non-`cef-runtime`
@@ -109,16 +109,16 @@ the `impl cef::RenderHandler` + `on_accelerated_paint` pattern.
 
 | Path | Content |
 |------|---------|
-| `weld/src/lib.rs` | Flat re-exports; `PlatformCefProducer` / `PlatformCefConfig` aliases |
-| `weld/src/error.rs` | `WeldError` |
-| `weld/src/runtime.rs` | `CefRuntime`, `CefRuntimeConfig`, `CefLogSeverity` |
-| `weld/src/surface.rs` | `CefSurfaceProducer` trait, input types, `NavigationEvent` |
-| `weld/src/native_frame/mod.rs` | `NativeFrame`, `PendingFrameSlot`, `WgpuTextureImporter`, `ImportedTexture`, `HostWgpuContext` |
-| `weld/src/cef_ffi/mod.rs` | `CefFunctions` (libloading resolution) |
-| `weld/src/cef_ffi/types.rs` | CEF C API types (`CefSettings`, `CefWindowInfo`, `CefAcceleratedPaintInfo`, …) |
-| `weld/src/windows_cef/mod.rs` | `WindowsCefProducer`, `WindowsCefConfig` |
-| `weld/src/macos_cef/mod.rs` | `MacosCefProducer`, `MacosCefConfig` |
-| `weld/src/linux_cef/mod.rs` | `LinuxCefProducer`, `LinuxCefConfig` (scaffold) |
+| `welding/src/lib.rs` | Flat re-exports; `PlatformCefProducer` / `PlatformCefConfig` aliases |
+| `welding/src/error.rs` | `WeldError` |
+| `welding/src/runtime.rs` | `CefRuntime`, `CefRuntimeConfig`, `CefLogSeverity` |
+| `welding/src/surface.rs` | `CefSurfaceProducer` trait, input types, `NavigationEvent` |
+| `welding/src/native_frame/mod.rs` | `NativeFrame`, `PendingFrameSlot`, `WgpuTextureImporter`, `ImportedTexture`, `HostWgpuContext` |
+| `welding/src/cef_ffi/mod.rs` | `CefFunctions` (libloading resolution) |
+| `welding/src/cef_ffi/types.rs` | CEF C API types (`CefSettings`, `CefWindowInfo`, `CefAcceleratedPaintInfo`, …) |
+| `welding/src/windows_cef/mod.rs` | `WindowsCefProducer`, `WindowsCefConfig` |
+| `welding/src/macos_cef/mod.rs` | `MacosCefProducer`, `MacosCefConfig` |
+| `welding/src/linux_cef/mod.rs` | `LinuxCefProducer`, `LinuxCefConfig` (scaffold) |
 | `demo-weld-win/src/main.rs` | Windows demo: subprocess guard + stub event loop |
 
 ---
@@ -141,17 +141,18 @@ the `impl cef::RenderHandler` + `on_accelerated_paint` pattern.
 
 ### Phase 2 — Input and navigation
 
-- [ ] `resize` → `was_resized()` (done in Phase 1; left here for cross-reference)
-- [ ] Navigation methods (done in Phase 1; left here for cross-reference)  
-- [ ] `execute_script` via `cef_frame_t::execute_java_script`  
-- [ ] `poll_navigation_event` from `cef_load_handler_t` callbacks  
-- [ ] `post_web_message` / `poll_web_message` via `cef_process_message_t`  
+- [x] `resize` → `was_resized()` (done in Phase 1; left here for cross-reference)
+- [x] Navigation methods (done in Phase 1; left here for cross-reference)
+- [x] `execute_script` via `cef_frame_t::execute_java_script`
+- [x] `poll_navigation_event` from `cef_load_handler_t` / `WeldLoadHandler` + `WeldDisplayHandler` callbacks
+- [x] `post_web_message` / `poll_web_message` via JS `dispatchEvent` + `cef_process_message_t`
 
 ### Phase 3 — macOS
 
-- [ ] `OnAcceleratedPaint`: `CFRetain(io_surface)`, store in `PendingFrameSlot`
-- [ ] `import_metal`: `IOSurface::newTextureWithDescriptor` → wgpu HAL Metal  
-- [ ] Demo on macOS  
+- [x] `OnAcceleratedPaint`: `CFRetain(io_surface)`, store in `PendingFrameSlot`
+- [x] `import_metal`: `IOSurface::newTextureWithDescriptor_iosurface_plane` → `wgpu_hal::metal::Device::texture_from_raw` → wgpu HAL Metal
+- [x] All handler fixes: `CefStringUserfree` conversions, `ImplBrowser/Host/Frame` imports, `#[allow]` on impl
+- [ ] Demo on macOS (validates `import_metal` at runtime)  
 
 ### Phase 4 — Linux
 

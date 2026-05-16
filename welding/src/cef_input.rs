@@ -2,6 +2,7 @@
 ///
 /// Only compiled under `cef-runtime`. All functions take `&cef::BrowserHost`
 /// (the cef crate's methods are `&self`, not `&mut self`).
+use cef::ImplBrowserHost;
 use crate::surface::{EventModifiers, FocusDirection, KeyEvent, KeyEventKind, MouseAction,
     MouseButton, MouseEvent};
 
