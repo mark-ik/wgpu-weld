@@ -1,7 +1,7 @@
 # wgpu-weld: CEF accelerated OSR → wgpu
 
 **Date:** 2026-05-14 (revised 2026-05-15: Linux DMABUF API is shipping upstream)  
-**Status:** Phase 1 + 2 complete (Windows); crate renamed `welding`; Phase 3 handler wiring + `import_metal` implemented (pending macOS compile validation); Phase 4 (Linux) library implementation in progress (importer + `on_accelerated_paint` wired; demo pending)
+**Status:** Phase 1 + 2 complete (Windows); crate renamed `welding`; Phase 3 handler wiring + `import_metal` implemented (pending macOS compile validation); Phase 4 (Linux) verified end-to-end on Fedora 44 + Intel/Mesa — example.com renders into the wgpu surface, mouse input routes through to CEF navigation
 **Sibling crates:** `wgpu-graft` (Servo / GL-FBO interop), `wgpu-scry` (system webviews / WGC / ScreenCaptureKit)
 
 ---
@@ -198,9 +198,10 @@ CEF 127.3.5 + Vulkan + X11 + GLFW + Intel):
 - cefclient still has no Linux example for `OnAcceleratedPaint` (cef#3687
   remains open). The public C/C++ API is the contract; no reference client.
 
-**Implementation status (2026-05-15, library side):**
+**Implementation status (2026-05-17):**
 
 - [x] CEF C API names + types verified on `cef = "148"` (`AcceleratedPaintInfo.planes`, `.plane_count`, `.modifier`)
+- [x] CEF 148 API version pinning via `cef::api_hash(CEF_API_VERSION_LAST, 0)` in `runtime.rs` (required on all platforms; previously missing)
 - [x] `linux_cef::cef_backed::WeldRenderHandler::on_accelerated_paint`:
       iterates `planes[..plane_count]`, `libc::dup(fd)` per plane, maps
       `ColorType` → `wgpu::TextureFormat::{Bgra8UnormSrgb,Rgba8UnormSrgb}`,
@@ -213,9 +214,15 @@ CEF 127.3.5 + Vulkan + X11 + GLFW + Intel):
       Vulkan-takes-ownership success path
 - [x] Single-plane Phase-4 constraint (BGRA8/RGBA8); multi-plane returns
       a typed error
-- [ ] Demo crate (`demo-weld-linux` analogous to `demo-weld-win`)
-- [ ] Smoke test on Fedora 44 + Intel iGPU (markik's dev box)
-- [ ] Wayland, NVIDIA, multi-plane formats (deferred)
+- [x] `demo-weld-linux` (mirrors `demo-weld-win`, forces Vulkan backend)
+- [x] Smoke test on Fedora 44 + Intel iGPU: example.com rendered, mouse input round-trips through to navigation
+- [ ] Wayland-native (currently runs through XWayland), NVIDIA proprietary, multi-plane formats (deferred)
+
+Additional fix discovered during Phase 4: `external_begin_frame_enabled` was
+set to 1 in all three producers but no caller invokes `SendExternalBeginFrame`,
+so CEF was waiting forever for a host-driven vsync and emitting zero paints.
+Flipped to 0 across Linux, Windows, and macOS so CEF self-drives at
+`windowless_frame_rate`.
 
 ---
 
@@ -228,5 +235,5 @@ CEF 127.3.5 + Vulkan + X11 + GLFW + Intel):
 | Subprocess tax | None | None | Must call `execute_process_from` first in `main()` |
 | Frame source | Servo/surfman GL FBO | WGC / ScreenCaptureKit / WPE DMABUF | `CefAcceleratedPaintInfo` |
 | Handle lifetime | Producer-owned GL/native resource | Capture/session-owned native frame | **Callback-scoped** — must dup/retain |
-| Linux support | GL FBO → Vulkan external memory | WPE scaffold / DMABUF planned | DMABUF + Vulkan importer wired; demo pending |
+| Linux support | GL FBO → Vulkan external memory | WPE scaffold / DMABUF planned | DMABUF + Vulkan import verified (Intel/Mesa + X11/XWayland) |
 | CPU fallback | Servo readback demos | snapshots / overlay fallback | `cpu-paint-fallback` feature |

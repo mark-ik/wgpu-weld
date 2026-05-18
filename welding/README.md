@@ -24,7 +24,7 @@ if it returns `Some(exit_code)`:
 ```rust,no_run
 fn main() {
     let cef_path = std::env::var("CEF_PATH").expect("CEF_PATH required");
-    if let Some(code) = weld::CefRuntime::execute_process_from(cef_path.as_ref())
+    if let Some(code) = welding::CefRuntime::execute_process_from(cef_path.as_ref())
         .expect("failed to probe CEF subprocess role")
     {
         std::process::exit(code);
