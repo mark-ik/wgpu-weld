@@ -23,6 +23,7 @@ cpu-paint-fallback = []
 
 [dependencies]
 dpi.workspace = true
+log = "0.4"
 thiserror = "2.0.17"
 wgpu = { workspace = true, features = ["metal"] }
 wgpu-hal = "29.0"
@@ -59,3 +60,4 @@ objc2-metal = { version = "0.3.2", features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ash = "0.38.0"
+libc = "0.2"

@@ -111,8 +111,82 @@ mod cef_backed {
                 0
             }
 
-            // on_accelerated_paint: stub pending CEF Linux DMABUF API stabilisation.
-            // When the API lands: dup(2) each plane fd, build DmaBufImage, store.
+            fn on_accelerated_paint(
+                &self,
+                _browser: Option<&mut cef::Browser>,
+                type_: cef::PaintElementType,
+                _dirty_rects: Option<&[cef::Rect]>,
+                info: Option<&cef::AcceleratedPaintInfo>,
+            ) {
+                // VIEW element only; skip popup paints.
+                if type_ != cef::PaintElementType::default() {
+                    return;
+                }
+                let Some(info) = info else { return };
+
+                let plane_count = info.plane_count as usize;
+                log::debug!(
+                    "on_accelerated_paint: planes={}, format={:?}, modifier=0x{:x}, coded_size={}x{}",
+                    plane_count,
+                    info.format,
+                    info.modifier,
+                    info.extra.coded_size.width,
+                    info.extra.coded_size.height,
+                );
+                if plane_count == 0 || plane_count > info.planes.len() {
+                    return;
+                }
+
+                // Map CEF color type → wgpu sRGB texture format. CEF emits
+                // sRGB pixel data; importing as UNORM would double-apply
+                // gamma at sample time. See cef#3687 thread.
+                let format = match *info.format.as_ref() {
+                    cef::sys::cef_color_type_t::CEF_COLOR_TYPE_RGBA_8888 => {
+                        wgpu::TextureFormat::Rgba8UnormSrgb
+                    }
+                    _ => wgpu::TextureFormat::Bgra8UnormSrgb,
+                };
+
+                // dup(2) every plane fd. CEF closes the originals after the
+                // callback returns; Vulkan will close ours on successful
+                // import. On dup failure we close any fds we already duped.
+                let mut planes: Vec<crate::native_frame::DmaBufPlane> =
+                    Vec::with_capacity(plane_count);
+                for src in &info.planes[..plane_count] {
+                    let duped = unsafe { libc::dup(src.fd) };
+                    if duped < 0 {
+                        for p in &planes {
+                            unsafe { libc::close(p.fd) };
+                        }
+                        return;
+                    }
+                    planes.push(crate::native_frame::DmaBufPlane {
+                        fd: duped,
+                        offset: src.offset,
+                        size: src.size,
+                        stride: src.stride,
+                    });
+                }
+
+                let width = info.extra.coded_size.width as u32;
+                let height = info.extra.coded_size.height as u32;
+
+                let mut slot = self.handler.frame_slot.lock().unwrap();
+                let generation = slot.next_generation();
+                slot.store(crate::native_frame::NativeFrame::DmaBufImage(
+                    crate::native_frame::DmaBufImage {
+                        planes,
+                        size: PhysicalSize::new(width, height),
+                        format,
+                        // drm_format is unused by the Vulkan import path
+                        // (which derives vk::Format from wgpu::TextureFormat
+                        // directly). Left zeroed for now.
+                        drm_format: 0,
+                        modifier: info.modifier,
+                        generation,
+                    },
+                ));
+            }
         }
     }
 
@@ -334,7 +408,11 @@ impl LinuxCefProducer {
             let window_info = cef::WindowInfo {
                 windowless_rendering_enabled: 1,
                 shared_texture_enabled: 1,
-                external_begin_frame_enabled: 1,
+                // external_begin_frame_enabled = 0 lets CEF drive paints
+                // itself at `windowless_frame_rate`. Setting it to 1 would
+                // require the host to call SendExternalBeginFrame on every
+                // tick (e.g. to genlock with the host renderer's vsync).
+                external_begin_frame_enabled: 0,
                 ..Default::default()
             };
             let browser_settings = cef::BrowserSettings {

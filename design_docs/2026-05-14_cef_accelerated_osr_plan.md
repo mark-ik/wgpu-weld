@@ -1,7 +1,7 @@
 # wgpu-weld: CEF accelerated OSR → wgpu
 
-**Date:** 2026-05-14  
-**Status:** Phase 1 + 2 complete (Windows); crate renamed `welding`; Phase 3 handler wiring + `import_metal` implemented (pending macOS compile validation); Phase 4 (Linux) scaffold
+**Date:** 2026-05-14 (revised 2026-05-15: Linux DMABUF API is shipping upstream)  
+**Status:** Phase 1 + 2 complete (Windows); crate renamed `welding`; Phase 3 handler wiring + `import_metal` implemented (pending macOS compile validation); Phase 4 (Linux) library implementation in progress (importer + `on_accelerated_paint` wired; demo pending)
 **Sibling crates:** `wgpu-graft` (Servo / GL-FBO interop), `wgpu-scry` (system webviews / WGC / ScreenCaptureKit)
 
 ---
@@ -156,8 +156,66 @@ the `impl cef::RenderHandler` + `on_accelerated_paint` pattern.
 
 ### Phase 4 — Linux
 
-- [ ] Map CEF native-pixmap plane metadata into `DmaBufImage`
-- [ ] `dup(2)` pattern; `import_vulkan` via `VK_KHR_external_memory_fd`  
+**Upstream status (verified 2026-05-15):** the Linux DMABUF accelerated-OSR API
+has been in CEF since `260dd0ca` (2024-03-08, "osr: Implement shared texture
+support", fixes #1006, #2575) — same PR that landed Windows. The Linux variant
+of `cef_accelerated_paint_info_t` in `include/internal/cef_types_linux.h`
+defines:
+
+- `planes[kAcceleratedPaintMaxPlanes]` (max 4): `{ fd, stride, offset, size }`
+- `plane_count`
+- `modifier` (DRM format modifier; `DRM_FORMAT_MOD_INVALID` if none)
+- `format` (`cef_color_type_t`, currently BGRA8/RGBA8)
+- `extra` (common metadata: timestamp, coded_size, visible_rect, etc.)
+
+Commit `189b2472` (2024-12-03, fixes #3730) added partial-update info to the
+callback. The Linux variant is fully defined in the master branch and stable
+release branches (`>= 6261` ≈ Chromium 124+). The `cef = "148"` crate exposes
+`AcceleratedPaintInfo.planes` / `plane_count` / `modifier` as named fields,
+so no raw-sys access is needed.
+
+> **Note on `cef_window_info_t.shared_texture_enabled` docstring.** The header
+> comment still reads *"Currently only supported on Windows (D3D11)"* — that
+> note is stale (cef#3687); the field works on Linux when CEF was built with
+> GPU acceleration enabled.
+
+**Wild-caught implementation notes** (cef#3687 thread, `adriannepilleboue`,
+CEF 127.3.5 + Vulkan + X11 + GLFW + Intel):
+
+- Vulkan `vkImportMemoryFdInfoKHR` **takes ownership of and closes** the
+  passed fd. CEF expects the fd to remain valid for the duration of the
+  callback. Therefore `dup(2)` the fd at the start of `OnAcceleratedPaint`
+  before handing it to the importer (matches our planned strategy).
+- CEF's accelerated path renders directly to an sRGB texture. Import the
+  Vulkan image with `VK_FORMAT_B8G8R8A8_SRGB` (or `R8G8B8A8_SRGB` for
+  `RGBA_8888`), not the `_UNORM` variant — otherwise colours are wrong.
+- **NVIDIA proprietary driver: not viable** with DMABUF + Vulkan today.
+  Mesa/Intel is the validated path; AMDGPU should work but is untested upstream.
+- **GTK3 vs GTK4 conflict:** CEF Linux pulls in GTK3 for its native UI bits.
+  Apps that use GTK4 for windowing (e.g. for Vulkan) will hit a runtime clash.
+  GLFW / winit / SDL on X11 sidestep this; we target winit, matching the
+  Windows/macOS demos.
+- cefclient still has no Linux example for `OnAcceleratedPaint` (cef#3687
+  remains open). The public C/C++ API is the contract; no reference client.
+
+**Implementation status (2026-05-15, library side):**
+
+- [x] CEF C API names + types verified on `cef = "148"` (`AcceleratedPaintInfo.planes`, `.plane_count`, `.modifier`)
+- [x] `linux_cef::cef_backed::WeldRenderHandler::on_accelerated_paint`:
+      iterates `planes[..plane_count]`, `libc::dup(fd)` per plane, maps
+      `ColorType` → `wgpu::TextureFormat::{Bgra8UnormSrgb,Rgba8UnormSrgb}`,
+      packages into `DmaBufImage`, stores in `PendingFrameSlot`
+- [x] `WgpuTextureImporter::import_vulkan` (ported from `wgpu-graft`):
+      `vkCreateImage` w/ `DRM_FORMAT_MODIFIER_EXT` tiling, `vkAllocateMemory`
+      w/ `ImportMemoryFdInfoKHR` + `MemoryDedicatedAllocateInfo`,
+      `texture_from_raw` w/ `wgpu_hal::vulkan::TextureMemory::External`
+- [x] `DmaBufImage::Drop` closes unconsumed fds; `forget_fds` for the
+      Vulkan-takes-ownership success path
+- [x] Single-plane Phase-4 constraint (BGRA8/RGBA8); multi-plane returns
+      a typed error
+- [ ] Demo crate (`demo-weld-linux` analogous to `demo-weld-win`)
+- [ ] Smoke test on Fedora 44 + Intel iGPU (markik's dev box)
+- [ ] Wayland, NVIDIA, multi-plane formats (deferred)
 
 ---
 
@@ -170,5 +228,5 @@ the `impl cef::RenderHandler` + `on_accelerated_paint` pattern.
 | Subprocess tax | None | None | Must call `execute_process_from` first in `main()` |
 | Frame source | Servo/surfman GL FBO | WGC / ScreenCaptureKit / WPE DMABUF | `CefAcceleratedPaintInfo` |
 | Handle lifetime | Producer-owned GL/native resource | Capture/session-owned native frame | **Callback-scoped** — must dup/retain |
-| Linux support | GL FBO → Vulkan external memory | WPE scaffold / DMABUF planned | Native pixmap / DMABUF planned |
+| Linux support | GL FBO → Vulkan external memory | WPE scaffold / DMABUF planned | DMABUF + Vulkan importer wired; demo pending |
 | CPU fallback | Servo readback demos | snapshots / overlay fallback | `cpu-paint-fallback` feature |

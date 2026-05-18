@@ -2,6 +2,7 @@
 members = [
     "welding",
     "demo-weld-win",
+    "demo-weld-linux",
 ]
 resolver = "3"
 
