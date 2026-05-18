@@ -1,6 +1,7 @@
-// weld uses libloading to load CEF at runtime — there is no link-time
-// dependency on libcef. This build script only emits search-path hints
-// for tooling convenience; the crate compiles without CEF_PATH set.
+// Under the `cef-runtime` feature, `cef-dll-sys` downloads and links libcef
+// from the configured CEF binary distribution. This build script just emits
+// CEF_PATH as a rustc env for tooling convenience and triggers rebuilds when
+// it changes.
 
 fn main() {
     if let Ok(cef_path) = std::env::var("CEF_PATH") {

@@ -1,18 +1,13 @@
-/// Linux CEF producer scaffold: accelerated OSR via native pixmap / DMABUF
-/// planes and Vulkan external memory.
-///
-/// # Status
-///
-/// CEF's `OnAcceleratedPaint` / DMABUF path for Linux is not yet stabilised
-/// upstream (as of CEF 148). Under `cef-runtime` the render handler is wired
-/// but `on_accelerated_paint` returns immediately until CEF's Linux GPU API
-/// is confirmed. Without `cef-runtime` the constructor returns an error.
+/// Linux CEF producer: accelerated OSR via native pixmap / DMABUF planes
+/// and Vulkan external memory.
 ///
 /// # DMABUF fd lifetime
 ///
-/// When the CEF Linux path lands, each plane fd in `AcceleratedPaintInfo` is
-/// callback-scoped. The `on_accelerated_paint` callback must call `dup(2)` on
-/// every fd before storing them in [`DmaBufImage`](crate::native_frame::DmaBufImage).
+/// Each plane fd in `AcceleratedPaintInfo` is callback-scoped. The
+/// `on_accelerated_paint` callback calls `dup(2)` on every fd before storing
+/// the planes in [`DmaBufImage`](crate::native_frame::DmaBufImage). The Vulkan
+/// importer takes ownership of the duped fds on success; otherwise
+/// `DmaBufImage::Drop` closes them.
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
@@ -29,9 +24,6 @@ use crate::{
         NavigationEvent,
     },
 };
-
-#[cfg(not(feature = "cef-runtime"))]
-use crate::cef_ffi::CefFunctions;
 
 #[cfg(feature = "cef-runtime")]
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
@@ -363,8 +355,6 @@ mod cef_backed {
 // ── Producer struct ───────────────────────────────────────────────────────────
 
 pub struct LinuxCefProducer {
-    #[cfg(not(feature = "cef-runtime"))]
-    _fns: Arc<CefFunctions>,
     browser_id: i32,
     #[cfg(feature = "cef-runtime")]
     browser: cef::Browser,

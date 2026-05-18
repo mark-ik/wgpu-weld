@@ -241,86 +241,42 @@ mod cef_backed {
 #[cfg(feature = "cef-runtime")]
 pub use cef_backed::CefRuntime;
 
-// ── scaffold: libloading-backed implementation ────────────────────────────────
+// ── stub: no `cef-runtime` feature ────────────────────────────────────────────
+//
+// Without the `cef-runtime` feature, the crate still compiles so downstream
+// code can reference its types, but the runtime returns errors on every call.
+// (The previous libloading-backed scaffold was removed — it was unused and
+// duplicated CEF type definitions that drift across CEF versions.)
 
 #[cfg(not(feature = "cef-runtime"))]
-mod scaffold {
+mod stub {
     use super::*;
-    use std::sync::Arc;
-    use libloading::Library;
-    use crate::cef_ffi::CefFunctions;
 
-    /// CEF global runtime (scaffold — no `cef-runtime` feature). Uses
-    /// `libloading` to resolve CEF symbols at runtime from `CefRuntimeConfig::cef_path`.
+    /// CEF global runtime stub. Construct only via [`initialize`]; every
+    /// method returns [`WeldError::FeatureRequired`].
     pub struct CefRuntime {
-        _lib: Arc<Library>,
-        fns: Arc<CefFunctions>,
         pub(super) config: CefRuntimeConfig,
     }
 
     impl CefRuntime {
         pub fn execute_process_from(
-            cef_path: &std::path::Path,
+            _cef_path: &std::path::Path,
         ) -> Result<Option<i32>, WeldError> {
-            let lib = unsafe {
-                Library::new(cef_path.join(cef_lib_name())).map_err(|e| {
-                    WeldError::LibraryLoad { path: cef_path.display().to_string(), source: e }
-                })?
-            };
-            let fns = CefFunctions::load(&lib)?;
-            let code = unsafe { fns.execute_process() };
-            if code >= 0 { Ok(Some(code)) } else { Ok(None) }
+            Err(WeldError::FeatureRequired("cef-runtime"))
         }
 
-        pub fn initialize(config: CefRuntimeConfig) -> Result<Self, WeldError> {
-            let lib = Arc::new(unsafe {
-                Library::new(config.cef_path.join(cef_lib_name())).map_err(|e| {
-                    WeldError::LibraryLoad {
-                        path: config.cef_path.display().to_string(),
-                        source: e,
-                    }
-                })?
-            });
-            let fns = Arc::new(CefFunctions::load(&lib)?);
-            let code = unsafe { fns.initialize(&config) };
-            if code == 0 {
-                return Err(WeldError::InitFailed { code });
-            }
-            Ok(CefRuntime { _lib: lib, fns, config })
+        pub fn initialize(_config: CefRuntimeConfig) -> Result<Self, WeldError> {
+            Err(WeldError::FeatureRequired("cef-runtime"))
         }
 
-        pub fn run_message_loop(&self) {
-            unsafe { (self.fns.run_message_loop)() }
-        }
-
-        pub fn do_message_loop_work(&self) {
-            unsafe { (self.fns.do_message_loop_work)() }
-        }
+        pub fn run_message_loop(&self) {}
+        pub fn do_message_loop_work(&self) {}
 
         pub fn config(&self) -> &CefRuntimeConfig {
             &self.config
         }
-
-        pub(crate) fn fns(&self) -> Arc<CefFunctions> {
-            self.fns.clone()
-        }
-    }
-
-    impl Drop for CefRuntime {
-        fn drop(&mut self) {
-            unsafe { (self.fns.shutdown)() }
-        }
-    }
-
-    fn cef_lib_name() -> &'static str {
-        #[cfg(windows)]
-        return "libcef.dll";
-        #[cfg(target_os = "macos")]
-        return "Chromium Embedded Framework.framework/Chromium Embedded Framework";
-        #[cfg(target_os = "linux")]
-        return "libcef.so";
     }
 }
 
 #[cfg(not(feature = "cef-runtime"))]
-pub use scaffold::CefRuntime;
+pub use stub::CefRuntime;

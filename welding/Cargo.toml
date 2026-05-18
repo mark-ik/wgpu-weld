@@ -27,10 +27,7 @@ log = "0.4"
 thiserror = "2.0.17"
 wgpu = { workspace = true, features = ["metal"] }
 wgpu-hal = "29.0"
-# Scaffold / non-cef-runtime path only: loads CEF function pointers at runtime
-# from a caller-supplied path. Superseded by the `cef` crate under cef-runtime.
-libloading = "0.8"
-# Real CEF ABI layer: generated bindings + wrap_* handler macros + typed
+# CEF ABI layer: generated bindings + wrap_* handler macros + typed
 # AcceleratedPaintInfo. Only active under the `cef-runtime` feature.
 cef = { version = "148", features = ["accelerated_osr"], optional = true }
 

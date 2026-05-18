@@ -24,8 +24,6 @@ use crate::{
     },
 };
 
-#[cfg(not(feature = "cef-runtime"))]
-use crate::cef_ffi::CefFunctions;
 
 #[cfg(feature = "cef-runtime")]
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
@@ -326,8 +324,6 @@ mod cef_backed {
 // ── Producer struct ───────────────────────────────────────────────────────────
 
 pub struct MacosCefProducer {
-    #[cfg(not(feature = "cef-runtime"))]
-    _fns: Arc<CefFunctions>,
     browser_id: i32,
     #[cfg(feature = "cef-runtime")]
     browser: cef::Browser,

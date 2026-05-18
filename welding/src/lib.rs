@@ -1,6 +1,5 @@
 #![doc = include_str!("../README.md")]
 
-pub mod cef_ffi;
 pub mod error;
 pub mod native_frame;
 pub mod runtime;

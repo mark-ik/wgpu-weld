@@ -2944,7 +2944,6 @@ dependencies = [
  "cef",
  "dpi",
  "libc",
- "libloading 0.8.9",
  "log",
  "objc2 0.6.4",
  "objc2-foundation 0.3.2",
