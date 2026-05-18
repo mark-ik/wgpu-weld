@@ -187,7 +187,7 @@ mod cef_backed {
     }
 
     fn build_settings(config: &CefRuntimeConfig) -> cef::Settings {
-        let s = cef::Settings {
+        let mut s = cef::Settings {
             windowless_rendering_enabled: 1,
             external_message_pump: 1,
             log_severity: match config.log_severity {
@@ -201,6 +201,18 @@ mod cef_backed {
             },
             ..Default::default()
         };
+        // root_cache_path: CEF uses this directory as the parent of all
+        // browser cache/session data. Without it, CEF logs a warning about
+        // "default value may lead to unintended process singleton behavior"
+        // and may share state unexpectedly across welding-using applications.
+        if let Some(cache_path) = config.cache_path.as_ref() {
+            let path_str = cache_path.to_string_lossy();
+            s.root_cache_path = (&*path_str).into();
+        }
+        if let Some(subprocess_path) = config.browser_subprocess_path.as_ref() {
+            let path_str = subprocess_path.to_string_lossy();
+            s.browser_subprocess_path = (&*path_str).into();
+        }
         s
     }
 

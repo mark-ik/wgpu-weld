@@ -526,8 +526,11 @@ fn main() {
     // CEF renderer/GPU helper processes don't all init their own logger.
     env_logger::init();
 
-    let runtime = CefRuntime::initialize(CefRuntimeConfig::new(&cef_path))
-        .expect("welding: CEF initialize failed");
+    let mut config = CefRuntimeConfig::new(&cef_path);
+    // Avoid sharing the default CEF cache directory across processes — pick a
+    // per-binary subdir under the system temp dir.
+    config.cache_path = Some(std::env::temp_dir().join("welding-demo-linux-cache"));
+    let runtime = CefRuntime::initialize(config).expect("welding: CEF initialize failed");
 
     let event_loop = EventLoop::new().expect("event loop creation failed");
     event_loop.set_control_flow(ControlFlow::Poll);
