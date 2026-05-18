@@ -99,15 +99,14 @@ impl ApplicationHandler for DemoApp {
                 .await
                 .expect("no suitable wgpu adapter (need Dx12)");
             let (device, queue) = adapter
-                .request_device(
-                    &wgpu::DeviceDescriptor {
-                        label: Some("weld-demo"),
-                        required_features: wgpu::Features::empty(),
-                        required_limits: wgpu::Limits::default(),
-                        memory_hints: wgpu::MemoryHints::default(),
-                    },
-                    None,
-                )
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("weld-demo"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                    memory_hints: wgpu::MemoryHints::default(),
+                    trace: wgpu::Trace::Off,
+                })
                 .await
                 .expect("request_device failed");
             let caps = surface.get_capabilities(&adapter);
@@ -295,14 +294,21 @@ impl ApplicationHandler for DemoApp {
                 }
 
                 let output = match s.surface.get_current_texture() {
-                    Ok(t) => t,
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                    wgpu::CurrentSurfaceTexture::Success(t)
+                    | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+                    wgpu::CurrentSurfaceTexture::Lost
+                    | wgpu::CurrentSurfaceTexture::Outdated => {
                         s.surface.configure(&s.host_ctx.device, &s.surface_config);
                         s.window.request_redraw();
                         return;
                     }
-                    Err(e) => {
-                        eprintln!("weld demo: surface error: {e}");
+                    wgpu::CurrentSurfaceTexture::Timeout
+                    | wgpu::CurrentSurfaceTexture::Occluded => {
+                        s.window.request_redraw();
+                        return;
+                    }
+                    wgpu::CurrentSurfaceTexture::Validation => {
+                        eprintln!("weld demo: surface validation error");
                         return;
                     }
                 };
@@ -340,6 +346,7 @@ impl ApplicationHandler for DemoApp {
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &target,
                             resolve_target: None,
+                            depth_slice: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(clear_color),
                                 store: wgpu::StoreOp::Store,
@@ -397,8 +404,8 @@ fn build_blit_pipeline(
     });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("blit-layout"),
-        bind_group_layouts: &[&bg_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&bg_layout)],
+        immediate_size: 0,
     });
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("blit"),
@@ -425,7 +432,7 @@ fn build_blit_pipeline(
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
