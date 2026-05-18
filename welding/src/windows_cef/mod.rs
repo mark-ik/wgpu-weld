@@ -407,7 +407,9 @@ impl WindowsCefProducer {
             let window_info = cef::WindowInfo {
                 windowless_rendering_enabled: 1,
                 shared_texture_enabled: 1,
-                external_begin_frame_enabled: 1,
+                // CEF self-drives paints at `windowless_frame_rate`. Setting
+                // this to 1 requires the host to call SendExternalBeginFrame.
+                external_begin_frame_enabled: 0,
                 ..Default::default()
             };
             let browser_settings = cef::BrowserSettings {

@@ -116,6 +116,7 @@ mod cef_backed {
             cef_path: &std::path::Path,
         ) -> Result<Option<i32>, WeldError> {
             maybe_load_library(cef_path)?;
+            pin_cef_api_version();
             let args = Args::new();
             let mut app = WeldAppWrapper::build();
             let code = cef::execute_process(
@@ -130,6 +131,7 @@ mod cef_backed {
         /// this is the browser process.
         pub fn initialize(config: CefRuntimeConfig) -> Result<Self, WeldError> {
             maybe_load_library(&config.cef_path)?;
+            pin_cef_api_version();
             let args = Args::new();
             let mut app = WeldAppWrapper::build();
             let settings = build_settings(&config);
@@ -164,6 +166,24 @@ mod cef_backed {
         fn drop(&mut self) {
             cef::shutdown();
         }
+    }
+
+    /// Pin the CEF API version for this process.
+    ///
+    /// CEF 148 introduced API versioning: each call that crosses the libcef
+    /// boundary checks the host has pinned a version. Without this, libcef
+    /// aborts with "CefApp_0_CToCpp called with invalid version -1" the first
+    /// time the App vtable is dispatched. The pin lasts for the process and
+    /// only the first call has effect, so it's safe to call at the top of
+    /// both `execute_process_from` (subprocess path) and `initialize` (host
+    /// path).
+    ///
+    /// We pin to `CEF_API_VERSION_LAST` — the latest version the cef-dll-sys
+    /// bindings know about, which by construction matches the libcef.so we
+    /// link against. Cross-platform: required equally on Linux, Windows, and
+    /// macOS as of CEF 148.
+    fn pin_cef_api_version() {
+        let _ = cef::api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
     }
 
     fn build_settings(config: &CefRuntimeConfig) -> cef::Settings {

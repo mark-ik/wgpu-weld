@@ -12,7 +12,9 @@
 ///   "not implemented" for optional callbacks).
 #[cfg(not(windows))]
 use std::os::raw::c_char;
-use std::os::raw::{c_int, c_void};
+use std::os::raw::c_int;
+#[cfg(any(windows, target_os = "macos"))]
+use std::os::raw::c_void;
 
 // ── Base ──────────────────────────────────────────────────────────────────────
 
