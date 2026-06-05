@@ -4,6 +4,7 @@ members = [
     "demo-weld-win",
     "demo-weld-linux",
 ]
+default-members = ["welding"]
 resolver = "3"
 
 [workspace.package]

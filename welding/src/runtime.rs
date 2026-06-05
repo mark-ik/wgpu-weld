@@ -15,7 +15,7 @@ use crate::error::WeldError;
 /// ```no_run
 /// fn main() {
 ///     let cef_path = std::env::var("CEF_PATH").expect("CEF_PATH required");
-///     if let Some(code) = weld::CefRuntime::execute_process_from(cef_path.as_ref())
+///     if let Some(code) = welding::CefRuntime::execute_process_from(cef_path.as_ref())
 ///         .expect("failed to probe CEF subprocess role")
 ///     {
 ///         std::process::exit(code);
@@ -152,8 +152,11 @@ mod cef_backed {
             cef::run_message_loop();
         }
 
-        /// Pump CEF's message loop once. Call on every host event-loop tick.
+        /// Pump CEF's message loop once on platforms where the host owns it.
+        ///
+        /// Windows uses CEF's dedicated message-loop thread so this is a no-op.
         pub fn do_message_loop_work(&self) {
+            #[cfg(not(target_os = "windows"))]
             cef::do_message_loop_work();
         }
 
@@ -189,7 +192,14 @@ mod cef_backed {
     fn build_settings(config: &CefRuntimeConfig) -> cef::Settings {
         let mut s = cef::Settings {
             windowless_rendering_enabled: 1,
-            external_message_pump: 1,
+            // Windows uses CEF's supported dedicated UI thread. Other platforms
+            // continue to integrate CefDoMessageLoopWork into the host loop.
+            multi_threaded_message_loop: cfg!(target_os = "windows") as _,
+            external_message_pump: cfg!(not(target_os = "windows")) as _,
+            // We pass null sandbox_info to CEF initialize/execute_process;
+            // disable sandbox mode so subprocesses (GPU/renderer/utility)
+            // can start reliably across dev environments.
+            no_sandbox: 1,
             log_severity: match config.log_severity {
                 CefLogSeverity::Default => LogSeverity::DEFAULT,
                 CefLogSeverity::Verbose => LogSeverity::VERBOSE,

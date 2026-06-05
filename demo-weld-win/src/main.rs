@@ -55,14 +55,15 @@ struct DemoState {
     surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
     host_ctx: HostWgpuContext,
-    cef_runtime: CefRuntime,
     producer: WindowsCefProducer,
+    _cef_runtime: CefRuntime,
     pipeline: wgpu::RenderPipeline,
     bg_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     frame: Option<ImportedTexture>,
     cursor: (f32, f32),
     mods: EventModifiers,
+    closing: bool,
 }
 
 impl DemoApp {
@@ -88,7 +89,9 @@ impl ApplicationHandler for DemoApp {
         );
 
         let (device, queue, surface, surface_config) = pollster::block_on(async {
-            let instance = wgpu::Instance::default();
+            let mut instance_desc = wgpu::InstanceDescriptor::new_without_display_handle();
+            instance_desc.backends = wgpu::Backends::DX12;
+            let instance = wgpu::Instance::new(instance_desc);
             let surface = instance.create_surface(window.clone()).unwrap();
             let adapter = instance
                 .request_adapter(&wgpu::RequestAdapterOptions {
@@ -137,15 +140,18 @@ impl ApplicationHandler for DemoApp {
 
         let cef_runtime = self.cef_runtime.take().unwrap();
         let win_size = window.inner_size();
+        let initial_url =
+            std::env::var("WELD_URL").unwrap_or_else(|_| "https://example.com".into());
         let producer = WindowsCefProducer::new(
             &cef_runtime,
             WindowsCefConfig {
                 surface: CefSurfaceConfig {
-                    initial_url: "https://example.com".into(),
+                    initial_url: initial_url.clone(),
                     initial_size: win_size,
                     ..Default::default()
                 },
             },
+            &host_ctx,
         )
         .expect("failed to create CEF browser surface");
 
@@ -154,7 +160,7 @@ impl ApplicationHandler for DemoApp {
             surface,
             surface_config,
             host_ctx,
-            cef_runtime,
+            _cef_runtime: cef_runtime,
             producer,
             pipeline,
             bg_layout,
@@ -162,7 +168,9 @@ impl ApplicationHandler for DemoApp {
             frame: None,
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
+            closing: false,
         });
+        self.state.as_ref().unwrap().window.request_redraw();
     }
 
     fn window_event(
@@ -177,19 +185,31 @@ impl ApplicationHandler for DemoApp {
         };
         match event {
             WindowEvent::CloseRequested => {
-                let _ = s.producer.close();
-                el.exit();
+                if !s.closing {
+                    eprintln!("weld demo: close requested");
+                    s.closing = true;
+                    if let Err(err) = s.producer.close() {
+                        eprintln!("weld demo: close failed: {err}");
+                        el.exit();
+                    } else {
+                        s.window.request_redraw();
+                    }
+                }
             }
 
             WindowEvent::Resized(size) => {
                 s.surface_config.width = size.width.max(1);
                 s.surface_config.height = size.height.max(1);
                 s.surface.configure(&s.host_ctx.device, &s.surface_config);
-                let _ = s.producer.resize(size);
+                if let Err(err) = s.producer.resize(size) {
+                    eprintln!("weld demo: resize failed: {err}");
+                }
             }
 
             WindowEvent::Focused(true) => {
-                let _ = s.producer.move_focus(FocusDirection::Forward);
+                if let Err(err) = s.producer.move_focus(FocusDirection::Forward) {
+                    eprintln!("weld demo: move_focus failed: {err}");
+                }
             }
 
             WindowEvent::ModifiersChanged(m) => {
@@ -208,45 +228,53 @@ impl ApplicationHandler for DemoApp {
                 let vk = keycode_to_vk(kc);
                 if ke.state == ElementState::Pressed {
                     // RawKeyDown first (non-printable nav/modifier keys rely on this)
-                    let _ = s.producer.send_keyboard_input(KeyEvent {
+                    if let Err(err) = s.producer.send_keyboard_input(KeyEvent {
                         kind: KeyEventKind::RawKeyDown,
                         windows_key_code: vk,
                         native_key_code: 0,
                         character: None,
                         modifiers: s.mods,
-                    });
+                    }) {
+                        eprintln!("weld demo: send RawKeyDown failed: {err}");
+                    }
                     // Char for printable text — winit's .text field includes Shift
                     if let Some(ch) =
                         ke.text.as_ref().and_then(|t| t.chars().next())
                     {
-                        let _ = s.producer.send_keyboard_input(KeyEvent {
+                        if let Err(err) = s.producer.send_keyboard_input(KeyEvent {
                             kind: KeyEventKind::Char,
                             windows_key_code: vk,
                             native_key_code: 0,
                             character: Some(ch),
                             modifiers: s.mods,
-                        });
+                        }) {
+                            eprintln!("weld demo: send Char failed: {err}");
+                        }
                     }
                 } else {
-                    let _ = s.producer.send_keyboard_input(KeyEvent {
+                    if let Err(err) = s.producer.send_keyboard_input(KeyEvent {
                         kind: KeyEventKind::KeyUp,
                         windows_key_code: vk,
                         native_key_code: 0,
                         character: None,
                         modifiers: s.mods,
-                    });
+                    }) {
+                        eprintln!("weld demo: send KeyUp failed: {err}");
+                    }
                 }
             }
 
             WindowEvent::CursorMoved { position, .. } => {
                 s.cursor = (position.x as f32, position.y as f32);
-                let _ = s.producer.send_mouse_input(MouseEvent {
+                if let Err(err) = s.producer.send_mouse_input(MouseEvent {
                     x: position.x as i32,
                     y: position.y as i32,
                     button: MouseButton::Left,
                     action: MouseAction::Moved,
                     modifiers: s.mods,
-                });
+                }) {
+                    eprintln!("weld demo: mouse move failed: {err}");
+                }
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
@@ -261,13 +289,15 @@ impl ApplicationHandler for DemoApp {
                 } else {
                     MouseAction::Released
                 };
-                let _ = s.producer.send_mouse_input(MouseEvent {
+                if let Err(err) = s.producer.send_mouse_input(MouseEvent {
                     x: s.cursor.0 as i32,
                     y: s.cursor.1 as i32,
                     button: mb,
                     action,
                     modifiers: s.mods,
-                });
+                }) {
+                    eprintln!("weld demo: mouse button failed: {err}");
+                }
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
@@ -277,20 +307,29 @@ impl ApplicationHandler for DemoApp {
                     }
                     MouseScrollDelta::PixelDelta(d) => (d.x as i32, d.y as i32),
                 };
-                let _ = s.producer.send_mouse_input(MouseEvent {
+                if let Err(err) = s.producer.send_mouse_input(MouseEvent {
                     x: s.cursor.0 as i32,
                     y: s.cursor.1 as i32,
                     button: MouseButton::Left,
                     action: MouseAction::WheelScrolled { delta_x: dx, delta_y: dy },
                     modifiers: s.mods,
-                });
+                }) {
+                    eprintln!("weld demo: mouse wheel failed: {err}");
+                }
             }
 
             WindowEvent::RedrawRequested => {
-                s.cef_runtime.do_message_loop_work();
-
-                if let Ok(Some(new_frame)) = s.producer.acquire_frame(&s.host_ctx) {
-                    s.frame = Some(new_frame);
+                match s.producer.acquire_frame(&s.host_ctx) {
+                    Ok(Some(new_frame)) => {
+                        s.frame = Some(new_frame);
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        eprintln!("weld demo: acquire_frame failed: {err}");
+                    }
+                }
+                while let Some(event) = s.producer.poll_navigation_event() {
+                    eprintln!("weld demo: navigation event: {event:?}");
                 }
 
                 let output = match s.surface.get_current_texture() {
@@ -363,10 +402,31 @@ impl ApplicationHandler for DemoApp {
 
                 s.host_ctx.queue.submit([enc.finish()]);
                 output.present();
-                s.window.request_redraw();
+                if s.closing && s.producer.is_closed() {
+                    el.exit();
+                } else {
+                    s.window.request_redraw();
+                }
             }
 
             _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+        let Some(s) = self.state.as_mut() else {
+            return;
+        };
+
+        if s.closing {
+            if s.producer.is_closed() {
+                eprintln!("weld demo: CEF browser closed; exiting event loop");
+                el.exit();
+            } else {
+                s.window.request_redraw();
+            }
+        } else {
+            s.window.request_redraw();
         }
     }
 }
@@ -496,7 +556,9 @@ fn main() {
         std::process::exit(code);
     }
 
-    let runtime = CefRuntime::initialize(CefRuntimeConfig::new(&cef_path))
+    let mut runtime_config = CefRuntimeConfig::new(&cef_path);
+    runtime_config.cache_path = Some(std::env::temp_dir().join("wgpu-weld-demo-cache"));
+    let runtime = CefRuntime::initialize(runtime_config)
         .expect("weld: CEF initialize failed");
 
     let event_loop = EventLoop::new().expect("event loop creation failed");

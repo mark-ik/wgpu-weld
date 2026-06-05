@@ -10,7 +10,8 @@ use crate::{
 #[non_exhaustive]
 pub enum CefSurfaceMode {
     /// CEF can produce GPU-importable frames via `OnAcceleratedPaint`.
-    /// No copy; the shared texture handle is imported directly into wgpu.
+    /// Platform adapters copy or retain callback-scoped resources as needed
+    /// before exposing host-owned textures to wgpu.
     AcceleratedPaint,
     /// CPU-bitmap fallback via `OnPaint` (`feature = "cpu-paint-fallback"`).
     /// Available regardless of GPU support; requires a texture upload per frame.

@@ -11,18 +11,18 @@ adapter — WebView2 / WKWebView / WebKitGTK).
 `wgpu-weld` covers the CEF side: rather than using the OS's built-in webview,
 the embedder bundles Chromium and routes CEF's `OnAcceleratedPaint` output into
 host-owned `wgpu` textures. CEF hands out callback-scoped native handles, so the
-core rule is "duplicate or retain inside the paint callback, then import into
-wgpu from the host side." The trade-off is binary size and a more complex
-process model (see **CEF Foibles** in the `welding` crate docs) in exchange for a
-single cross-platform producer, uniform browser behaviour, and direct access to
-the CEF DevTools protocol.
+core rule is "copy or retain inside the paint callback, then expose only an
+owned resource to the host side." The trade-off is binary size and a more
+complex process model (see **CEF Foibles** in the `welding` crate docs) in
+exchange for a single cross-platform producer, uniform browser behaviour, and
+direct access to the CEF DevTools protocol.
 
 ## Workspace
 
 | Crate | Purpose |
 | --- | --- |
-| [`welding`](welding/) | The library. `CefRuntime` initialization/subprocess detection, native-frame mailbox, Windows D3D shared-handle → `wgpu` D3D12 import, and the `CefSurfaceProducer` trait. CEF vtable/browser creation is still pending. |
-| [`demo-weld-win`](demo-weld-win/) | Windows runtime probe. Currently validates the subprocess/runtime entry shape; live CEF frame rendering waits on the client/render-handler wiring. |
+| [`welding`](welding/) | The library. `CefRuntime` initialization/subprocess detection, native-frame mailbox, Windows callback-time D3D11 copy → `wgpu` D3D12 import, and the `CefSurfaceProducer` trait. |
+| [`demo-weld-win`](demo-weld-win/) | Windows accelerated-OSR demo. Renders a live CEF surface through the host's wgpu pipeline and forwards input. |
 
 See [`welding/README.md`](welding/README.md) for the producer/consumer contract and
 the platform texture paths.
@@ -36,6 +36,9 @@ set CEF_PATH=C:\path\to\cef_binary_147.x_windows64
 cargo check -p welding
 cargo run -p demo-weld-win
 ```
+
+For a deterministic visual smoke test, point the demo at a data URL with
+`WELD_URL`; otherwise it loads `https://example.com`.
 
 ## Relationship to wgpu-scry and wgpu-graft
 

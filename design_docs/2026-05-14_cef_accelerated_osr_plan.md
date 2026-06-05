@@ -1,6 +1,6 @@
 # wgpu-weld: CEF accelerated OSR → wgpu
 
-**Date:** 2026-05-14 (revised 2026-05-15: Linux DMABUF API is shipping upstream)  
+**Date:** 2026-05-14 (revised 2026-06-02: Windows pooled-resource lifetime correction)
 **Status:** Phase 1 + 2 complete (Windows); crate renamed `welding`; Phase 3 handler wiring + `import_metal` implemented (pending macOS compile validation); Phase 4 (Linux) verified end-to-end on Fedora 44 + Intel/Mesa — example.com renders into the wgpu surface, mouse input routes through to CEF navigation
 **Sibling crates:** `wgpu-graft` (Servo / GL-FBO interop), `wgpu-scry` (system webviews / WGC / ScreenCaptureKit)
 
@@ -11,8 +11,15 @@
 Provide a clean, cross-platform Rust crate (`welding`) that routes CEF's
 `OnAcceleratedPaint` GPU texture handles into a caller-supplied wgpu pipeline.
 CEF's handles are callback-scoped, so the real contract is: duplicate/retain in
-the callback, store only an owned handle, then import from the host renderer.
-Windows is the first concrete import path; macOS and Linux remain planned.
+the callback, store only an owned resource, then import from the host renderer.
+Windows is the first concrete path; macOS import code exists pending runtime
+validation, and Linux DMABUF import has been verified on Fedora 44 + Intel/Mesa.
+
+**2026-06-02 Windows correction:** CEF's pooled Windows resource must not escape
+`OnAcceleratedPaint`, even through a duplicated handle. Windows now duplicates
+the handle only long enough to open the CEF D3D11 resource, copies into a
+weld-owned shared texture inside the callback, and exposes only that owned copy
+to the D3D12/wgpu host path.
 
 ---
 
@@ -37,12 +44,13 @@ The `CefAcceleratedPaintInfo` handle is transient:
 
 | Platform | Handle type       | Lifetime                              | weld strategy                   |
 |----------|-------------------|---------------------------------------|---------------------------------|
-| Windows  | Win32 `HANDLE`    | Valid only during the callback        | `DuplicateHandle` before return |
+| Windows  | Win32 `HANDLE`    | Resource valid only during callback   | D3D11 copy into weld-owned shared texture before return |
 | macOS    | `IOSurfaceRef`    | Ref-counted; CEF holds one ref        | `CFRetain` before return        |
 | Linux    | native pixmap / DMABUF planes | Valid only during the callback | `dup(2)` before return |
 
-The duplicated / retained handle lives in `Arc<Mutex<PendingFrameSlot>>` until
-`acquire_frame` imports it into wgpu and releases it.
+The retained macOS and duplicated Linux resources live in
+`Arc<Mutex<PendingFrameSlot>>` until `acquire_frame` imports them into wgpu and
+releases them. Windows stores an already imported weld-owned copy.
 
 ### 3. ABI layer: `cef`/`cef-dll-sys` (decided)
 
@@ -89,7 +97,7 @@ the `impl cef::RenderHandler` + `on_accelerated_paint` pattern.
              ┌──────────────────────────────────────────────────▼──┐
              │  CEF render-handler callback thread                  │
              │  OnAcceleratedPaint:                                 │
-             │    Windows: DuplicateHandle → Dx12SharedTexture      │
+             │    Windows: D3D11 copy → owned Dx12SharedTexture     │
              │    macOS:   CFRetain         → MetalTextureRef        │
              │    Linux:   dup(2)           → DmaBufImage            │
              │    store → PendingFrameSlot                          │
@@ -98,9 +106,9 @@ the `impl cef::RenderHandler` + `on_accelerated_paint` pattern.
   host calls:
     producer.acquire_frame(&host_ctx)
       → WgpuTextureImporter::import(frame, ctx)
-        → Windows: D3D12::OpenSharedHandle → wgpu HAL Dx12
-        → macOS:   planned IOSurface → MTLTexture → wgpu HAL Metal
-        → Linux:   planned vkCreateImage + VkImportMemoryFdInfoKHR → wgpu HAL Vulkan
+        → Windows: already imported callback-time D3D11 copy
+        → macOS:   IOSurface → MTLTexture → wgpu HAL Metal
+        → Linux:   vkCreateImage + VkImportMemoryFdInfoKHR → wgpu HAL Vulkan
 ```
 
 ---
@@ -118,7 +126,7 @@ the `impl cef::RenderHandler` + `on_accelerated_paint` pattern.
 | `welding/src/cef_ffi/types.rs` | CEF C API types (`CefSettings`, `CefWindowInfo`, `CefAcceleratedPaintInfo`, …) |
 | `welding/src/windows_cef/mod.rs` | `WindowsCefProducer`, `WindowsCefConfig` |
 | `welding/src/macos_cef/mod.rs` | `MacosCefProducer`, `MacosCefConfig` |
-| `welding/src/linux_cef/mod.rs` | `LinuxCefProducer`, `LinuxCefConfig` (scaffold) |
+| `welding/src/linux_cef/mod.rs` | `LinuxCefProducer`, `LinuxCefConfig` |
 | `demo-weld-win/src/main.rs` | Windows demo: subprocess guard + stub event loop |
 
 ---
@@ -129,8 +137,8 @@ the `impl cef::RenderHandler` + `on_accelerated_paint` pattern.
 
 - [x] Binding strategy decided: `cef`/`cef-dll-sys` as ABI layer, `cef-runtime` feature gate
 - [x] `wrap_render_handler!` + `wrap_client!` wired in `windows_cef` under `cef-runtime`
-- [x] `OnAcceleratedPaint`: `DuplicateHandle` → `Dx12SharedTexture` → `PendingFrameSlot`
-- [x] `browser_host_create_browser_sync` → `browser.identifier()` captures `browser_id`
+- [x] `OnAcceleratedPaint`: callback-scoped D3D11 source → copied weld-owned shared texture → callback-time D3D12/wgpu import → frame slot
+- [x] `browser_host_create_browser` → `on_after_created` installs browser + captures `browser_id`
 - [x] `PendingFrameSlot` latest-frame mailbox with generation tracking
 - [x] `acquire_frame` imports owned D3D shared handle via D3D12 `OpenSharedHandle` → wgpu
 - [x] `CefRuntime` uses `cef::initialize` / `cef::execute_process` / `cef::shutdown`

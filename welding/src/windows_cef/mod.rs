@@ -3,33 +3,41 @@
 /// # Handle lifetime
 ///
 /// `CefAcceleratedPaintInfo::shared_texture_handle` is callback-scoped. Under
-/// `cef-runtime` the `on_accelerated_paint` callback calls `DuplicateHandle`
-/// before storing the frame in [`PendingFrameSlot`]. The D3D12 importer closes
-/// the owned duplicate after opening the shared resource on the host device.
+/// `cef-runtime` the `on_accelerated_paint` callback calls `DuplicateHandle`,
+/// opens that duplicate on the host device, and copies into an application-owned
+/// texture before returning. Only that owned texture crosses the callback
+/// boundary.
 ///
 /// # Threading
 ///
 /// CEF invokes `on_accelerated_paint` on the render thread. The host calls
 /// `acquire_frame` and browser-control methods from the winit/wgpu thread.
-/// `PendingFrameSlot` is protected by `Mutex`; all other CEF browser host
-/// operations must be called from the thread that owns
-/// `CefRuntime::do_message_loop_work` (typically the main/winit thread).
+/// The copied-frame and browser slots are protected by `Mutex`. On Windows,
+/// CEF owns its dedicated UI thread and proxies browser-control operations
+/// called from the host thread.
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicI32, Ordering},
+        Arc, Mutex,
+    },
 };
+#[cfg(feature = "cef-runtime")]
+use std::sync::atomic::{AtomicBool, AtomicU64};
 
 use dpi::PhysicalSize;
 
 use crate::{
     error::WeldError,
-    native_frame::{HostWgpuContext, ImportedTexture, PendingFrameSlot, WgpuTextureImporter},
+    native_frame::{HostWgpuContext, ImportedTexture},
     runtime::CefRuntime,
     surface::{
         CefSurfaceConfig, CefSurfaceMode, CefSurfaceProducer, FocusDirection, KeyEvent, MouseEvent,
         NavigationEvent,
     },
 };
+#[cfg(feature = "cef-runtime")]
+use crate::native_frame::{D3d11CallbackFrameCopier, Dx12SharedTexture, WgpuTextureImporter};
 
 #[cfg(feature = "cef-runtime")]
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
@@ -39,7 +47,6 @@ use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 pub struct WindowsCefConfig {
     pub surface: CefSurfaceConfig,
 }
-
 impl Default for WindowsCefConfig {
     fn default() -> Self {
         Self { surface: CefSurfaceConfig::default() }
@@ -58,9 +65,21 @@ struct EventQueues {
 #[cfg(feature = "cef-runtime")]
 #[derive(Clone)]
 struct WeldRenderHandlerInner {
-    frame_slot: Arc<Mutex<PendingFrameSlot>>,
+    frame_slot: Arc<Mutex<Option<ImportedTexture>>>,
+    next_generation: Arc<AtomicU64>,
+    host_ctx: HostWgpuContext,
+    callback_copier: Arc<D3d11CallbackFrameCopier>,
     events: Arc<Mutex<EventQueues>>,
     size: Arc<Mutex<PhysicalSize<u32>>>,
+}
+
+#[cfg(feature = "cef-runtime")]
+#[derive(Clone)]
+struct WeldLifeSpanState {
+    closed: Arc<AtomicBool>,
+    close_requested: Arc<AtomicBool>,
+    browser_id: Arc<AtomicI32>,
+    browser: Arc<Mutex<Option<cef::Browser>>>,
 }
 
 // ── cef-runtime: render handler + client ─────────────────────────────────────
@@ -84,6 +103,8 @@ mod cef_backed {
             ) {
                 if let Some(rect) = rect {
                     let size = self.handler.size.lock().unwrap();
+                    rect.x = 0;
+                    rect.y = 0;
                     rect.width = size.width as _;
                     rect.height = size.height as _;
                 }
@@ -162,16 +183,25 @@ mod cef_backed {
                     _ => wgpu::TextureFormat::Bgra8Unorm,
                 };
 
-                let mut slot = self.handler.frame_slot.lock().unwrap();
-                let generation = slot.next_generation();
-                slot.store(crate::native_frame::NativeFrame::Dx12SharedTexture(
-                    crate::native_frame::Dx12SharedTexture {
+                let generation = self.handler.next_generation.fetch_add(1, Ordering::Relaxed) + 1;
+                let frame = Dx12SharedTexture {
                         handle: dup.0 as *mut c_void,
                         size: PhysicalSize::new(width, height),
                         format,
                         generation,
-                    },
-                ));
+                    };
+                match WgpuTextureImporter::copy_dx12_callback_frame(
+                    frame,
+                    &self.handler.host_ctx,
+                    &self.handler.callback_copier,
+                ) {
+                    Ok(frame) => {
+                        *self.handler.frame_slot.lock().unwrap() = Some(frame);
+                    }
+                    Err(err) => {
+                        eprintln!("weld: failed to copy CEF accelerated frame: {err}");
+                    }
+                }
             }
         }
     }
@@ -182,9 +212,43 @@ mod cef_backed {
         }
     }
 
+    cef::wrap_life_span_handler! {
+        pub(super) struct WeldLifeSpanHandler {
+            state: WeldLifeSpanState,
+        }
+
+        impl LifeSpanHandler {
+            fn on_after_created(&self, browser: Option<&mut cef::Browser>) {
+                let Some(browser) = browser else { return };
+                let browser_id = browser.identifier();
+                *self.state.browser.lock().unwrap() = Some(browser.clone());
+                self.state.browser_id.store(browser_id, Ordering::Release);
+                if self.state.close_requested.load(Ordering::Acquire) {
+                    if let Some(host) = browser.host() {
+                        host.close_browser(1);
+                    }
+                }
+            }
+
+            fn on_before_close(&self, _browser: Option<&mut cef::Browser>) {
+                eprintln!("weld: CEF on_before_close");
+                *self.state.browser.lock().unwrap() = None;
+                self.state.browser_id.store(0, Ordering::Release);
+                self.state.closed.store(true, Ordering::Release);
+            }
+        }
+    }
+
+    impl WeldLifeSpanHandler {
+        pub fn build(state: WeldLifeSpanState) -> cef::LifeSpanHandler {
+            Self::new(state)
+        }
+    }
+
     cef::wrap_client! {
         pub(super) struct WeldClient {
             render_handler: cef::RenderHandler,
+            life_span_handler: cef::LifeSpanHandler,
             load_handler: cef::LoadHandler,
             display_handler: cef::DisplayHandler,
             events: Arc<Mutex<EventQueues>>,
@@ -193,6 +257,10 @@ mod cef_backed {
         impl Client {
             fn render_handler(&self) -> Option<cef::RenderHandler> {
                 Some(self.render_handler.clone())
+            }
+
+            fn life_span_handler(&self) -> Option<cef::LifeSpanHandler> {
+                Some(self.life_span_handler.clone())
             }
 
             fn load_handler(&self) -> Option<cef::LoadHandler> {
@@ -225,11 +293,12 @@ mod cef_backed {
     impl WeldClient {
         pub fn build(
             render_handler: cef::RenderHandler,
+            life_span_handler: cef::LifeSpanHandler,
             load_handler: cef::LoadHandler,
             display_handler: cef::DisplayHandler,
             events: Arc<Mutex<EventQueues>>,
         ) -> cef::Client {
-            Self::new(render_handler, load_handler, display_handler, events)
+            Self::new(render_handler, life_span_handler, load_handler, display_handler, events)
         }
     }
 
@@ -349,19 +418,23 @@ mod cef_backed {
 // ── Producer struct ───────────────────────────────────────────────────────────
 
 pub struct WindowsCefProducer {
-    browser_id: i32,
+    browser_id: Arc<AtomicI32>,
     #[cfg(feature = "cef-runtime")]
-    browser: cef::Browser,
+    browser: Arc<Mutex<Option<cef::Browser>>>,
     #[cfg(feature = "cef-runtime")]
     cef_size: Arc<Mutex<PhysicalSize<u32>>>,
-    frame_slot: Arc<Mutex<PendingFrameSlot>>,
+    #[cfg(feature = "cef-runtime")]
+    closed: Arc<AtomicBool>,
+    #[cfg(feature = "cef-runtime")]
+    close_requested: Arc<AtomicBool>,
+    frame_slot: Arc<Mutex<Option<ImportedTexture>>>,
     events: Arc<Mutex<EventQueues>>,
     size: PhysicalSize<u32>,
 }
 
 // Safety: CefSurfaceProducer is Send; cef::Browser wraps *mut CEF objects whose
-// ref-counts are thread-safe. Callers must ensure CEF browser-host methods are
-// only called from the thread running CefRuntime::do_message_loop_work.
+// ref-counts are thread-safe. On Windows, CEF proxies browser-host operations
+// from the host thread to its dedicated UI thread.
 #[cfg(feature = "cef-runtime")]
 unsafe impl Send for WindowsCefProducer {}
 
@@ -369,31 +442,53 @@ impl WindowsCefProducer {
     /// Create a CEF browser in OSR (windowless + shared-texture) mode.
     ///
     /// Under `cef-runtime`: wires the CEF `Client` + `RenderHandler` vtables,
-    /// calls `browser_host_create_browser_sync`, and returns a producer with a
-    /// live browser. Requires [`CefRuntime::initialize`] to have been called.
+    /// starts async browser creation, and returns a producer whose browser slot
+    /// is populated by `on_after_created`. Requires [`CefRuntime::initialize`]
+    /// to have been called.
     ///
     /// Without `cef-runtime`: returns `Err(SurfaceCreation(...))` — vtable
     /// wiring is pending `cef-runtime` enablement.
-    pub fn new(_runtime: &CefRuntime, config: WindowsCefConfig) -> Result<Self, WeldError> {
+    pub fn new(
+        _runtime: &CefRuntime,
+        config: WindowsCefConfig,
+        host_ctx: &HostWgpuContext,
+    ) -> Result<Self, WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
             let initial_size = config.surface.initial_size;
-            let frame_slot = Arc::new(Mutex::new(PendingFrameSlot::default()));
+            let frame_slot = Arc::new(Mutex::new(None));
+            let next_generation = Arc::new(AtomicU64::new(0));
             let events =
                 Arc::new(Mutex::new(EventQueues { nav: VecDeque::new(), web_messages: VecDeque::new() }));
             let cef_size = Arc::new(Mutex::new(initial_size));
+            let closed = Arc::new(AtomicBool::new(false));
+            let close_requested = Arc::new(AtomicBool::new(false));
+            let browser_id = Arc::new(AtomicI32::new(0));
+            let browser = Arc::new(Mutex::new(None));
+            let callback_copier = Arc::new(D3d11CallbackFrameCopier::new(host_ctx)?);
 
             let inner = WeldRenderHandlerInner {
                 frame_slot: frame_slot.clone(),
+                next_generation,
+                host_ctx: host_ctx.clone(),
+                callback_copier,
                 events: events.clone(),
                 size: cef_size.clone(),
             };
+            let life_span_state = WeldLifeSpanState {
+                closed: closed.clone(),
+                close_requested: close_requested.clone(),
+                browser_id: browser_id.clone(),
+                browser: browser.clone(),
+            };
 
             let render_handler = cef_backed::WeldRenderHandler::build(inner.clone());
+            let life_span_handler = cef_backed::WeldLifeSpanHandler::build(life_span_state);
             let load_handler = cef_backed::WeldLoadHandler::build(inner.clone());
             let display_handler = cef_backed::WeldDisplayHandler::build(inner);
             let mut client = cef_backed::WeldClient::build(
                 render_handler,
+                life_span_handler,
                 load_handler,
                 display_handler,
                 events.clone(),
@@ -413,23 +508,26 @@ impl WindowsCefProducer {
             };
             let url: cef::CefString = config.surface.initial_url.as_str().into();
 
-            let browser = cef::browser_host_create_browser_sync(
+            let create_started = cef::browser_host_create_browser(
                 Some(&window_info),
                 Some(&mut client),
                 Some(&url),
                 Some(&browser_settings),
                 None,
                 None,
-            )
-            .ok_or_else(|| {
-                WeldError::SurfaceCreation("browser_host_create_browser_sync returned None".into())
-            })?;
+            );
+            if create_started == 0 {
+                return Err(WeldError::SurfaceCreation(
+                    "browser_host_create_browser returned false".into(),
+                ));
+            }
 
-            let browser_id = browser.identifier();
             return Ok(WindowsCefProducer {
                 browser_id,
                 browser,
                 cef_size,
+                closed,
+                close_requested,
                 frame_slot,
                 events,
                 size: initial_size,
@@ -438,13 +536,28 @@ impl WindowsCefProducer {
 
         #[cfg(not(feature = "cef-runtime"))]
         {
-            let _ = (_runtime, config);
+            let _ = (_runtime, config, host_ctx);
             Err(WeldError::SurfaceCreation(
                 "Windows CEF vtable wiring requires the `cef-runtime` feature".into(),
             ))
         }
     }
 
+    pub fn is_closed(&self) -> bool {
+        #[cfg(feature = "cef-runtime")]
+        {
+            self.closed.load(Ordering::Acquire)
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            self.browser_id.load(Ordering::Acquire) == 0
+        }
+    }
+
+    #[cfg(feature = "cef-runtime")]
+    fn browser(&self) -> Option<cef::Browser> {
+        self.browser.lock().unwrap().clone()
+    }
 }
 
 // ── CefSurfaceProducer impl ───────────────────────────────────────────────────
@@ -459,13 +572,9 @@ impl CefSurfaceProducer for WindowsCefProducer {
 
     fn acquire_frame(
         &mut self,
-        ctx: &HostWgpuContext,
+        _ctx: &HostWgpuContext,
     ) -> Result<Option<ImportedTexture>, WeldError> {
-        let frame = self.frame_slot.lock().unwrap().take();
-        match frame {
-            None => Ok(None),
-            Some(f) => Ok(Some(WgpuTextureImporter::import(f, ctx)?)),
-        }
+        Ok(self.frame_slot.lock().unwrap().take())
     }
 
     fn resize(&mut self, size: PhysicalSize<u32>) -> Result<(), WeldError> {
@@ -473,8 +582,10 @@ impl CefSurfaceProducer for WindowsCefProducer {
         #[cfg(feature = "cef-runtime")]
         {
             *self.cef_size.lock().unwrap() = size;
-            if let Some(mut host) = self.browser.host() {
+            if let Some(mut host) = self.browser().and_then(|browser| browser.host()) {
                 host.was_resized();
+                // Force a fresh paint for newly exposed regions after resize.
+                host.invalidate(cef::PaintElementType::default());
             }
             return Ok(());
         }
@@ -483,7 +594,7 @@ impl CefSurfaceProducer for WindowsCefProducer {
 
     fn navigate_to_url(&mut self, url: &str) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        if let Some(mut frame) = self.browser.main_frame() {
+        if let Some(mut frame) = self.browser().and_then(|browser| browser.main_frame()) {
             frame.load_url(Some(&url.into()));
             return Ok(());
         }
@@ -492,7 +603,7 @@ impl CefSurfaceProducer for WindowsCefProducer {
 
     fn navigate_to_string(&mut self, content: &str, _mime_type: &str) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        if let Some(mut frame) = self.browser.main_frame() {
+        if let Some(mut frame) = self.browser().and_then(|browser| browser.main_frame()) {
             frame.load_url(Some(&content.into()));
             return Ok(());
         }
@@ -502,8 +613,10 @@ impl CefSurfaceProducer for WindowsCefProducer {
     fn reload(&mut self) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
-            self.browser.reload();
-            return Ok(());
+            if let Some(browser) = self.browser() {
+                browser.reload();
+                return Ok(());
+            }
         }
         Err(pending("cef_browser_t::reload"))
     }
@@ -511,8 +624,10 @@ impl CefSurfaceProducer for WindowsCefProducer {
     fn stop(&mut self) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
-            self.browser.stop_load();
-            return Ok(());
+            if let Some(browser) = self.browser() {
+                browser.stop_load();
+                return Ok(());
+            }
         }
         Err(pending("cef_browser_t::stop_load"))
     }
@@ -520,8 +635,10 @@ impl CefSurfaceProducer for WindowsCefProducer {
     fn go_back(&mut self) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
-            self.browser.go_back();
-            return Ok(());
+            if let Some(browser) = self.browser() {
+                browser.go_back();
+                return Ok(());
+            }
         }
         Err(pending("cef_browser_t::go_back"))
     }
@@ -529,15 +646,17 @@ impl CefSurfaceProducer for WindowsCefProducer {
     fn go_forward(&mut self) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
-            self.browser.go_forward();
-            return Ok(());
+            if let Some(browser) = self.browser() {
+                browser.go_forward();
+                return Ok(());
+            }
         }
         Err(pending("cef_browser_t::go_forward"))
     }
 
     fn send_mouse_input(&mut self, event: MouseEvent) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        if let Some(host) = self.browser.host() {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
             crate::cef_input::send_mouse(&host, &event);
             return Ok(());
         }
@@ -546,7 +665,7 @@ impl CefSurfaceProducer for WindowsCefProducer {
 
     fn send_keyboard_input(&mut self, event: KeyEvent) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        if let Some(host) = self.browser.host() {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
             crate::cef_input::send_key(&host, &event);
             return Ok(());
         }
@@ -555,7 +674,7 @@ impl CefSurfaceProducer for WindowsCefProducer {
 
     fn move_focus(&mut self, direction: FocusDirection) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        if let Some(host) = self.browser.host() {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
             crate::cef_input::set_focus(&host, direction);
             return Ok(());
         }
@@ -582,7 +701,7 @@ impl CefSurfaceProducer for WindowsCefProducer {
 
     fn execute_script(&mut self, script: &str, source_url: &str) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        if let Some(frame) = self.browser.main_frame() {
+        if let Some(frame) = self.browser().and_then(|browser| browser.main_frame()) {
             let code: cef::CefString = script.into();
             let url: cef::CefString = source_url.into();
             frame.execute_java_script(Some(&code), Some(&url), 0);
@@ -596,19 +715,23 @@ impl CefSurfaceProducer for WindowsCefProducer {
     }
 
     fn browser_id(&self) -> i32 {
-        self.browser_id
+        self.browser_id.load(Ordering::Acquire)
     }
 
     fn close(&mut self) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
-            if let Some(mut host) = self.browser.host() {
+            self.closed.store(false, Ordering::Release);
+            self.close_requested.store(true, Ordering::Release);
+            if let Some(mut host) = self.browser().and_then(|browser| browser.host()) {
+                eprintln!("weld: requesting CEF browser close");
                 host.close_browser(true as _);
+            } else {
+                eprintln!("weld: browser close queued until CEF on_after_created");
             }
-            self.browser_id = 0;
             return Ok(());
         }
-        self.browser_id = 0;
+        self.browser_id.store(0, Ordering::Release);
         Err(pending("cef_browser_host_t::close_browser"))
     }
 }
@@ -638,26 +761,4 @@ fn escape_js_string(s: &str) -> String {
     }
     out.push('"');
     out
-}
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::native_frame::{Dx12SharedTexture, NativeFrame};
-
-    #[test]
-    fn pending_frame_slot_stores_and_takes() {
-        let slot = Arc::new(Mutex::new(PendingFrameSlot::default()));
-        let mut guard = slot.lock().unwrap();
-        let generation = guard.next_generation();
-        guard.store(NativeFrame::Dx12SharedTexture(Dx12SharedTexture {
-            handle: std::ptr::null_mut(),
-            size: PhysicalSize::new(16, 16),
-            format: wgpu::TextureFormat::Bgra8Unorm,
-            generation,
-        }));
-        assert!(guard.has_frame());
-    }
 }
