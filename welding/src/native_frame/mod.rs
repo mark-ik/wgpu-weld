@@ -588,9 +588,6 @@ impl WgpuTextureImporter {
     ) -> Result<ImportedTexture, ImportError> {
         #[cfg(windows)]
         {
-            use windows::Win32::Foundation::{CloseHandle, HANDLE};
-            use windows::Win32::Graphics::Direct3D12::ID3D12Resource;
-
             if frame.handle.is_null() {
                 return Err(ImportError::InvalidFrame("D3D shared handle is null"));
             }
@@ -606,66 +603,24 @@ impl WgpuTextureImporter {
                 });
             }
 
-            struct OwnedHandle(HANDLE);
-            impl Drop for OwnedHandle {
-                fn drop(&mut self) {
-                    if !self.0.is_invalid() {
-                        unsafe {
-                            let _ = CloseHandle(self.0);
-                        }
-                    }
-                }
-            }
-
-            let owned = OwnedHandle(HANDLE(frame.handle));
-            let texture = unsafe {
-                let hal_device = ctx.device.as_hal::<wgpu::wgc::api::Dx12>().ok_or(
-                    ImportError::BackendMismatch {
-                        frame: NativeFrameKind::Dx12SharedTexture,
-                        wgpu: ctx.backend,
-                    },
-                )?;
-
-                let d3d_device = hal_device.raw_device().clone();
-                let mut resource: Option<ID3D12Resource> = None;
-                d3d_device
-                    .OpenSharedHandle(owned.0, &mut resource)
-                    .map_err(|err| ImportError::D3d12OpenShared(err.to_string()))?;
-                let resource = resource.ok_or_else(|| {
-                    ImportError::D3d12OpenShared("OpenSharedHandle returned null".into())
-                })?;
-
-                let hal_texture = wgpu_hal::dx12::Device::texture_from_raw(
-                    resource,
-                    frame.format,
-                    wgpu::TextureDimension::D2,
-                    wgpu::Extent3d {
-                        width: frame.size.width,
-                        height: frame.size.height,
-                        depth_or_array_layers: 1,
-                    },
-                    1,
-                    1,
-                );
-
-                ctx.device.create_texture_from_hal::<wgpu::wgc::api::Dx12>(
-                    hal_texture,
-                    &wgpu::TextureDescriptor {
-                        label: Some("weld-cef-dx12-shared-texture-import"),
-                        size: wgpu::Extent3d {
-                            width: frame.size.width,
-                            height: frame.size.height,
-                            depth_or_array_layers: 1,
-                        },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: frame.format,
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
-                        view_formats: &[],
-                    },
-                )
+            // Delegate the generic OpenSharedHandle -> wgpu import to grafting (the
+            // shared interop core). welding's CEF-specific callback copy + cache-flush
+            // stay in `copy_dx12_callback_frame`, which calls this on the copied,
+            // owned shared handle.
+            let g_host = grafting::HostWgpuContext::new(ctx.device.clone(), ctx.queue.clone());
+            let g_frame = grafting::Dx12SharedTexture {
+                handle: frame.handle,
+                size: frame.size,
+                format: frame.format,
+                generation: frame.generation,
+                // The handle is an already-synced owned copy; the low-level import
+                // ignores these sync fields (they drive grafting's high-level
+                // WgpuTextureImporter, which welding does not use here).
+                producer_sync: grafting::SyncMechanism::ImplicitGlFlush,
+                fence_value: 0,
             };
+            let texture = grafting::import_dx12_shared_texture(&g_frame, &g_host)
+                .map_err(|err| ImportError::D3d12OpenShared(err.to_string()))?;
 
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             return Ok(ImportedTexture {
