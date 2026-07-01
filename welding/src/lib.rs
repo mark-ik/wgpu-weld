@@ -39,6 +39,7 @@ pub use native_frame::{
 };
 pub use runtime::{CefLogSeverity, CefRuntime, CefRuntimeConfig};
 pub use surface::{
-    CefSurfaceCapabilities, CefSurfaceConfig, CefSurfaceMode, CefSurfaceProducer, EventModifiers,
-    FocusDirection, KeyEvent, KeyEventKind, MouseAction, MouseButton, MouseEvent, NavigationEvent,
+    BrowserFeatureStatus, CefSurfaceCapabilities, CefSurfaceConfig, CefSurfaceMode,
+    CefSurfaceProducer, Cookie, EventModifiers, FocusDirection, KeyEvent, KeyEventKind,
+    MouseAction, MouseButton, MouseEvent, NavigationEvent, SameSite,
 };

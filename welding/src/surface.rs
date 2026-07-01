@@ -27,6 +27,15 @@ pub struct CefSurfaceCapabilities {
     pub preferred_mode: CefSurfaceMode,
     pub accelerated_paint_available: bool,
     pub cpu_paint_available: bool,
+    pub cookies: BrowserFeatureStatus,
+    pub cookie_change_events: BrowserFeatureStatus,
+    pub script_execution: BrowserFeatureStatus,
+    pub script_result: BrowserFeatureStatus,
+    pub devtools: BrowserFeatureStatus,
+    pub downloads: BrowserFeatureStatus,
+    pub popups: BrowserFeatureStatus,
+    pub context_menus: BrowserFeatureStatus,
+    pub console_messages: BrowserFeatureStatus,
 }
 
 impl CefSurfaceCapabilities {
@@ -56,8 +65,50 @@ impl CefSurfaceCapabilities {
             preferred_mode,
             accelerated_paint_available,
             cpu_paint_available,
+            cookies: BrowserFeatureStatus::Unsupported("CEF cookie manager is not wired yet"),
+            cookie_change_events: BrowserFeatureStatus::Unsupported(
+                "CEF cookie observers are not wired yet",
+            ),
+            script_execution: BrowserFeatureStatus::Supported,
+            script_result: BrowserFeatureStatus::Unsupported(
+                "CEF result-bearing script bridge is not wired yet",
+            ),
+            devtools: BrowserFeatureStatus::Supported,
+            downloads: BrowserFeatureStatus::Partial("CEF download callbacks require host wiring"),
+            popups: BrowserFeatureStatus::Supported,
+            context_menus: BrowserFeatureStatus::Partial(
+                "CEF context-menu callbacks require host wiring",
+            ),
+            console_messages: BrowserFeatureStatus::Supported,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrowserFeatureStatus {
+    Supported,
+    Unsupported(&'static str),
+    Partial(&'static str),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SameSite {
+    Strict,
+    Lax,
+    None,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Cookie {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    pub secure: bool,
+    pub http_only: bool,
+    pub same_site: Option<SameSite>,
+    pub expires: Option<f64>,
+    pub partitioned: bool,
 }
 
 /// Configuration for a single CEF browser surface.
@@ -96,6 +147,10 @@ impl Default for CefSurfaceConfig {
 pub trait CefSurfaceProducer: Send {
     fn surface_mode(&self) -> CefSurfaceMode;
 
+    fn capabilities(&self) -> CefSurfaceCapabilities {
+        CefSurfaceCapabilities::probe()
+    }
+
     /// Acquire the most recently painted frame as a wgpu texture.
     /// Returns `Ok(None)` if no new frame is available since the last call.
     fn acquire_frame(
@@ -125,6 +180,38 @@ pub trait CefSurfaceProducer: Send {
     /// provides this natively (`cef_frame_t::execute_java_script`) without
     /// requiring a CDP round-trip.
     fn execute_script(&mut self, script: &str, source_url: &str) -> Result<(), WeldError>;
+
+    fn execute_script_with_result(
+        &mut self,
+        script: &str,
+        timeout: std::time::Duration,
+    ) -> Result<String, WeldError> {
+        let _ = (script, timeout);
+        Err(WeldError::BrowserOp(
+            "CEF result-bearing script bridge is not wired yet".into(),
+        ))
+    }
+
+    fn set_cookie(&mut self, cookie: &Cookie) -> Result<(), WeldError> {
+        let _ = cookie;
+        Err(WeldError::BrowserOp(
+            "CEF cookie manager is not wired yet".into(),
+        ))
+    }
+
+    fn get_cookies_for_url(&mut self, url: &str) -> Result<Vec<Cookie>, WeldError> {
+        let _ = url;
+        Err(WeldError::BrowserOp(
+            "CEF cookie reads are not wired yet".into(),
+        ))
+    }
+
+    fn delete_cookie(&mut self, cookie: &Cookie) -> Result<(), WeldError> {
+        let _ = cookie;
+        Err(WeldError::BrowserOp(
+            "CEF cookie delete is not wired yet".into(),
+        ))
+    }
 
     fn open_devtools(&self) -> Result<(), WeldError>;
 
