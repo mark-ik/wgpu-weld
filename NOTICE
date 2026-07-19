@@ -1,0 +1,5 @@
+Copyright (c) 2026 Mark AB (markik)
+Licensed under MPL-2.0 (see LICENSE).
+
+wgpu-weld follows the same host-import pattern as its siblings wgpu-graft and
+wgpu-scry but shares no Slint-derived code; it is original work.
