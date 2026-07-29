@@ -3,7 +3,7 @@ name = "welding"
 version = "0.1.0"
 edition = "2024"
 license = "MPL-2.0"
-repository = "https://github.com/mark-ik/wgpu-weld"
+repository = "https://github.com/merely-made/wgpu-weld"
 description = "Embed Chromium Embedded Framework (CEF) into wgpu via accelerated off-screen rendering"
 keywords = ["cef", "chromium", "wgpu", "webview", "osr"]
 categories = ["rendering", "web-programming", "multimedia"]
@@ -32,7 +32,7 @@ wgpu-hal = "29.0"
 # CEF-specific callback copy + cache-flush stay in welding. `default-features = false`
 # drops grafting's GL producer path (surfman/glow); `wgpu-29` matches welding's wgpu
 # so the imported texture shares one device.
-grafting = { git = "https://github.com/mark-ik/wgpu-graft.git", branch = "main", default-features = false, features = ["wgpu-29"] }
+grafting = { git = "https://github.com/merely-made/wgpu-graft.git", branch = "main", default-features = false, features = ["wgpu-29"] }
 # CEF ABI layer: generated bindings + wrap_* handler macros + typed
 # AcceleratedPaintInfo. Only active under the `cef-runtime` feature.
 cef = { version = "148", features = ["accelerated_osr"], optional = true }

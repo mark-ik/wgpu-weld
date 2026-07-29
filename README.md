@@ -12,9 +12,9 @@ cross-platform producer, uniform browser behaviour, and direct access to the CEF
 DevTools protocol.
 
 This repo is a sibling to
-[`wgpu-graft`](https://github.com/mark-ik/wgpu-graft) (Servo testbed, GL-FBO /
+[`wgpu-graft`](https://github.com/merely-made/wgpu-graft) (Servo testbed, GL-FBO /
 Vulkan / Metal / D3D interop) and
-[`wgpu-scry`](https://github.com/mark-ik/wgpu-scry) (system-webview frame
+[`wgpu-scry`](https://github.com/merely-made/wgpu-scry) (system-webview frame
 adapter, WebView2 / WKWebView / WebKitGTK). `wgpu-weld` covers the CEF lane:
 rather than using the OS's built-in webview, the embedder ships its own Chromium.
 
