@@ -1,0 +1,215 @@
+# Producer Parity Plan: welding / scrying / grafting
+
+**Date:** 2026-08-10
+**Status:** Findings complete (all three surfaces read this session); work phases not started
+**Scope:** cross-repo. This doc lives in wgpu-weld because welding carries most
+of the gap list, but it assigns work to all three siblings.
+
+## Goal
+
+The three embedding lanes should feel like one product family to a host:
+
+| Lane | Engine | Distribution |
+| --- | --- | --- |
+| `welding` (wgpu-weld) | Chromium via CEF, bundled | app ships CEF |
+| `scrying` (wgpu-scry) | system webviews, 5 backends | OS provides |
+| `grafting` (wgpu-graft) | Servo (via surfman GL) + raw GL producers | app ships Servo |
+
+Parity here means an embedder can pick a lane for its distribution trade-offs
+without silently losing table-stakes browser features. It does not mean
+identical traits. The measure is: a host-side adapter over any lane
+(the mere `SurfaceEngine` direction) should be mechanical to write.
+
+Authoritative per-backend detail for scrying stays in
+[wgpu-scry/docs/parity-matrix.md](../../wgpu-scry/docs/parity-matrix.md);
+this doc does not duplicate its footnotes.
+
+## Findings
+
+### Where each lane stands
+
+`scrying` 0.4.0 is the feature ceiling. Its `WebSurfaceProducer` trait plus
+per-backend inherent APIs cover: frame tiers (imported texture, CPU snapshot,
+overlay), navigation with `can_go_back`/`can_go_forward`, mouse, pointer,
+keyboard, drag, cursor-shape polling, IME observability, cookies with change
+handlers, custom URL schemes, script messaging, downloads with
+pause/resume/cancel decisions, auth challenges, permission requests,
+find-in-page, PDF, print, snapshots, content rule lists, interaction-state
+serialization, `set_visible`, and `apply_settings` (zoom, UA, devtools toggle,
+JS toggle, context menus, accelerator keys, inactive scheduling). Its 18
+`NavigationEvent` variants include download lifecycle, auth, media capture,
+context menu, accelerator keys, and text-input focus.
+
+`welding` 0.1.0 has a solid control core (navigation, input basics, cookies
+in the trait, script with results, web messages, devtools, focus, close) and
+the strongest verified rendering story (all three platforms hardware-verified
+today), but the rendering-completeness and host-feedback surface is thin.
+
+`grafting` 0.4.0 is a different kind: the interop core the other two consume
+(welding: DX12 open-shared; scrying: DX12 open-shared) plus the Servo/GL
+producer lane. Browser features in the Servo lane belong to Servo's own API
+and the demos, not to grafting. Grafting's parity rows are the interop ones:
+import paths, the explicit sync seam (`InteropSynchronizer`,
+`Dx12FenceSynchronizer`, `VulkanSemaphoreSynchronizer`,
+`MetalSharedEventSynchronizer`), the epoch-keyed import cache, and dual
+wgpu-28/wgpu-29 support. Nobody else has the sync seam or the dual-wgpu trick.
+
+### Cross-lane matrix
+
+Legend: Y implemented, P partial, N missing, o not applicable to the lane.
+welding column verified against source this session; scrying column summarizes
+its own matrix; grafting column covers the interop layer plus Servo-lane
+demos.
+
+| Capability | welding (CEF) | scrying (best backend) | grafting |
+| --- | --- | --- | --- |
+| GPU frame import | Y (3 platforms, hw-verified) | Y | Y |
+| CPU fallback tier | P (feature-gated, never runtime-exercised) | Y | Y (readback demos) |
+| Explicit sync seam | N (implicit: callback copy + keyed mutex + cache-flush) | P (in-tree sync modules) | Y (owner) |
+| HiDPI scale factor | N (hardcoded 1.0, all three producers) | unverified, per-backend | o (host concern) |
+| Popup widget surfaces (select/autocomplete) | N (paints explicitly skipped) | o (webviews self-composite) | o (Servo self-composites) |
+| Navigation control | Y | Y | demo-level |
+| can_go_back / can_go_forward | N | Y | o |
+| Navigation events | P (load/title/address wired; 3 declared variants never fire) | Y (18 variants) | o |
+| Mouse / keyboard / wheel | Y (Win+Linux verified; mac thinner) | Y (caveats per backend) | demo-level |
+| Pointer (pen) input | N | Y | N |
+| Touch input | N (CEF has SendTouchEvent) | unverified | N |
+| Cursor-shape reporting | N (CEF has OnCursorChange) | Y (all 5) | N |
+| IME | N (CEF has ImeSetComposition + range callbacks) | Y (GTK/WPE lanes; win/mac unverified) | N |
+| Drag / drop | N (CEF has StartDragging + DragTarget*) | mixed | N |
+| Cookies get/set/delete | P (trait methods exist; producer impls absent, defaults error) | Y | o |
+| Cookie change events | N | Y (WKWebView) | o |
+| Script exec + result | Y / P (result bridge is trait-default error) | Y | o |
+| Web message bridge | Y | Y | o |
+| Custom URL scheme handlers | N (CEF has scheme handler factory) | Y (all 5) | o |
+| Downloads (lifecycle + decisions) | N | Y (incl. pause/resume/cancel) | o |
+| Auth challenges | N (CEF has GetAuthCredentials) | Y (win/mac) | o |
+| Permission requests | N (CEF has CefPermissionHandler) | Y (win/mac) | o |
+| Context menus | N | Y (event + toggle) | o |
+| Find-in-page | N (CEF has Find) | Y (win/mac) | o |
+| PDF / print | N (CEF has PrintToPDF) | Y (win/mac) | o |
+| Snapshot to PNG | N (demo probe only) | Y | o |
+| Zoom / UA / settings | N | Y (apply_settings) | o |
+| Visibility (WasHidden / set_visible) | N | Y | o |
+| Per-producer profile isolation | P (global root_cache_path only; CEF has RequestContext) | Y (per-producer data_dir) | o |
+| Render-process crash recovery | N (variant declared, never emitted) | P | o |
+| DevTools window | Y | Y | o |
+| DevTools protocol (CDP) | N (CEF has ExecuteDevToolsMethod; unique leverage) | N (WebView2 could; not exposed) | o |
+| Multi-producer per process | Y | Y (except WPE) | Y |
+| Honest capability probe | N (see below) | Y (matrix + footnotes) | o |
+
+### The capability probe lies in both directions
+
+`CefSurfaceCapabilities::probe` (surface.rs) is stale relative to today's
+state and was never fully honest:
+
+- `accelerated_paint_available = cfg!(target_os = "windows")` denies the
+  Linux and macOS lanes that were hardware-verified today.
+- `popups: Supported` while all three paint handlers explicitly skip popup
+  paint elements and no `on_before_popup` exists.
+- `console_messages: Supported` with no `on_console_message` handler.
+- `NavigationEvent::{NewWindowRequested, ConsoleMessage,
+  ContentProcessTerminated}` are declared variants that nothing emits.
+- Meanwhile `cookies`/`script_result` say "not wired yet", which is right at
+  the producer level even though the trait declares the methods; keep those
+  honest until the impls land.
+
+Per the diagnostics doctrine, a capability report that overstates is worse
+than a missing feature; this is the first thing to fix.
+
+### Structural findings
+
+1. **scrying still carries a full in-tree `native_frame`** (dmabuf 796 lines,
+   metal, sync_dx12) while already delegating the DX12 open-shared step to
+   grafting. welding made the same delegation this session. The remaining
+   duplicated import paths (DMABUF/Vulkan, IOSurface/Metal) are candidates to
+   converge on grafting 0.4.0, which now carries the fixed objc2 Metal path.
+2. **scrying's grafting dep is still `git branch=main`**, the same shape that
+   blocked welding's publish until today. grafting 0.4.0 is on crates.io, so
+   the swap is now a one-liner, and it unblocks any future scrying publish.
+3. **The wgpu external-texture UNDEFINED-layout gap** (scry's WPE DCC
+   footnote: `create_texture_from_hal` tracks imports as UNDEFINED, first-use
+   barrier may discard) affects every Vulkan import in the family. One
+   upstream fix serves all three; grafting owns the tracking issue since it
+   owns the import core.
+4. **Vocabulary drift**: `CursorShape`, focus reasons, key/mouse event
+   shapes, and `NavigationEvent` naming differ between welding and scrying
+   for no load-bearing reason. Convergence is cheap now and expensive later.
+   Per the module doctrine this is alignment by convention, not a new shared
+   crate.
+
+## Plan
+
+### W: welding phases, in bite order
+
+- **W1, truth pass.** Fix `probe()` (platform reality, popups/console back to
+  honest statuses), then wire or delete the three dead `NavigationEvent`
+  variants: `on_before_popup` emitting `NewWindowRequested` (deny popup
+  creation by default), `on_console_message`, `on_render_process_terminated`.
+  Done when: every probe field matches an implemented path and every declared
+  event variant has an emitter.
+- **W2, popup widget surfaces.** Handle `on_popup_show`/`on_popup_size` and
+  route popup paint elements. Expose the popup as a second texture + rect and
+  also offer a composited single-texture mode; which to use is the host's
+  choice, per the configurability doctrine. Done when: a `<select>` dropdown
+  is visible in all three demos.
+- **W3, HiDPI.** Take a scale factor in `CefSurfaceConfig`, honor it in
+  `view_rect`/`screen_info`, add a rescale path alongside `resize`, and pass
+  `window.scale_factor()` in the demos. Done when: text on a 2x display is
+  sharp and `coded_size` matches physical pixels.
+- **W4, cursor + IME.** `OnCursorChange` to a polled cursor shape (adopt
+  scrying's `CursorShape` vocabulary); IME composition in
+  (`ImeSetComposition`/`ImeCommitText`) and composition-range feedback out.
+  Done when: I-beam shows over text in the demos and CJK input composes on
+  Windows and Linux.
+- **W5, cookies + script result truth.** Implement the already-declared trait
+  methods in the producers (CEF cookie manager, result-bearing script bridge),
+  then flip the probe statuses. Done when: trait defaults no longer error on
+  any shipped producer.
+- **W6, host-decision surfaces.** Downloads (lifecycle events + decision API,
+  matching scrying's pause/resume/cancel shape), `GetAuthCredentials`,
+  permission requests, context-menu events. Done when: the capability rows
+  read Y with the same event/decision shapes scrying uses.
+- **W7, long tail.** Drag/drop, touch, find-in-page, PDF, zoom/UA/settings,
+  `WasHidden`-backed visibility, per-producer `RequestContext` profiles,
+  `can_go_back`/`can_go_forward`, snapshot helper.
+- **W8, CDP.** Expose `ExecuteDevToolsMethod` + the devtools message stream.
+  Nothing else in the family can offer full CDP; this is the CEF lane's
+  distinguishing feature, worth doing once the table stakes above exist.
+
+### S: scrying items (both directions)
+
+- **S1.** Swap the grafting dep to crates.io `0.4`.
+- **S2.** Its own matrix's unverified cells, in its order: win/mac IME
+  observability, touch coverage, wk6 native input. Tracked in scry's docs;
+  listed here only so the family view is complete.
+- **S3.** Evaluate migrating in-tree `native_frame` DMABUF/Metal import paths
+  onto grafting; keep in-tree only what is genuinely capture-specific (WGC,
+  SCK plumbing). Outcome may legitimately be "keep", but decide on a read,
+  not by default.
+- **S4.** WebView2 CDP exposure, mirroring W8's shape.
+
+### G: grafting items
+
+- **G1.** File/track the upstream wgpu initial-layout issue for imported
+  textures; link scry's DCC footnote and welding's Vulkan path to it.
+- **G2.** `servo-wgpu-interop-adapter` selects grafting features without a
+  wgpu major of its own default; it compiles today because a sibling demo
+  unifies one in. Make the selection explicit.
+- **G3.** Offer the sync seam to welding: either welding adopts a
+  `Dx12FenceSynchronizer` path or documents why the callback-time copy makes
+  implicit sync correct for CEF. Investigation, not a commitment.
+
+### Sequencing
+
+W1 and S1 are immediate and independent. W2+W3 before anything else in W;
+they are what every embedder hits first. W4 through W7 in listed order,
+re-verifying on the iMac and the Fedora box per phase (the readback-verdict
+pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
+
+## Progress
+
+- 2026-08-10: surfaces of all three repos read; matrix and phases drafted.
+  No code changes under this plan yet. Same-day context: module split, macOS
+  Phase 3 closed end to end, grafting 0.4.0 + welding 0.1.0 published (see
+  2026-05-14_cef_accelerated_osr_plan.md).
