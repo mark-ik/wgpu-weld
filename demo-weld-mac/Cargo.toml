@@ -1,0 +1,40 @@
+[package]
+name = "demo-weld-mac"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "macOS demo: CEF accelerated OSR rendered into a wgpu surface via welding (IOSurface → Metal)"
+
+# Consumed by `cef`'s bundle-cef-app tool. CEF on macOS does not re-exec the main
+# binary the way it does on Windows and Linux; it launches separate helper
+# executables from inside the .app, so the crate ships two bins and the bundler
+# stamps the helper into all five Helper bundles.
+[package.metadata.cef.bundle]
+helper_name = "demo-weld-mac-helper"
+
+[[bin]]
+name = "demo-weld-mac"
+path = "src/main.rs"
+
+[[bin]]
+name = "demo-weld-mac-helper"
+path = "src/helper.rs"
+
+# Assembles the .app. Not part of the app itself.
+[[bin]]
+name = "bundle-demo-weld-mac"
+path = "src/bundle.rs"
+
+[dependencies]
+welding = { path = "../welding", features = ["cef-runtime"] }
+wgpu.workspace = true
+winit.workspace = true
+pollster = "0.4"
+log = "0.4"
+env_logger = "0.11"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cef = { version = "148", features = ["accelerated_osr"] }
+# For the bundler's BundleInfo version field.
+semver = "1"

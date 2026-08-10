@@ -3,6 +3,7 @@ members = [
     "welding",
     "demo-weld-win",
     "demo-weld-linux",
+    "demo-weld-mac",
 ]
 default-members = ["welding"]
 resolver = "3"

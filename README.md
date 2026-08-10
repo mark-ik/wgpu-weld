@@ -31,11 +31,11 @@ Prototype, version `0.1.0`. Per `design_docs/2026-05-14_cef_accelerated_osr_plan
 - **Linux:** Phase 4 verified end-to-end on Fedora 44 + Intel/Mesa (X11 /
   XWayland). DMABUF planes are imported through Vulkan external memory.
   Single-plane formats (BGRA8 / RGBA8) only; multi-plane returns an error.
-- **macOS:** Phase 3 compiles as of 2026-08-10, including the `cef-runtime` half,
-  verified on macOS 15.7.7 / `x86_64-apple-darwin`. What remains is runtime
-  validation: there is no `demo-weld-mac` yet, so `import_metal`
-  (`IOSurfaceRef` retain to `MTLTexture` to wgpu Metal) has still never been
-  run against a live CEF surface.
+- **macOS:** Phase 3 complete as of 2026-08-10, verified on macOS 15.7.7 /
+  `x86_64-apple-darwin`. `demo-weld-mac` renders example.com into a wgpu Metal
+  texture through CEF's `IOSurfaceRef`, and proves it by reading the pixels back
+  rather than by putting a window on a screen. Input forwarding is thinner than
+  the other two platforms; see that demo's README for why.
 
 Without the `cef-runtime` feature the crate still compiles, but all producer
 constructors return a pending-wiring error.
@@ -47,6 +47,7 @@ constructors return a pending-wiring error.
 | [`welding`](welding/) | The library. `CefRuntime` initialization / subprocess detection, the native-frame mailbox, per-platform texture import, and the `CefSurfaceProducer` trait. This is the workspace `default-members` crate. |
 | [`demo-weld-win`](demo-weld-win/) | Windows accelerated-OSR demo. Renders a live CEF surface through the host's wgpu pipeline and forwards mouse/keyboard input. Not published (`publish = false`). |
 | [`demo-weld-linux`](demo-weld-linux/) | Linux accelerated-OSR demo (DMABUF to Vulkan). Not published. |
+| [`demo-weld-mac`](demo-weld-mac/) | macOS accelerated-OSR demo (IOSurface to Metal). Ships a CEF helper binary and an `.app` bundler, because macOS needs both. Not published. |
 
 See [`welding/README.md`](welding/README.md) for the producer/consumer contract
 and the platform texture paths.
@@ -97,7 +98,7 @@ libcef at build time from the configured CEF binary distribution.
 | Platform | CEF output | Import path |
 | --- | --- | --- |
 | Windows | `HANDLE` (pooled shared D3D texture) | callback-time D3D11 `CopyResource` to owned shared texture, then D3D12 `OpenSharedHandle` to a wgpu D3D12 texture (that second step is [`grafting`](https://crates.io/crates/grafting)) |
-| macOS | `IOSurfaceRef` | IOSurface retain, MTLTexture, wgpu Metal (pending macOS runtime validation) |
+| macOS | `IOSurfaceRef` | IOSurface retain, MTLTexture, wgpu Metal (verified on macOS 15.7.7 + Intel) |
 | Linux | DMABUF planes | DMABUF dup, `VK_EXT_external_memory_dma_buf`, wgpu Vulkan (verified on Fedora 44 + Intel/Mesa) |
 
 ## Build and run
@@ -153,6 +154,21 @@ cargo run -p demo-weld-linux
 ```
 
 The Linux demo currently loads `https://example.com` as its initial URL.
+
+### macOS demo
+
+CEF will not run from a bare executable on macOS, so build the `.app`:
+
+```sh
+cd demo-weld-mac
+cargo run --bin bundle-demo-weld-mac
+open ../target/bundle/demo-weld-mac.app
+```
+
+See [`demo-weld-mac/README.md`](demo-weld-mac/README.md) for the helper-binary
+and event-loop constraints behind that, and for the unattended validation mode
+(`WELD_EXIT_AFTER_FRAMES=1`) that reads the imported pixels back and prints a
+verdict, which is how this path is checked over SSH.
 
 ## Features (`welding`)
 

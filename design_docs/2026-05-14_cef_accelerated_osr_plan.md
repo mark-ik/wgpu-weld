@@ -1,7 +1,7 @@
 # wgpu-weld: CEF accelerated OSR → wgpu
 
-**Date:** 2026-05-14 (revised 2026-06-02: Windows pooled-resource lifetime correction; revised 2026-08-10: module split, `grafting` gated to Windows, macOS lane now compiles)
-**Status:** Phase 1 + 2 complete (Windows); crate renamed `welding`; Phase 3 `import_metal` now compiles for `aarch64-apple-darwin` and is pending runtime validation on a real Mac; Phase 4 (Linux) verified end-to-end on Fedora 44 + Intel/Mesa, with example.com rendering into the wgpu surface and mouse input routing through to CEF navigation
+**Date:** 2026-05-14 (revised 2026-06-02: Windows pooled-resource lifetime correction; revised 2026-08-10: module split, `grafting` gated to Windows, macOS lane fixed and validated end to end)
+**Status:** **All four phases complete.** Windows (Phase 1 + 2), macOS (Phase 3) and Linux (Phase 4) each render example.com into a host wgpu texture through accelerated OSR, verified on real hardware rather than by cross-compilation. Remaining work is the deferred list under Phase 4 (Wayland-native, NVIDIA proprietary, multi-plane) plus macOS input parity, not the core import paths.
 **Sibling crates:** `wgpu-graft` (Servo / GL-FBO interop), `wgpu-scry` (system webviews / WGC / ScreenCaptureKit)
 
 ---
@@ -193,9 +193,25 @@ Every file is held under a 600-line ceiling, which is what drove the
       - The paint-info field is `shared_texture_io_surface` on macOS, not the Windows
         `shared_texture_handle`. The type is an `IOSurfaceRef`, so the name difference is
         real, not cosmetic.
-- [ ] Demo on macOS (validates `import_metal` at runtime). Needs a `demo-weld-mac`;
-      the Windows and Linux demos have no macOS counterpart yet. This is now the only
-      thing standing between Phase 3 and done.
+- [x] **Demo on macOS (2026-08-10): `demo-weld-mac`, and `import_metal` is validated
+      at runtime.** example.com renders into a wgpu Metal texture on the Intel iMac.
+      The proof is a readback rather than a screenshot, so it stands up unattended:
+      the demo copies a 64x64 corner of the imported texture back to the CPU and
+      finds `16384/16384` bytes non-zero, pixels `[238, 238, 238, 255]`, which is
+      BGRA for `#EEEEEE`, example.com's background.
+
+      Two macOS-only shapes came out of it, both documented in the demo's README:
+      - CEF launches separate Helper executables here instead of re-executing the
+        host binary, so the crate ships `demo-weld-mac-helper` alongside the app and
+        a `bundle-demo-weld-mac` bin that assembles the `.app`. Running the bare
+        executable cannot work, and now says so.
+      - `CefDoMessageLoopWork` drains the `NSApplication` queue itself, so calling it
+        from inside a winit callback trips winit's re-entrancy guard and aborts. The
+        demo drives `pump_app_events` itself and pumps CEF between dispatches. A
+        `run_app`-shaped port panics immediately; this was the first thing that
+        happened when one was tried.
+      - Known gap: CEF eats `NSEvent`s winit would otherwise see, so input
+        forwarding is thinner here than on Windows and Linux.
 
 ### Phase 4 — Linux
 

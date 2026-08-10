@@ -609,6 +609,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "demo-weld-mac"
+version = "0.1.0"
+dependencies = [
+ "cef",
+ "env_logger",
+ "log",
+ "pollster",
+ "semver",
+ "welding",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "demo-weld-win"
 version = "0.1.0"
 dependencies = [
