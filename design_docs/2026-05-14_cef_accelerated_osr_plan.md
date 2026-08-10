@@ -1,7 +1,7 @@
 # wgpu-weld: CEF accelerated OSR → wgpu
 
-**Date:** 2026-05-14 (revised 2026-06-02: Windows pooled-resource lifetime correction)
-**Status:** Phase 1 + 2 complete (Windows); crate renamed `welding`; Phase 3 handler wiring + `import_metal` implemented (pending macOS compile validation); Phase 4 (Linux) verified end-to-end on Fedora 44 + Intel/Mesa — example.com renders into the wgpu surface, mouse input routes through to CEF navigation
+**Date:** 2026-05-14 (revised 2026-06-02: Windows pooled-resource lifetime correction; revised 2026-08-10: module split, `grafting` gated to Windows, macOS lane now compiles)
+**Status:** Phase 1 + 2 complete (Windows); crate renamed `welding`; Phase 3 `import_metal` now compiles for `aarch64-apple-darwin` and is pending runtime validation on a real Mac; Phase 4 (Linux) verified end-to-end on Fedora 44 + Intel/Mesa, with example.com rendering into the wgpu surface and mouse input routing through to CEF navigation
 **Sibling crates:** `wgpu-graft` (Servo / GL-FBO interop), `wgpu-scry` (system webviews / WGC / ScreenCaptureKit)
 
 ---
@@ -66,9 +66,9 @@ macros that eliminate hand-written vtable allocation.
 - **`welding` owns:** callback handle duplication/retain policy, `PendingFrameSlot`, normalized `NativeFrame` variants, `WgpuTextureImporter`, `CefSurfaceProducer` public trait, event queues.
 
 **Build-time tradeoff:** `cef-dll-sys` downloads/links CEF at build time (or uses
-`CEF_PATH`). The old `cef_ffi/` `libloading` skeleton remains as the non-`cef-runtime`
-scaffold path; it still compiles but all producer constructors return a pending-wiring
-error without the feature flag. `cef_ffi/` will be deleted once `cef-runtime` matures.
+`CEF_PATH`). The old `cef_ffi/` `libloading` skeleton was deleted in `82523eb` once
+`cef-runtime` matured. Without the feature the crate still compiles, but every
+producer constructor returns a pending-wiring error.
 
 **`cef-runtime` feature enables:** real `CefRuntime::initialize`, working
 `WindowsCefProducer::new` / `MacosCefProducer::new` / `LinuxCefProducer::new`,
@@ -115,19 +115,26 @@ the `impl cef::RenderHandler` + `on_accelerated_paint` pattern.
 
 ## Module map
 
+Every file is held under a 600-line ceiling, which is what drove the
+2026-08-10 split of `native_frame` and the three producers.
+
 | Path | Content |
 |------|---------|
 | `welding/src/lib.rs` | Flat re-exports; `PlatformCefProducer` / `PlatformCefConfig` aliases |
 | `welding/src/error.rs` | `WeldError` |
 | `welding/src/runtime.rs` | `CefRuntime`, `CefRuntimeConfig`, `CefLogSeverity` |
-| `welding/src/surface.rs` | `CefSurfaceProducer` trait, input types, `NavigationEvent` |
-| `welding/src/native_frame/mod.rs` | `NativeFrame`, `PendingFrameSlot`, `WgpuTextureImporter`, `ImportedTexture`, `HostWgpuContext` |
-| `welding/src/cef_ffi/mod.rs` | `CefFunctions` (libloading resolution) |
-| `welding/src/cef_ffi/types.rs` | CEF C API types (`CefSettings`, `CefWindowInfo`, `CefAcceleratedPaintInfo`, …) |
+| `welding/src/surface.rs` | `CefSurfaceProducer` trait, `CefSurfaceMode`, `CefSurfaceCapabilities`, input types, `NavigationEvent` |
+| `welding/src/cef_input.rs` | wgpu/winit input to `cef::MouseEvent` / `cef::KeyEvent` translation (`cef-runtime` only) |
+| `welding/src/native_frame/mod.rs` | `NativeFrame`, `PendingFrameSlot`, `ImportedTexture`, `HostWgpuContext`, `ImportError`, and the `WgpuTextureImporter` dispatch |
+| `welding/src/native_frame/dx12.rs` | Windows: `D3d11CallbackFrameCopier`, `copy_dx12_callback_frame`, the D3D12 import (delegated to `grafting`) |
+| `welding/src/native_frame/metal.rs` | macOS: `IOSurfaceRef` to `MTLTexture` to wgpu Metal |
+| `welding/src/native_frame/vulkan_dmabuf.rs` | Linux: DMABUF planes to Vulkan external memory to wgpu Vulkan |
 | `welding/src/windows_cef/mod.rs` | `WindowsCefProducer`, `WindowsCefConfig` |
 | `welding/src/macos_cef/mod.rs` | `MacosCefProducer`, `MacosCefConfig` |
 | `welding/src/linux_cef/mod.rs` | `LinuxCefProducer`, `LinuxCefConfig` |
-| `demo-weld-win/src/main.rs` | Windows demo: subprocess guard + stub event loop |
+| `welding/src/<platform>_cef/cef_backed.rs` | Per-platform CEF handler vtables (render / life-span / client / load / display), `cef-runtime` only |
+| `demo-weld-win/src/main.rs` | Windows demo: subprocess guard, blit pipeline, input forwarding |
+| `demo-weld-linux/src/main.rs` | Linux demo: same shape, forces the Vulkan backend |
 
 ---
 
@@ -158,9 +165,22 @@ the `impl cef::RenderHandler` + `on_accelerated_paint` pattern.
 ### Phase 3 — macOS
 
 - [x] `OnAcceleratedPaint`: `CFRetain(io_surface)`, store in `PendingFrameSlot`
-- [x] `import_metal`: `IOSurface::newTextureWithDescriptor_iosurface_plane` → `wgpu_hal::metal::Device::texture_from_raw` → wgpu HAL Metal
+- [x] `import_metal`: `MTLDevice::newTextureWithDescriptor:iosurface:plane:` → `wgpu_hal::metal::Device::texture_from_raw` → wgpu HAL Metal
 - [x] All handler fixes: `CefStringUserfree` conversions, `ImplBrowser/Host/Frame` imports, `#[allow]` on impl
-- [ ] Demo on macOS (validates `import_metal` at runtime)  
+- [x] **Compile validation (2026-08-10)**, via `cargo check --target aarch64-apple-darwin`
+      from the Windows box. The lane had never been compiled and did not build. Three
+      things were wrong:
+      - `grafting` was an unconditional dependency, but only `native_frame::dx12` uses
+        it, and its own macOS path is stale (it passes `metal` crate types where
+        wgpu-hal 29 expects `objc2-metal`). Moved to `[target.'cfg(windows)'.dependencies]`,
+        which is where it belonged anyway.
+      - `extern "C" { fn CFRelease(..); }` needs to be `unsafe extern` under edition 2024.
+      - The `iosurface:` argument is a CoreFoundation `IOSurfaceRef`, not the ObjC
+        `IOSurface` class. CEF hands over the CF pointer, so the cast target was wrong.
+- [ ] Demo on macOS (validates `import_metal` at runtime)
+- [ ] `cef-runtime` compile validation for macOS. `cef-dll-sys` runs CMake for the CEF
+      wrapper, which needs a macOS host; cross-checking from Windows fails in the build
+      script. `macos_cef` is therefore still unbuilt, including its `cef_backed.rs`.
 
 ### Phase 4 — Linux
 

@@ -32,7 +32,10 @@ Prototype, version `0.1.0`. Per `design_docs/2026-05-14_cef_accelerated_osr_plan
   XWayland). DMABUF planes are imported through Vulkan external memory.
   Single-plane formats (BGRA8 / RGBA8) only; multi-plane returns an error.
 - **macOS:** Phase 3 import code (`IOSurfaceRef` retain to `MTLTexture` to wgpu
-  Metal) exists but is pending runtime validation.
+  Metal) compiles for `aarch64-apple-darwin` as of 2026-08-10 and is pending
+  runtime validation on a real Mac. The `cef-runtime` half of the macOS lane is
+  still unbuilt: `cef-dll-sys` runs CMake for the CEF wrapper, so it cannot be
+  cross-checked from another host.
 
 Without the `cef-runtime` feature the crate still compiles, but all producer
 constructors return a pending-wiring error.
@@ -93,7 +96,7 @@ libcef at build time from the configured CEF binary distribution.
 
 | Platform | CEF output | Import path |
 | --- | --- | --- |
-| Windows | `HANDLE` (pooled shared D3D texture) | callback-time D3D11 `CopyResource` to owned shared texture, D3D12 `OpenSharedHandle`, wgpu D3D12 texture |
+| Windows | `HANDLE` (pooled shared D3D texture) | callback-time D3D11 `CopyResource` to owned shared texture, then D3D12 `OpenSharedHandle` to a wgpu D3D12 texture (that second step is [`grafting`](https://crates.io/crates/grafting)) |
 | macOS | `IOSurfaceRef` | IOSurface retain, MTLTexture, wgpu Metal (pending macOS runtime validation) |
 | Linux | DMABUF planes | DMABUF dup, `VK_EXT_external_memory_dma_buf`, wgpu Vulkan (verified on Fedora 44 + Intel/Mesa) |
 
@@ -117,6 +120,19 @@ cargo check -p welding
 # Real CEF integration:
 cargo check -p welding --features cef-runtime
 ```
+
+The Metal and DMABUF arms are `cfg`-gated, so a host build never touches them.
+Check them explicitly before changing anything under `native_frame`:
+
+```sh
+rustup target add x86_64-unknown-linux-gnu aarch64-apple-darwin
+cargo check -p welding --target x86_64-unknown-linux-gnu
+cargo check -p welding --target aarch64-apple-darwin
+```
+
+Adding `--features cef-runtime` works for the Linux target too. It does not work
+for macOS from another host: `cef-dll-sys` builds the CEF wrapper with CMake and
+needs a real Mac.
 
 ### Windows demo
 
@@ -162,6 +178,13 @@ CEF and the platform crates are declared on the `welding` crate itself, not in
 the workspace table:
 
 - `cef = "148"` with the `accelerated_osr` feature (only under `cef-runtime`)
+- [`grafting`](https://crates.io/crates/grafting), the shared native-texture
+  interop core from `wgpu-graft`, **on Windows only**. `welding` delegates the
+  generic `OpenSharedHandle` to wgpu step to it rather than keeping a second
+  copy; the CEF-specific callback copy and cache flush stay here. Pulled with
+  `default-features = false` (no GL producer path) and the `wgpu-29` feature, so
+  the imported texture shares the host's device. The Metal and DMABUF arms go
+  through `wgpu-hal` directly and do not need it.
 - Platform crates: `windows = "0.62"` (Win32 D3D11/D3D12/DXGI) on Windows;
   `objc2 = "0.6.3"` with `objc2-foundation` / `objc2-io-surface` /
   `objc2-metal` `= "0.3.2"` on macOS; `ash = "0.38.0"` and `libc = "0.2"` on
@@ -171,7 +194,8 @@ the workspace table:
 
 - **`welding` owns:** CEF initialization and subprocess detection,
   `OnAcceleratedPaint` callback wiring, the `PendingFrameSlot` latest-frame
-  mailbox, GPU texture import, and the `CefSurfaceProducer` trait.
+  mailbox, GPU texture import, and the `CefSurfaceProducer` trait. The Windows
+  D3D12 open-shared step is the one piece it delegates, to `grafting`.
 - **The host owns:** the event loop, window / HWND creation, and passing the
   resulting `ImportedTexture` to its render pipeline. Windows uses CEF's
   dedicated message-loop thread; other platforms call
@@ -183,8 +207,9 @@ The three repos share an import pattern (native GPU surface handles produced by
 an embedded browser, imported into a host wgpu pipeline) but serve different
 engines. `wgpu-graft` is the origin, derived from Slint's Servo embedding
 example; `wgpu-scry` was extracted from `wgpu-graft` and keeps that Slint-derived
-`native_frame` structure; `wgpu-weld` follows the same import pattern but shares
-no Slint-derived code. They serve different niches:
+`native_frame` structure; `wgpu-weld` was written against the same import pattern
+rather than copied from it, and on Windows it now links `grafting` for the
+open-shared step instead of carrying its own. They serve different niches:
 
 | Repo | Engine | Distribution | Producer backends |
 | --- | --- | --- | --- |

@@ -27,17 +27,19 @@ log = "0.4"
 thiserror = "2.0.17"
 wgpu = { workspace = true, features = ["metal"] }
 wgpu-hal = "29.0"
-# Shared native-texture interop core. welding delegates its generic shared-texture
-# import (OpenSharedHandle -> wgpu) to grafting instead of duplicating it; the
-# CEF-specific callback copy + cache-flush stay in welding. `default-features = false`
-# drops grafting's GL producer path (surfman/glow); `wgpu-29` matches welding's wgpu
-# so the imported texture shares one device.
-grafting = { git = "https://github.com/merely-made/wgpu-graft.git", branch = "main", default-features = false, features = ["wgpu-29"] }
 # CEF ABI layer: generated bindings + wrap_* handler macros + typed
 # AcceleratedPaintInfo. Only active under the `cef-runtime` feature.
 cef = { version = "148", features = ["accelerated_osr"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
+# Shared native-texture interop core. welding delegates its generic shared-texture
+# import (OpenSharedHandle -> wgpu) to grafting instead of duplicating it; the
+# CEF-specific callback copy + cache-flush stay in welding. Windows-only: it backs
+# `native_frame::dx12` alone, and the Metal / DMABUF arms import through wgpu-hal
+# directly. `default-features = false` drops grafting's GL producer path
+# (surfman/glow); `wgpu-29` matches welding's wgpu so the imported texture shares
+# one device.
+grafting = { git = "https://github.com/merely-made/wgpu-graft.git", branch = "main", default-features = false, features = ["wgpu-29"] }
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
