@@ -234,12 +234,18 @@ mod cef_backed {
     fn maybe_load_library(cef_path: &std::path::Path) -> Result<(), WeldError> {
         #[cfg(target_os = "macos")]
         {
+            use std::os::unix::ffi::OsStrExt;
+
             const FRAMEWORK: &str =
                 "Chromium Embedded Framework.framework/Chromium Embedded Framework";
             let lib_path = cef_path.join(FRAMEWORK);
-            let path_str = lib_path.to_string_lossy();
-            let cef_str: cef::CefString = (&*path_str).into();
-            let ok = unsafe { cef::load_library(Some(&cef_str)) };
+            // `cef_load_library` takes a plain C string path, not a CefString.
+            let c_path = std::ffi::CString::new(lib_path.as_os_str().as_bytes()).map_err(|_| {
+                WeldError::CefLoadFailed {
+                    path: lib_path.display().to_string(),
+                }
+            })?;
+            let ok = unsafe { cef::load_library(Some(&*c_path.as_ptr().cast())) };
             if ok != 1 {
                 return Err(WeldError::CefLoadFailed {
                     path: lib_path.display().to_string(),

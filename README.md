@@ -31,11 +31,11 @@ Prototype, version `0.1.0`. Per `design_docs/2026-05-14_cef_accelerated_osr_plan
 - **Linux:** Phase 4 verified end-to-end on Fedora 44 + Intel/Mesa (X11 /
   XWayland). DMABUF planes are imported through Vulkan external memory.
   Single-plane formats (BGRA8 / RGBA8) only; multi-plane returns an error.
-- **macOS:** Phase 3 import code (`IOSurfaceRef` retain to `MTLTexture` to wgpu
-  Metal) compiles for `aarch64-apple-darwin` as of 2026-08-10 and is pending
-  runtime validation on a real Mac. The `cef-runtime` half of the macOS lane is
-  still unbuilt: `cef-dll-sys` runs CMake for the CEF wrapper, so it cannot be
-  cross-checked from another host.
+- **macOS:** Phase 3 compiles as of 2026-08-10, including the `cef-runtime` half,
+  verified on macOS 15.7.7 / `x86_64-apple-darwin`. What remains is runtime
+  validation: there is no `demo-weld-mac` yet, so `import_metal`
+  (`IOSurfaceRef` retain to `MTLTexture` to wgpu Metal) has still never been
+  run against a live CEF surface.
 
 Without the `cef-runtime` feature the crate still compiles, but all producer
 constructors return a pending-wiring error.
@@ -132,7 +132,8 @@ cargo check -p welding --target aarch64-apple-darwin
 
 Adding `--features cef-runtime` works for the Linux target too. It does not work
 for macOS from another host: `cef-dll-sys` builds the CEF wrapper with CMake and
-needs a real Mac.
+Ninja, which needs a real Mac. Check that half on the Mac itself, where the only
+prerequisites beyond Rust are `brew install cmake ninja`.
 
 ### Windows demo
 

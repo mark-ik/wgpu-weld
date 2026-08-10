@@ -60,7 +60,9 @@ cef::wrap_render_handler! {
                 return;
             }
             let Some(info) = info else { return };
-            let io_surface = info.shared_texture_handle;
+            // macOS names this field for what it is: the paint info carries an
+            // IOSurfaceRef, not the Windows shared HANDLE.
+            let io_surface = info.shared_texture_io_surface;
             if io_surface.is_null() {
                 return;
             }

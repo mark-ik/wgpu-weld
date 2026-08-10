@@ -87,7 +87,7 @@ impl MacosCefProducer {
             }));
             let cef_size = Arc::new(Mutex::new(initial_size));
 
-            let inner = cef_backed::WeldRenderHandlerInner {
+            let inner = WeldRenderHandlerInner {
                 frame_slot: frame_slot.clone(),
                 events: events.clone(),
                 size: cef_size.clone(),

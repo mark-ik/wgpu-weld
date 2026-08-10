@@ -179,10 +179,23 @@ Every file is held under a 600-line ceiling, which is what drove the
       - `extern "C" { fn CFRelease(..); }` needs to be `unsafe extern` under edition 2024.
       - The `iosurface:` argument is a CoreFoundation `IOSurfaceRef`, not the ObjC
         `IOSurface` class. CEF hands over the CF pointer, so the cast target was wrong.
-- [ ] Demo on macOS (validates `import_metal` at runtime)
-- [ ] `cef-runtime` compile validation for macOS. `cef-dll-sys` runs CMake for the CEF
-      wrapper, which needs a macOS host; cross-checking from Windows fails in the build
-      script. `macos_cef` is therefore still unbuilt, including its `cef_backed.rs`.
+- [x] **`cef-runtime` compile validation (2026-08-10)**, on Mark's Intel iMac
+      (macOS 15.7.7, `x86_64-apple-darwin`, over SSH). This is the half that cannot be
+      cross-checked: `cef-dll-sys` builds the CEF wrapper with CMake + Ninja and needs a
+      real Mac. `macos_cef` had never been compiled, and three things were wrong:
+      - `macos_cef/mod.rs` constructed `cef_backed::WeldRenderHandlerInner`, but that
+        struct is declared in `mod.rs` itself and only reached the child through its
+        `use super::*`. A private glob import is not nameable from the parent, so the
+        path never resolved. Now refers to it directly.
+      - `runtime.rs` passed a `cef::CefString` to `cef::load_library`, which takes a
+        plain C string path. Now builds a `CString` from the path's bytes, matching what
+        the `cef` crate's own `LibraryLoader` does.
+      - The paint-info field is `shared_texture_io_surface` on macOS, not the Windows
+        `shared_texture_handle`. The type is an `IOSurfaceRef`, so the name difference is
+        real, not cosmetic.
+- [ ] Demo on macOS (validates `import_metal` at runtime). Needs a `demo-weld-mac`;
+      the Windows and Linux demos have no macOS counterpart yet. This is now the only
+      thing standing between Phase 3 and done.
 
 ### Phase 4 — Linux
 
