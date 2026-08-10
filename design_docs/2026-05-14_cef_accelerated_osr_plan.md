@@ -171,9 +171,11 @@ Every file is held under a 600-line ceiling, which is what drove the
       from the Windows box. The lane had never been compiled and did not build. Three
       things were wrong:
       - `grafting` was an unconditional dependency, but only `native_frame::dx12` uses
-        it, and its own macOS path is stale (it passes `metal` crate types where
-        wgpu-hal 29 expects `objc2-metal`). Moved to `[target.'cfg(windows)'.dependencies]`,
-        which is where it belonged anyway.
+        it, and its macOS path was itself broken at the time (it passed `metal` crate
+        types where wgpu-hal 29 wants `objc2-metal`). Moved to
+        `[target.'cfg(windows)'.dependencies]`, which is where it belonged anyway.
+        The grafting side was fixed and shipped separately as grafting 0.4.0, which
+        is the version welding now takes from crates.io.
       - `extern "C" { fn CFRelease(..); }` needs to be `unsafe extern` under edition 2024.
       - The `iosurface:` argument is a CoreFoundation `IOSurfaceRef`, not the ObjC
         `IOSurface` class. CEF hands over the CF pointer, so the cast target was wrong.

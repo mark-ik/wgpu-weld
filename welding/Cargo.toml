@@ -39,7 +39,7 @@ cef = { version = "148", features = ["accelerated_osr"], optional = true }
 # directly. `default-features = false` drops grafting's GL producer path
 # (surfman/glow); `wgpu-29` matches welding's wgpu so the imported texture shares
 # one device.
-grafting = { git = "https://github.com/merely-made/wgpu-graft.git", branch = "main", default-features = false, features = ["wgpu-29"] }
+grafting = { version = "0.4", default-features = false, features = ["wgpu-29"] }
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
