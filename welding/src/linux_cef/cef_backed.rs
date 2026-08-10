@@ -54,10 +54,10 @@ cef::wrap_render_handler! {
             _dirty_rects: Option<&[cef::Rect]>,
             info: Option<&cef::AcceleratedPaintInfo>,
         ) {
-            // VIEW element only; skip popup paints.
-            if type_ != cef::PaintElementType::default() {
-                return;
-            }
+            // CEF paints the popup widget (select dropdowns, autocomplete) as
+            // its own element rather than compositing it into the view, so it
+            // lands here with PET_POPUP and goes to a separate slot.
+            let is_popup = type_ == cef::PaintElementType::POPUP;
             let Some(info) = info else { return };
 
             let plane_count = info.plane_count as usize;
@@ -107,7 +107,11 @@ cef::wrap_render_handler! {
             let width = info.extra.coded_size.width as u32;
             let height = info.extra.coded_size.height as u32;
 
-            let mut slot = self.handler.frame_slot.lock().unwrap();
+            let mut slot = if is_popup {
+                self.handler.popup_slot.lock().unwrap()
+            } else {
+                self.handler.frame_slot.lock().unwrap()
+            };
             let generation = slot.next_generation();
             slot.store(crate::native_frame::NativeFrame::DmaBufImage(
                 crate::native_frame::DmaBufImage {
@@ -122,6 +126,27 @@ cef::wrap_render_handler! {
                     generation,
                 },
             ));
+        }
+
+        fn on_popup_show(&self, _browser: Option<&mut cef::Browser>, show: ::std::os::raw::c_int) {
+            let showing = show != 0;
+            self.handler.popup.set_visible(showing);
+            if !showing {
+                // A hidden popup never paints again; drop the stale surface so
+                // acquire_popup cannot hand back a dropdown that is gone.
+                // DmaBufImage::Drop closes the duped plane fds.
+                let _ = self.handler.popup_slot.lock().unwrap().take();
+            }
+        }
+
+        fn on_popup_size(&self, _browser: Option<&mut cef::Browser>, rect: Option<&cef::Rect>) {
+            let Some(rect) = rect else { return };
+            self.handler.popup.set_rect(crate::surface::PopupRect {
+                x: rect.x,
+                y: rect.y,
+                width: rect.width.max(0) as u32,
+                height: rect.height.max(0) as u32,
+            });
         }
     }
 }

@@ -58,10 +58,10 @@ cef::wrap_render_handler! {
             _dirty_rects: Option<&[cef::Rect]>,
             info: Option<&cef::AcceleratedPaintInfo>,
         ) {
-            // Only handle the VIEW element (not popups).
-            if type_ != cef::PaintElementType::default() {
-                return;
-            }
+            // CEF paints the popup widget (select dropdowns, autocomplete) as
+            // its own element rather than compositing it into the view, so it
+            // lands here with PET_POPUP and goes to a separate slot.
+            let is_popup = type_ == cef::PaintElementType::POPUP;
             let Some(info) = info else { return };
             if info.shared_texture_handle.is_null() {
                 return;
@@ -113,12 +113,36 @@ cef::wrap_render_handler! {
                 &self.handler.callback_copier,
             ) {
                 Ok(frame) => {
-                    *self.handler.frame_slot.lock().unwrap() = Some(frame);
+                    if is_popup {
+                        *self.handler.popup_slot.lock().unwrap() = Some(frame);
+                    } else {
+                        *self.handler.frame_slot.lock().unwrap() = Some(frame);
+                    }
                 }
                 Err(err) => {
                     eprintln!("weld: failed to copy CEF accelerated frame: {err}");
                 }
             }
+        }
+
+        fn on_popup_show(&self, _browser: Option<&mut cef::Browser>, show: ::std::os::raw::c_int) {
+            let showing = show != 0;
+            self.handler.popup.set_visible(showing);
+            if !showing {
+                // A hidden popup never paints again; drop the stale surface so
+                // acquire_popup cannot hand back a dropdown that is gone.
+                *self.handler.popup_slot.lock().unwrap() = None;
+            }
+        }
+
+        fn on_popup_size(&self, _browser: Option<&mut cef::Browser>, rect: Option<&cef::Rect>) {
+            let Some(rect) = rect else { return };
+            self.handler.popup.set_rect(crate::surface::PopupRect {
+                x: rect.x,
+                y: rect.y,
+                width: rect.width.max(0) as u32,
+                height: rect.height.max(0) as u32,
+            });
         }
     }
 }

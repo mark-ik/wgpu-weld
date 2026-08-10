@@ -14,7 +14,7 @@ use winit::{
     dpi::PhysicalSize,
     event::{ElementState, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::{KeyCode, PhysicalKey},
+    keyboard::PhysicalKey,
     window::{Window, WindowAttributes},
 };
 
@@ -22,26 +22,13 @@ use welding::{
     windows_cef::{WindowsCefConfig, WindowsCefProducer},
     CefRuntime, CefRuntimeConfig, CefSurfaceConfig, CefSurfaceProducer, EventModifiers,
     FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent, KeyEventKind, MouseAction,
-    MouseButton, MouseEvent,
+    MouseButton, MouseEvent, PopupSurface,
 };
 
-// ── Blit shader: full-screen triangle that samples the CEF texture ────────────
+mod blit;
+mod keys;
 
-const BLIT_WGSL: &str = "
-struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> }
-
-@vertex fn vs(@builtin(vertex_index) vi: u32) -> VOut {
-    var p = array<vec2<f32>,3>(vec2(-1.,-1.), vec2(3.,-1.), vec2(-1.,3.));
-    var u = array<vec2<f32>,3>(vec2(0.,1.),  vec2(2.,1.),  vec2(0.,-1.));
-    return VOut(vec4<f32>(p[vi], 0., 1.), u[vi]);
-}
-
-@group(0) @binding(0) var t: texture_2d<f32>;
-@group(0) @binding(1) var s: sampler;
-
-@fragment fn fs(v: VOut) -> @location(0) vec4<f32> {
-    return textureSample(t, s, v.uv);
-}";
+use crate::{blit::build_blit_pipeline, keys::keycode_to_vk};
 
 // ── App state ─────────────────────────────────────────────────────────────────
 
@@ -61,6 +48,12 @@ struct DemoState {
     bg_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     frame: Option<ImportedTexture>,
+    /// Cached popup widget surface, held across frames because CEF only
+    /// repaints it on change and dropped when `popup_rect` goes to `None`.
+    popup: Option<PopupSurface>,
+    frames_drawn: u32,
+    click_at: Option<(i32, i32)>,
+    clicked: bool,
     cursor: (f32, f32),
     mods: EventModifiers,
     closing: bool,
@@ -166,6 +159,13 @@ impl ApplicationHandler for DemoApp {
             bg_layout,
             sampler,
             frame: None,
+            popup: None,
+            frames_drawn: 0,
+            click_at: std::env::var("WELD_CLICK_AT").ok().and_then(|v| {
+                let (x, y) = v.split_once(',')?;
+                Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+            }),
+            clicked: false,
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
             closing: false,
@@ -328,8 +328,49 @@ impl ApplicationHandler for DemoApp {
                         eprintln!("weld demo: acquire_frame failed: {err}");
                     }
                 }
+
+                // Popup widget surface. CEF paints it separately from the view
+                // and hides it without painting, so both questions get asked
+                // every frame.
+                match s.producer.acquire_popup(&s.host_ctx) {
+                    Ok(Some(popup)) => {
+                        eprintln!(
+                            "weld demo: imported popup {}x{} at {},{}",
+                            popup.rect.width, popup.rect.height, popup.rect.x, popup.rect.y
+                        );
+                        s.popup = Some(popup);
+                    }
+                    Ok(None) => {}
+                    Err(err) => eprintln!("weld demo: acquire_popup failed: {err}"),
+                }
+                if s.producer.popup_rect().is_none() && s.popup.take().is_some() {
+                    eprintln!("weld demo: popup closed");
+                }
+
                 while let Some(event) = s.producer.poll_navigation_event() {
                     eprintln!("weld demo: navigation event: {event:?}");
+                }
+
+                // WELD_CLICK_AT=x,y clicks once, a few frames in. A <select>
+                // dropdown needs a real gesture, so without this the popup path
+                // cannot be exercised without a human at the keyboard.
+                s.frames_drawn += 1;
+                if let Some((cx, cy)) = s.click_at {
+                    if !s.clicked && s.frames_drawn > 120 {
+                        s.clicked = true;
+                        eprintln!("weld demo: scripted click at {cx},{cy}");
+                        for action in
+                            [MouseAction::Moved, MouseAction::Pressed, MouseAction::Released]
+                        {
+                            let _ = s.producer.send_mouse_input(MouseEvent {
+                                x: cx,
+                                y: cy,
+                                button: MouseButton::Left,
+                                action,
+                                modifiers: EventModifiers::default(),
+                            });
+                        }
+                    }
                 }
 
                 let output = match s.surface.get_current_texture() {
@@ -357,14 +398,14 @@ impl ApplicationHandler for DemoApp {
                     &wgpu::CommandEncoderDescriptor { label: Some("blit") },
                 );
 
-                let bg = s.frame.as_ref().map(|f| {
+                let make_bg = |view: &wgpu::TextureView| {
                     s.host_ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: None,
                         layout: &s.bg_layout,
                         entries: &[
                             wgpu::BindGroupEntry {
                                 binding: 0,
-                                resource: wgpu::BindingResource::TextureView(&f.view),
+                                resource: wgpu::BindingResource::TextureView(view),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 1,
@@ -372,7 +413,9 @@ impl ApplicationHandler for DemoApp {
                             },
                         ],
                     })
-                });
+                };
+                let bg = s.frame.as_ref().map(|f| make_bg(&f.view));
+                let popup_bg = s.popup.as_ref().map(|p| make_bg(&p.texture.view));
 
                 {
                     let clear_color = if bg.is_some() {
@@ -397,6 +440,24 @@ impl ApplicationHandler for DemoApp {
                         rpass.set_pipeline(&s.pipeline);
                         rpass.set_bind_group(0, bg, &[]);
                         rpass.draw(0..3, 0..1);
+                    }
+
+                    // Popup widget (select dropdown, autocomplete) over the
+                    // view, clipped to the rect CEF asked for. Same pipeline,
+                    // different viewport.
+                    if let (Some(popup), Some(popup_bg)) = (&s.popup, &popup_bg) {
+                        let vw = s.surface_config.width as f32;
+                        let vh = s.surface_config.height as f32;
+                        let x = (popup.rect.x as f32).clamp(0.0, vw);
+                        let y = (popup.rect.y as f32).clamp(0.0, vh);
+                        let w = (popup.rect.width as f32).min(vw - x);
+                        let h = (popup.rect.height as f32).min(vh - y);
+                        if w > 0.0 && h > 0.0 {
+                            rpass.set_viewport(x, y, w, h, 0.0, 1.0);
+                            rpass.set_pipeline(&s.pipeline);
+                            rpass.set_bind_group(0, popup_bg, &[]);
+                            rpass.draw(0..3, 0..1);
+                        }
                     }
                 }
 
@@ -431,118 +492,6 @@ impl ApplicationHandler for DemoApp {
     }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn build_blit_pipeline(
-    device: &wgpu::Device,
-    fmt: wgpu::TextureFormat,
-) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::Sampler) {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("blit"),
-        source: wgpu::ShaderSource::Wgsl(BLIT_WGSL.into()),
-    });
-    let bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("blit-bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    multisampled: false,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
-    });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("blit-layout"),
-        bind_group_layouts: &[Some(&bg_layout)],
-        immediate_size: 0,
-    });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("blit"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs"),
-            compilation_options: Default::default(),
-            buffers: &[],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: fmt,
-                blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            ..Default::default()
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    });
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("blit-sampler"),
-        min_filter: wgpu::FilterMode::Linear,
-        mag_filter: wgpu::FilterMode::Linear,
-        ..Default::default()
-    });
-    (pipeline, bg_layout, sampler)
-}
-
-fn keycode_to_vk(kc: KeyCode) -> i32 {
-    match kc {
-        KeyCode::Backspace                             => 0x08,
-        KeyCode::Tab                                   => 0x09,
-        KeyCode::Enter                                 => 0x0D,
-        KeyCode::ShiftLeft   | KeyCode::ShiftRight     => 0x10,
-        KeyCode::ControlLeft | KeyCode::ControlRight   => 0x11,
-        KeyCode::AltLeft     | KeyCode::AltRight       => 0x12,
-        KeyCode::Escape                                => 0x1B,
-        KeyCode::Space                                 => 0x20,
-        KeyCode::PageUp                                => 0x21,
-        KeyCode::PageDown                              => 0x22,
-        KeyCode::End                                   => 0x23,
-        KeyCode::Home                                  => 0x24,
-        KeyCode::ArrowLeft                             => 0x25,
-        KeyCode::ArrowUp                               => 0x26,
-        KeyCode::ArrowRight                            => 0x27,
-        KeyCode::ArrowDown                             => 0x28,
-        KeyCode::Delete                                => 0x2E,
-        KeyCode::Digit0 => 0x30, KeyCode::Digit1 => 0x31, KeyCode::Digit2 => 0x32,
-        KeyCode::Digit3 => 0x33, KeyCode::Digit4 => 0x34, KeyCode::Digit5 => 0x35,
-        KeyCode::Digit6 => 0x36, KeyCode::Digit7 => 0x37, KeyCode::Digit8 => 0x38,
-        KeyCode::Digit9 => 0x39,
-        KeyCode::KeyA => 0x41, KeyCode::KeyB => 0x42, KeyCode::KeyC => 0x43,
-        KeyCode::KeyD => 0x44, KeyCode::KeyE => 0x45, KeyCode::KeyF => 0x46,
-        KeyCode::KeyG => 0x47, KeyCode::KeyH => 0x48, KeyCode::KeyI => 0x49,
-        KeyCode::KeyJ => 0x4A, KeyCode::KeyK => 0x4B, KeyCode::KeyL => 0x4C,
-        KeyCode::KeyM => 0x4D, KeyCode::KeyN => 0x4E, KeyCode::KeyO => 0x4F,
-        KeyCode::KeyP => 0x50, KeyCode::KeyQ => 0x51, KeyCode::KeyR => 0x52,
-        KeyCode::KeyS => 0x53, KeyCode::KeyT => 0x54, KeyCode::KeyU => 0x55,
-        KeyCode::KeyV => 0x56, KeyCode::KeyW => 0x57, KeyCode::KeyX => 0x58,
-        KeyCode::KeyY => 0x59, KeyCode::KeyZ => 0x5A,
-        KeyCode::F1  => 0x70, KeyCode::F2  => 0x71, KeyCode::F3  => 0x72,
-        KeyCode::F4  => 0x73, KeyCode::F5  => 0x74, KeyCode::F6  => 0x75,
-        KeyCode::F7  => 0x76, KeyCode::F8  => 0x77, KeyCode::F9  => 0x78,
-        KeyCode::F10 => 0x79, KeyCode::F11 => 0x7A, KeyCode::F12 => 0x7B,
-        _ => 0,
-    }
-}
 
 // ── main ──────────────────────────────────────────────────────────────────────
 

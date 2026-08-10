@@ -67,7 +67,7 @@ demos.
 | CPU fallback tier | P (feature-gated, never runtime-exercised) | Y | Y (readback demos) |
 | Explicit sync seam | N (implicit: callback copy + keyed mutex + cache-flush) | P (in-tree sync modules) | Y (owner) |
 | HiDPI scale factor | N (hardcoded 1.0, all three producers) | unverified, per-backend | o (host concern) |
-| Popup widget surfaces (select/autocomplete) | N (paints explicitly skipped) | o (webviews self-composite) | o (Servo self-composites) |
+| Popup widget surfaces (select/autocomplete) | Y on Windows, structurally absent on macOS, unverified on Linux | o (webviews self-composite) | o (Servo self-composites) |
 | Navigation control | Y | Y | demo-level |
 | can_go_back / can_go_forward | N | Y | o |
 | Navigation events | P (load/title/address wired; 3 declared variants never fire) | Y (18 variants) | o |
@@ -156,11 +156,32 @@ than a missing feature; this is the first thing to fix.
   Residual, carried into W2: popup *policy* is hardcoded to deny. Per the
   configurability doctrine that belongs in `CefSurfaceConfig` once W2 can
   actually render a popup surface.
-- **W2, popup widget surfaces.** Handle `on_popup_show`/`on_popup_size` and
-  route popup paint elements. Expose the popup as a second texture + rect and
-  also offer a composited single-texture mode; which to use is the host's
-  choice, per the configurability doctrine. Done when: a `<select>` dropdown
-  is visible in all three demos.
+- **W2, popup widget surfaces. DONE 2026-08-10, with a platform caveat.**
+  `on_popup_show` / `on_popup_size` feed a shared `popup::PopupState`, and
+  `PET_POPUP` paints route to a separate slot instead of being dropped. The
+  host reads `acquire_popup` (new surface) and `popup_rect` (still open),
+  exposed as `PopupSurface` + `PopupRect`. All three demos draw it over the
+  view with a viewport-clipped second pass.
+
+  **Verified on Windows**: a scripted click on a `<select>` produced
+  `imported popup 200x95 at 40,80`, correctly sized and placed under the
+  control.
+
+  **macOS does not deliver popup widgets through OSR at all.** With the same
+  page and a click that demonstrably landed (the view repainted),
+  `on_popup_show` and `on_popup_size` never fired. Chromium uses a native menu
+  for `<select>` on macOS, and windowless rendering does not reroute it. So the
+  macOS lane silently has no dropdowns, and no amount of welding-side work
+  changes that. A host that needs them there has to draw its own control from
+  the DOM. Linux is compile-verified only; no Linux box was reachable this
+  session.
+
+  Deviation from the original plan: the composited single-texture mode is not
+  built. Compositing must go to a third welding-owned texture (the imported
+  view texture is CEF's memory and must not be written), so it costs an
+  allocation and two copies per frame. The separate-surface API is the flexible
+  zero-copy one and the demos show the recipe; compositing can be added later
+  without breaking it.
 - **W3, HiDPI.** Take a scale factor in `CefSurfaceConfig`, honor it in
   `view_rect`/`screen_info`, add a rescale path alongside `resize`, and pass
   `window.scale_factor()` in the demos. Done when: text on a 2x display is
@@ -248,3 +269,18 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
   `pgrep -f "Helper \(Renderer\)" | head -1`, which matches every Electron app
   on the machine and takes the lowest PID. It killed an unrelated app's
   renderer. Scope process matching to the bundle path under test.
+
+- 2026-08-10: **W2 landed.** See the phase entry above for the Windows proof
+  and the macOS structural gap.
+
+  The scripted click (`WELD_CLICK_AT=x,y`, in the Windows and macOS demos) is
+  the reusable instrument here. Anything gated on a real user gesture was
+  previously unprovable without a human at the keyboard, which covers both
+  `<select>` dropdowns and W1's `NewWindowRequested`. Retrying that W1 residual
+  through a gesture-driven `window.open` is now cheap and should ride along
+  with the next Windows run.
+
+  Also of note: running the Windows demo needs no separate CEF download.
+  `cef-dll-sys` already fetched one, so
+  `CEF_PATH=target/debug/build/cef-dll-sys-*/out/cef_windows_x86_64` is enough
+  to launch it.

@@ -51,6 +51,8 @@ struct EventQueues {
 #[derive(Clone)]
 struct WeldRenderHandlerInner {
     frame_slot: Arc<Mutex<PendingFrameSlot>>,
+    popup_slot: Arc<Mutex<PendingFrameSlot>>,
+    popup: Arc<crate::popup::PopupState>,
     events: Arc<Mutex<EventQueues>>,
     size: Arc<Mutex<PhysicalSize<u32>>>,
 }
@@ -69,6 +71,10 @@ pub struct LinuxCefProducer {
     #[cfg(feature = "cef-runtime")]
     cef_size: Arc<Mutex<PhysicalSize<u32>>>,
     frame_slot: Arc<Mutex<PendingFrameSlot>>,
+    #[cfg(feature = "cef-runtime")]
+    popup_slot: Arc<Mutex<PendingFrameSlot>>,
+    #[cfg(feature = "cef-runtime")]
+    popup: Arc<crate::popup::PopupState>,
     events: Arc<Mutex<EventQueues>>,
     size: PhysicalSize<u32>,
 }
@@ -88,8 +94,13 @@ impl LinuxCefProducer {
             }));
             let cef_size = Arc::new(Mutex::new(initial_size));
 
+            let popup_slot = Arc::new(Mutex::new(PendingFrameSlot::default()));
+            let popup = Arc::new(crate::popup::PopupState::default());
+
             let inner = WeldRenderHandlerInner {
                 frame_slot: frame_slot.clone(),
+                popup_slot: popup_slot.clone(),
+                popup: popup.clone(),
                 events: events.clone(),
                 size: cef_size.clone(),
             };
@@ -141,6 +152,8 @@ impl LinuxCefProducer {
                 browser,
                 cef_size,
                 frame_slot,
+                popup_slot,
+                popup,
                 events,
                 size: initial_size,
             });
@@ -172,6 +185,41 @@ impl CefSurfaceProducer for LinuxCefProducer {
         match frame {
             None => Ok(None),
             Some(f) => Ok(Some(WgpuTextureImporter::import(f, ctx)?)),
+        }
+    }
+
+    fn acquire_popup(
+        &mut self,
+        ctx: &HostWgpuContext,
+    ) -> Result<Option<crate::surface::PopupSurface>, WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            let Some(rect) = self.popup.rect_if_visible() else {
+                return Ok(None);
+            };
+            let frame = self.popup_slot.lock().unwrap().take();
+            return match frame {
+                None => Ok(None),
+                Some(f) => Ok(Some(crate::surface::PopupSurface {
+                    texture: WgpuTextureImporter::import(f, ctx)?,
+                    rect,
+                })),
+            };
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            Ok(None)
+        }
+    }
+
+    fn popup_rect(&self) -> Option<crate::surface::PopupRect> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            return self.popup.rect_if_visible();
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            None
         }
     }
 

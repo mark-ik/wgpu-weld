@@ -93,6 +93,25 @@ application and located at a known path, passed via `CefRuntimeConfig`. Under th
 `cef-runtime` feature the `cef` / `cef-dll-sys` crate family downloads and links
 libcef at build time from the configured CEF binary distribution.
 
+## Popup widgets
+
+CEF paints `<select>` dropdowns, autocomplete lists, and date pickers as a
+**separate** OSR element rather than compositing them into the view. A host
+that only draws `acquire_frame` shows a page whose dropdowns silently do
+nothing, so `welding` surfaces them through `acquire_popup` (a new
+`PopupSurface`) and `popup_rect` (still open, and where). Draw it over the
+view; all three demos do, with a viewport-clipped second pass.
+
+One platform caveat, verified rather than assumed: **macOS never delivers
+these.** Chromium uses a native menu for `<select>` there, and windowless
+rendering does not reroute it, so `OnPopupShow` and `OnPopupSize` simply never
+fire. A macOS host that needs dropdowns has to draw its own control from the
+DOM. Windows is verified working; Linux is implemented but not yet run.
+
+Popup *browsers* (`window.open`, `target="_blank"`) are a different mechanism
+entirely: `welding` renders one surface per producer, so those are denied and
+reported as `NavigationEvent::NewWindowRequested` for the host to decide on.
+
 ## Platform texture paths
 
 | Platform | CEF output | Import path |

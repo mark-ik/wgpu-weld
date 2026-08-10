@@ -5,6 +5,11 @@ pub mod native_frame;
 pub mod runtime;
 pub mod surface;
 
+// Only the producers consume this, and they are cef-runtime-only. The logic is
+// worth unit-testing either way, so allow rather than cfg the module out.
+#[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
+mod popup;
+
 #[cfg(feature = "cef-runtime")]
 mod cef_input;
 
@@ -41,5 +46,5 @@ pub use runtime::{CefLogSeverity, CefRuntime, CefRuntimeConfig};
 pub use surface::{
     BrowserFeatureStatus, CefSurfaceCapabilities, CefSurfaceConfig, CefSurfaceMode,
     CefSurfaceProducer, Cookie, EventModifiers, FocusDirection, KeyEvent, KeyEventKind,
-    MouseAction, MouseButton, MouseEvent, NavigationEvent, SameSite,
+    MouseAction, MouseButton, MouseEvent, NavigationEvent, PopupRect, PopupSurface, SameSite,
 };

@@ -56,9 +56,10 @@ cef::wrap_render_handler! {
             _dirty_rects: Option<&[cef::Rect]>,
             info: Option<&cef::AcceleratedPaintInfo>,
         ) {
-            if type_ != cef::PaintElementType::default() {
-                return;
-            }
+            // CEF paints the popup widget (select dropdowns, autocomplete) as
+            // its own element rather than compositing it into the view, so it
+            // lands here with PET_POPUP and goes to a separate slot.
+            let is_popup = type_ == cef::PaintElementType::POPUP;
             let Some(info) = info else { return };
             // macOS names this field for what it is: the paint info carries an
             // IOSurfaceRef, not the Windows shared HANDLE.
@@ -83,7 +84,11 @@ cef::wrap_render_handler! {
                 _ => wgpu::TextureFormat::Bgra8Unorm,
             };
 
-            let mut slot = self.handler.frame_slot.lock().unwrap();
+            let mut slot = if is_popup {
+                self.handler.popup_slot.lock().unwrap()
+            } else {
+                self.handler.frame_slot.lock().unwrap()
+            };
             let generation = slot.next_generation();
             slot.store(crate::native_frame::NativeFrame::MetalTextureRef(
                 crate::native_frame::MetalTextureRef {
@@ -93,6 +98,31 @@ cef::wrap_render_handler! {
                     generation,
                 },
             ));
+        }
+
+        fn on_popup_show(&self, _browser: Option<&mut cef::Browser>, show: ::std::os::raw::c_int) {
+            let showing = show != 0;
+            log::debug!("on_popup_show({showing})");
+            self.handler.popup.set_visible(showing);
+            if !showing {
+                // A hidden popup never paints again; drop the stale surface so
+                // acquire_popup cannot hand back a dropdown that is gone.
+                let _ = self.handler.popup_slot.lock().unwrap().take();
+            }
+        }
+
+        fn on_popup_size(&self, _browser: Option<&mut cef::Browser>, rect: Option<&cef::Rect>) {
+            let Some(rect) = rect else { return };
+            log::debug!(
+                "on_popup_size({}x{} at {},{})",
+                rect.width, rect.height, rect.x, rect.y
+            );
+            self.handler.popup.set_rect(crate::surface::PopupRect {
+                x: rect.x,
+                y: rect.y,
+                width: rect.width.max(0) as u32,
+                height: rect.height.max(0) as u32,
+            });
         }
     }
 }

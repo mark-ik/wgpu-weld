@@ -26,7 +26,7 @@ use welding::{
     linux_cef::{LinuxCefConfig, LinuxCefProducer},
     CefRuntime, CefRuntimeConfig, CefSurfaceConfig, CefSurfaceProducer, EventModifiers,
     FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent, KeyEventKind, MouseAction,
-    MouseButton, MouseEvent,
+    MouseButton, MouseEvent, PopupSurface,
 };
 
 // ── Blit shader: full-screen triangle that samples the CEF texture ────────────
@@ -65,6 +65,9 @@ struct DemoState {
     bg_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     frame: Option<ImportedTexture>,
+    /// Cached popup widget surface, held across frames because CEF only
+    /// repaints it on change and dropped when `popup_rect` goes to `None`.
+    popup: Option<PopupSurface>,
     cursor: (f32, f32),
     mods: EventModifiers,
 }
@@ -174,6 +177,7 @@ impl ApplicationHandler for DemoApp {
             bg_layout,
             sampler,
             frame: None,
+            popup: None,
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
         });
@@ -317,6 +321,27 @@ impl ApplicationHandler for DemoApp {
                     }
                 }
 
+                // Popup widget surface. CEF paints it separately from the view
+                // and hides it without painting, so both questions get asked
+                // every frame.
+                match s.producer.acquire_popup(&s.host_ctx) {
+                    Ok(Some(popup)) => {
+                        log::info!(
+                            "imported popup {}x{} at {},{}",
+                            popup.rect.width,
+                            popup.rect.height,
+                            popup.rect.x,
+                            popup.rect.y
+                        );
+                        s.popup = Some(popup);
+                    }
+                    Ok(None) => {}
+                    Err(e) => log::error!("acquire_popup error: {e}"),
+                }
+                if s.producer.popup_rect().is_none() && s.popup.take().is_some() {
+                    log::info!("popup closed");
+                }
+
                 while let Some(event) = s.producer.poll_navigation_event() {
                     log::info!("nav: {event:?}");
                 }
@@ -346,14 +371,14 @@ impl ApplicationHandler for DemoApp {
                     &wgpu::CommandEncoderDescriptor { label: Some("blit") },
                 );
 
-                let bg = s.frame.as_ref().map(|f| {
+                let make_bg = |view: &wgpu::TextureView| {
                     s.host_ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: None,
                         layout: &s.bg_layout,
                         entries: &[
                             wgpu::BindGroupEntry {
                                 binding: 0,
-                                resource: wgpu::BindingResource::TextureView(&f.view),
+                                resource: wgpu::BindingResource::TextureView(view),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 1,
@@ -361,7 +386,9 @@ impl ApplicationHandler for DemoApp {
                             },
                         ],
                     })
-                });
+                };
+                let bg = s.frame.as_ref().map(|f| make_bg(&f.view));
+                let popup_bg = s.popup.as_ref().map(|p| make_bg(&p.texture.view));
 
                 {
                     let clear_color = if bg.is_some() {
@@ -386,6 +413,24 @@ impl ApplicationHandler for DemoApp {
                         rpass.set_pipeline(&s.pipeline);
                         rpass.set_bind_group(0, bg, &[]);
                         rpass.draw(0..3, 0..1);
+                    }
+
+                    // Popup widget (select dropdown, autocomplete) over the
+                    // view, clipped to the rect CEF asked for. Same pipeline,
+                    // different viewport.
+                    if let (Some(popup), Some(popup_bg)) = (&s.popup, &popup_bg) {
+                        let vw = s.surface_config.width as f32;
+                        let vh = s.surface_config.height as f32;
+                        let x = (popup.rect.x as f32).clamp(0.0, vw);
+                        let y = (popup.rect.y as f32).clamp(0.0, vh);
+                        let w = (popup.rect.width as f32).min(vw - x);
+                        let h = (popup.rect.height as f32).min(vh - y);
+                        if w > 0.0 && h > 0.0 {
+                            rpass.set_viewport(x, y, w, h, 0.0, 1.0);
+                            rpass.set_pipeline(&s.pipeline);
+                            rpass.set_bind_group(0, popup_bg, &[]);
+                            rpass.draw(0..3, 0..1);
+                        }
                     }
                 }
 

@@ -26,6 +26,7 @@
 
 mod blit;
 mod keys;
+mod present;
 mod probe;
 
 use std::{
@@ -47,7 +48,7 @@ use welding::{
     macos_cef::{MacosCefConfig, MacosCefProducer},
     CefRuntime, CefRuntimeConfig, CefSurfaceConfig, CefSurfaceProducer, EventModifiers,
     FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent, KeyEventKind, MouseAction,
-    MouseButton, MouseEvent,
+    MouseButton, MouseEvent, PopupSurface,
 };
 
 use crate::keys::keycode_to_vk;
@@ -56,7 +57,17 @@ struct DemoApp {
     cef_runtime: Option<CefRuntime>,
     state: Option<DemoState>,
     exit_after_frames: Option<u32>,
+    exit_after_popups: Option<u32>,
     should_exit: bool,
+    /// `WELD_CLICK_AT=x,y`: click once, a few ticks after the first frame.
+    ///
+    /// Without this there is no way to prove anything that needs a real user
+    /// gesture on a machine nobody is sitting at: a `<select>` dropdown will
+    /// not open, and Chromium's popup blocker swallows `window.open` before
+    /// `on_before_popup` is ever reached.
+    click_at: Option<(i32, i32)>,
+    ticks_since_first_frame: u32,
+    clicked: bool,
 }
 
 struct DemoState {
@@ -68,7 +79,11 @@ struct DemoState {
     producer: MacosCefProducer,
     blit: blit::Blit,
     frame: Option<ImportedTexture>,
+    /// Cached popup widget surface. Held across frames because CEF only
+    /// repaints it on change, and dropped when `popup_rect` goes to `None`.
+    popup: Option<PopupSurface>,
     frames_imported: u32,
+    popups_imported: u32,
     cursor: (f32, f32),
     mods: EventModifiers,
 }
@@ -165,7 +180,9 @@ impl ApplicationHandler for DemoApp {
             producer,
             blit,
             frame: None,
+            popup: None,
             frames_imported: 0,
+            popups_imported: 0,
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
         });
@@ -335,141 +352,79 @@ impl DemoApp {
             Err(e) => log::error!("acquire_frame error: {e}"),
         }
 
+        // Popup widget surface. CEF paints this separately from the view, and
+        // hides it without painting, so both the new-surface and the
+        // still-open questions have to be asked every tick.
+        match s.producer.acquire_popup(&s.host_ctx) {
+            Ok(Some(popup)) => {
+                s.popups_imported += 1;
+                log::info!(
+                    "imported popup #{} ({}x{} at {},{})",
+                    s.popups_imported,
+                    popup.rect.width,
+                    popup.rect.height,
+                    popup.rect.x,
+                    popup.rect.y
+                );
+                s.popup = Some(popup);
+            }
+            Ok(None) => {}
+            Err(e) => log::error!("acquire_popup error: {e}"),
+        }
+        if s.producer.popup_rect().is_none() && s.popup.take().is_some() {
+            log::info!("popup closed");
+        }
+
         while let Some(event) = s.producer.poll_navigation_event() {
             log::info!("nav: {event:?}");
         }
 
-        if let Some(limit) = exit_after {
-            if s.frames_imported >= limit {
-                report(s);
-                let _ = s.producer.close();
-                self.should_exit = true;
-                return;
+        if let Some((x, y)) = self.click_at {
+            if s.frames_imported > 0 {
+                self.ticks_since_first_frame += 1;
+                // A few ticks of slack: the first paint can land before the
+                // page's own scripts and layout have settled.
+                if !self.clicked && self.ticks_since_first_frame > 30 {
+                    self.clicked = true;
+                    log::info!("scripted click at {x},{y}");
+                    for action in [MouseAction::Moved, MouseAction::Pressed, MouseAction::Released]
+                    {
+                        let _ = s.producer.send_mouse_input(MouseEvent {
+                            x,
+                            y,
+                            button: MouseButton::Left,
+                            action,
+                            modifiers: EventModifiers::default(),
+                        });
+                    }
+                }
             }
         }
 
-        render(s);
+        // With a scripted click the run has to outlive the frame that triggered
+        // it, so the frame-count exit is replaced by a popup-count one.
+        let done = if self.click_at.is_some() {
+            self.exit_after_popups
+                .is_some_and(|n| s.popups_imported >= n)
+        } else {
+            exit_after.is_some_and(|n| s.frames_imported >= n)
+        };
+        if done {
+            present::report(s);
+            let _ = s.producer.close();
+            self.should_exit = true;
+            return;
+        }
+
+        present::render(s);
     }
 
     /// Report on whatever has been imported so far, for the timeout path.
     fn report_now(&mut self) {
         if let Some(s) = self.state.as_mut() {
-            report(s);
+            present::report(s);
             let _ = s.producer.close();
         }
-    }
-}
-
-fn render(s: &mut DemoState) {
-    let output = match s.surface.get_current_texture() {
-        wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-        wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-            s.surface.configure(&s.host_ctx.device, &s.surface_config);
-            s.window.request_redraw();
-            return;
-        }
-        wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-            s.window.request_redraw();
-            return;
-        }
-        wgpu::CurrentSurfaceTexture::Validation => {
-            log::error!("surface validation error");
-            return;
-        }
-    };
-
-    let target = output
-        .texture
-        .create_view(&wgpu::TextureViewDescriptor::default());
-    let mut enc = s
-        .host_ctx
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("blit"),
-        });
-
-    let bg = s.frame.as_ref().map(|f| {
-        s.host_ctx
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &s.blit.bg_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&f.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&s.blit.sampler),
-                    },
-                ],
-            })
-    });
-
-    {
-        let clear_color = if bg.is_some() {
-            wgpu::Color::BLACK
-        } else {
-            wgpu::Color {
-                r: 0.1,
-                g: 0.1,
-                b: 0.1,
-                a: 1.0,
-            }
-        };
-        let mut rpass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("blit"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &target,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear_color),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            ..Default::default()
-        });
-        if let Some(bg) = &bg {
-            rpass.set_pipeline(&s.blit.pipeline);
-            rpass.set_bind_group(0, bg, &[]);
-            rpass.draw(0..3, 0..1);
-        }
-    }
-
-    s.host_ctx.queue.submit([enc.finish()]);
-    output.present();
-    s.window.request_redraw();
-}
-
-/// Probe the last imported frame and print a verdict a log reader can trust.
-fn report(s: &mut DemoState) {
-    match s.frame.as_ref() {
-        Some(frame) => match probe::sample(&s.host_ctx.device, &s.host_ctx.queue, &frame.texture) {
-            Ok(rb) => {
-                log::info!(
-                    "probe: {}/{} bytes non-zero in the top-left corner; first pixels {:?}",
-                    rb.non_zero_bytes,
-                    rb.total_bytes,
-                    rb.first_pixels
-                );
-                if rb.looks_painted() {
-                    log::info!(
-                        "VALIDATION PASS: {} frames imported and the IOSurface carried real pixels",
-                        s.frames_imported
-                    );
-                } else {
-                    log::error!(
-                        "VALIDATION FAIL: {} frames imported but the corner is entirely zero, \
-                         so the texture is not carrying CEF's paint",
-                        s.frames_imported
-                    );
-                }
-            }
-            Err(e) => log::error!("VALIDATION FAIL: readback failed: {e}"),
-        },
-        None => log::error!("VALIDATION FAIL: no frame was ever imported"),
     }
 }
 
@@ -522,11 +477,27 @@ fn main() {
     let mut event_loop = EventLoop::new().expect("event loop creation failed");
     event_loop.set_control_flow(ControlFlow::Poll);
 
+    let click_at = std::env::var("WELD_CLICK_AT").ok().and_then(|v| {
+        let (x, y) = v.split_once(',')?;
+        Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+    });
+    let exit_after_popups = std::env::var("WELD_EXIT_AFTER_POPUPS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .or(click_at.map(|_| 1));
+    if let Some((x, y)) = click_at {
+        log::info!("scripted click armed at {x},{y}");
+    }
+
     let mut app = DemoApp {
         cef_runtime: Some(runtime),
         state: None,
         exit_after_frames,
+        exit_after_popups,
         should_exit: false,
+        click_at,
+        ticks_since_first_frame: 0,
+        clicked: false,
     };
 
     // We drive the loop rather than handing it to `run_app`, so that CEF's
@@ -542,7 +513,7 @@ fn main() {
         if app.should_exit {
             break;
         }
-        if exit_after_frames.is_some() && started.elapsed() >= timeout {
+        if (exit_after_frames.is_some() || click_at.is_some()) && started.elapsed() >= timeout {
             log::warn!("timed out after {}s", timeout.as_secs());
             app.report_now();
             break;

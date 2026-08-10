@@ -86,13 +86,14 @@ impl CefSurfaceCapabilities {
             downloads: BrowserFeatureStatus::Unsupported(
                 "no CefDownloadHandler is registered; downloads are silently dropped",
             ),
-            // Popup *creation* is denied and reported as NewWindowRequested.
-            // Popup *surfaces* (select dropdowns, autocomplete, date pickers)
-            // are a separate matter: CEF paints them as their own OSR element
-            // and welding skips those paints, so they do not render at all.
+            // Two unrelated things share this name. Widget surfaces (select
+            // dropdowns, autocomplete) are rendered: see `acquire_popup`.
+            // Popup *browsers* (window.open) are denied and reported as
+            // NewWindowRequested, because welding renders one surface per
+            // producer and has nowhere to put a second browser.
             popups: BrowserFeatureStatus::Partial(
-                "creation is denied and surfaced as NewWindowRequested; popup widget \
-                 surfaces (select dropdowns, autocomplete) are not rendered",
+                "widget surfaces are rendered via acquire_popup; popup browsers \
+                 (window.open) are denied and surfaced as NewWindowRequested",
             ),
             context_menus: BrowserFeatureStatus::Unsupported(
                 "no CefContextMenuHandler is registered; CEF's default menu is inert under OSR",
@@ -169,6 +170,34 @@ pub struct Cookie {
     pub partitioned: bool,
 }
 
+// ── Popup widget surfaces ────────────────────────────────────────────────────
+
+/// Where CEF wants the popup widget drawn, in view pixels, relative to the
+/// view's top-left.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PopupRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A popup widget surface: `<select>` dropdowns, autocomplete lists, date
+/// pickers.
+///
+/// Under windowless rendering CEF paints these as a **separate** OSR element
+/// rather than compositing them into the view, so a host that only ever draws
+/// [`CefSurfaceProducer::acquire_frame`] shows a page whose dropdowns silently
+/// do nothing. Draw this over the view at [`PopupRect`] while
+/// [`CefSurfaceProducer::popup_rect`] keeps returning `Some`.
+///
+/// Note this is unrelated to [`NavigationEvent::NewWindowRequested`], which is
+/// a request for a whole new *browser* (`window.open`, `target="_blank"`).
+pub struct PopupSurface {
+    pub texture: ImportedTexture,
+    pub rect: PopupRect,
+}
+
 /// Configuration for a single CEF browser surface.
 pub struct CefSurfaceConfig {
     pub initial_url: String,
@@ -215,6 +244,29 @@ pub trait CefSurfaceProducer: Send {
         &mut self,
         ctx: &HostWgpuContext,
     ) -> Result<Option<ImportedTexture>, WeldError>;
+
+    /// Acquire the most recently painted **popup widget** surface, if one is
+    /// showing and has repainted since the last call.
+    ///
+    /// Hosts should cache the returned surface and keep drawing it over the
+    /// view for as long as [`popup_rect`](Self::popup_rect) returns `Some`;
+    /// like [`acquire_frame`](Self::acquire_frame), this only yields on a new
+    /// paint. Drop the cached surface when `popup_rect` goes to `None`.
+    fn acquire_popup(
+        &mut self,
+        _ctx: &HostWgpuContext,
+    ) -> Result<Option<PopupSurface>, WeldError> {
+        Ok(None)
+    }
+
+    /// Where the popup widget is showing, or `None` when no popup is open.
+    ///
+    /// This is the visibility signal: CEF hides a popup without painting
+    /// anything, so a host that waits for a frame would leave a stale dropdown
+    /// on screen.
+    fn popup_rect(&self) -> Option<PopupRect> {
+        None
+    }
 
     fn resize(&mut self, size: PhysicalSize<u32>) -> Result<(), WeldError>;
 
