@@ -95,10 +95,14 @@ impl MacosCefProducer {
             let render_handler = cef_backed::WeldRenderHandler::build(inner.clone());
             let load_handler = cef_backed::WeldLoadHandler::build(inner.clone());
             let display_handler = cef_backed::WeldDisplayHandler::build(inner);
+            let life_span_handler = cef_backed::WeldLifeSpanHandler::build(events.clone());
+            let request_handler = cef_backed::WeldRequestHandler::build(events.clone());
             let mut client = cef_backed::WeldClient::build(
                 render_handler,
                 load_handler,
                 display_handler,
+                life_span_handler,
+                request_handler,
                 events.clone(),
             );
 

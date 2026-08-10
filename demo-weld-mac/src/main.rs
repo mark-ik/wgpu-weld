@@ -335,6 +335,10 @@ impl DemoApp {
             Err(e) => log::error!("acquire_frame error: {e}"),
         }
 
+        while let Some(event) = s.producer.poll_navigation_event() {
+            log::info!("nav: {event:?}");
+        }
+
         if let Some(limit) = exit_after {
             if s.frames_imported >= limit {
                 report(s);

@@ -317,6 +317,10 @@ impl ApplicationHandler for DemoApp {
                     }
                 }
 
+                while let Some(event) = s.producer.poll_navigation_event() {
+                    log::info!("nav: {event:?}");
+                }
+
                 let output = match s.surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(t)
                     | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,

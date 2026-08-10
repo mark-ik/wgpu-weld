@@ -137,6 +137,8 @@ cef::wrap_client! {
         render_handler: cef::RenderHandler,
         load_handler: cef::LoadHandler,
         display_handler: cef::DisplayHandler,
+        life_span_handler: cef::LifeSpanHandler,
+        request_handler: cef::RequestHandler,
         events: Arc<Mutex<EventQueues>>,
     }
 
@@ -147,6 +149,14 @@ cef::wrap_client! {
 
         fn load_handler(&self) -> Option<cef::LoadHandler> {
             Some(self.load_handler.clone())
+        }
+
+        fn life_span_handler(&self) -> Option<cef::LifeSpanHandler> {
+            Some(self.life_span_handler.clone())
+        }
+
+        fn request_handler(&self) -> Option<cef::RequestHandler> {
+            Some(self.request_handler.clone())
         }
 
         fn display_handler(&self) -> Option<cef::DisplayHandler> {
@@ -177,9 +187,96 @@ impl WeldClient {
         render_handler: cef::RenderHandler,
         load_handler: cef::LoadHandler,
         display_handler: cef::DisplayHandler,
+        life_span_handler: cef::LifeSpanHandler,
+        request_handler: cef::RequestHandler,
         events: Arc<Mutex<EventQueues>>,
     ) -> cef::Client {
-        Self::new(render_handler, load_handler, display_handler, events)
+        Self::new(
+            render_handler,
+            load_handler,
+            display_handler,
+            life_span_handler,
+            request_handler,
+            events,
+        )
+    }
+}
+
+// ── Life-span handler: popup policy ───────────────────────────────────────
+
+cef::wrap_life_span_handler! {
+    pub(super) struct WeldLifeSpanHandler {
+        events: Arc<Mutex<EventQueues>>,
+    }
+
+    impl LifeSpanHandler {
+        // Popup browsers are denied and reported. welding renders one surface
+        // per producer, so a second browser here would be invisible to the
+        // host. The host decides what to do with the URL.
+        #[allow(clippy::too_many_arguments)]
+        fn on_before_popup(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _frame: Option<&mut cef::Frame>,
+            _popup_id: ::std::os::raw::c_int,
+            target_url: Option<&cef::CefString>,
+            _target_frame_name: Option<&cef::CefString>,
+            _target_disposition: cef::WindowOpenDisposition,
+            user_gesture: ::std::os::raw::c_int,
+            _popup_features: Option<&cef::PopupFeatures>,
+            _window_info: Option<&mut cef::WindowInfo>,
+            _client: Option<&mut Option<cef::Client>>,
+            _settings: Option<&mut cef::BrowserSettings>,
+            _extra_info: Option<&mut Option<cef::DictionaryValue>>,
+            _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
+        ) -> ::std::os::raw::c_int {
+            let url = target_url.map(|u| u.to_string()).unwrap_or_default();
+            self.events.lock().unwrap().nav.push_back(
+                crate::surface::NavigationEvent::NewWindowRequested {
+                    url,
+                    user_gesture: user_gesture != 0,
+                }
+            );
+            1 // cancel popup creation
+        }
+    }
+}
+
+impl WeldLifeSpanHandler {
+    pub fn build(events: Arc<Mutex<EventQueues>>) -> cef::LifeSpanHandler {
+        Self::new(events)
+    }
+}
+
+// ── Request handler ───────────────────────────────────────────────────────
+
+cef::wrap_request_handler! {
+    pub(super) struct WeldRequestHandler {
+        events: Arc<Mutex<EventQueues>>,
+    }
+
+    impl RequestHandler {
+        fn on_render_process_terminated(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _status: cef::TerminationStatus,
+            error_code: ::std::os::raw::c_int,
+            error_string: Option<&cef::CefString>,
+        ) {
+            log::error!(
+                "weld: CEF render process terminated (code {error_code}, {})",
+                error_string.map(|s| s.to_string()).unwrap_or_default()
+            );
+            self.events.lock().unwrap().nav.push_back(
+                crate::surface::NavigationEvent::ContentProcessTerminated
+            );
+        }
+    }
+}
+
+impl WeldRequestHandler {
+    pub fn build(events: Arc<Mutex<EventQueues>>) -> cef::RequestHandler {
+        Self::new(events)
     }
 }
 
@@ -274,6 +371,27 @@ cef::wrap_display_handler! {
             self.inner.events.lock().unwrap().nav.push_back(
                 crate::surface::NavigationEvent::AddressChanged { url }
             );
+        }
+
+        fn on_console_message(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            level: cef::LogSeverity,
+            message: Option<&cef::CefString>,
+            source: Option<&cef::CefString>,
+            line: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            self.inner.events.lock().unwrap().nav.push_back(
+                crate::surface::NavigationEvent::ConsoleMessage {
+                    // cef_log_severity_t is repr(u32) here and repr(i32) on
+                    // Windows, so go through the reference rather than From.
+                    level: *level.as_ref() as i32,
+                    message: message.map(|m| m.to_string()).unwrap_or_default(),
+                    source: source.map(|s| s.to_string()).unwrap_or_default(),
+                    line,
+                }
+            );
+            0 // let CEF log it as well
         }
 
         fn on_title_change(

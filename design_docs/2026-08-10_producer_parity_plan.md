@@ -142,12 +142,20 @@ than a missing feature; this is the first thing to fix.
 
 ### W: welding phases, in bite order
 
-- **W1, truth pass.** Fix `probe()` (platform reality, popups/console back to
-  honest statuses), then wire or delete the three dead `NavigationEvent`
-  variants: `on_before_popup` emitting `NewWindowRequested` (deny popup
-  creation by default), `on_console_message`, `on_render_process_terminated`.
-  Done when: every probe field matches an implemented path and every declared
-  event variant has an emitter.
+- **W1, truth pass. DONE 2026-08-10.** `probe()` now reports the three verified
+  platforms, downgrades `downloads`/`context_menus` to explained `Unsupported`,
+  and splits `popups` into `Partial` (creation handled, widget surfaces not).
+  All three dead `NavigationEvent` variants gained emitters on all three
+  platforms: `on_before_popup` (new life-span handler on Linux/macOS, existing
+  one on Windows), `on_console_message` on the display handler, and
+  `on_render_process_terminated` on a new request handler wired into each
+  client. A unit test pins every `Supported` claim to a handler that exists, so
+  a future feature must flip the status and the test together. The Linux and
+  macOS demos now drain and log navigation events; the Windows demo already did.
+
+  Residual, carried into W2: popup *policy* is hardcoded to deny. Per the
+  configurability doctrine that belongs in `CefSurfaceConfig` once W2 can
+  actually render a popup surface.
 - **W2, popup widget surfaces.** Handle `on_popup_show`/`on_popup_size` and
   route popup paint elements. Expose the popup as a second texture + rect and
   also offer a composited single-texture mode; which to use is the host's
@@ -210,6 +218,33 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
 ## Progress
 
 - 2026-08-10: surfaces of all three repos read; matrix and phases drafted.
-  No code changes under this plan yet. Same-day context: module split, macOS
-  Phase 3 closed end to end, grafting 0.4.0 + welding 0.1.0 published (see
-  2026-05-14_cef_accelerated_osr_plan.md).
+  Same-day context: module split, macOS Phase 3 closed end to end, grafting
+  0.4.0 + welding 0.1.0 published (see 2026-05-14_cef_accelerated_osr_plan.md).
+
+- 2026-08-10: **W1 landed.** Compile-verified on Windows (`cef-runtime` via
+  demo-weld-win), Linux (`cef-runtime` cross-target), and macOS (`cef-runtime`
+  on the Intel iMac); unit and doc tests green.
+
+  Runtime evidence is uneven, and the gap is worth stating rather than
+  implying:
+
+  - `ConsoleMessage` is **proven**. A `data:` page calling `console.log`
+    produced `ConsoleMessage { level: 2, message: "weld-w1-console-probe", ... }`
+    on the iMac.
+  - `NewWindowRequested` is **wired but unproven**. Chromium's popup blocker
+    suppresses a non-gesture `window.open` *before* `on_before_popup` is
+    reached, so the obvious test can't reach the handler. Proving it needs
+    either a real user gesture (a scripted click through `send_mouse_input`)
+    or `--disable-popup-blocking` via `OnBeforeCommandLineProcessing`, which
+    welding does not expose yet. That switch is itself a reasonable W7 item.
+  - `ContentProcessTerminated` is **wired but unproven**. Killing the demo's
+    own renderer helper produced no event within ~20s. The wiring was
+    re-checked afterwards against the bindings (`ImplClient::request_handler`
+    is the correct getter and is implemented), so this reads as an
+    inconclusive test rather than a known defect. Needs a deliberate
+    crash-recovery scenario to settle.
+
+  Method note: the first attempt at that crash test used
+  `pgrep -f "Helper \(Renderer\)" | head -1`, which matches every Electron app
+  on the machine and takes the lowest PID. It killed an unrelated app's
+  renderer. Scope process matching to the bundle path under test.

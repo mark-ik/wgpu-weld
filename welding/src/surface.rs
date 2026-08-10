@@ -46,7 +46,16 @@ impl CefSurfaceCapabilities {
     /// definitively confirmed after creating a browser and observing whether
     /// `OnAcceleratedPaint` fires; this probe returns the best static estimate.
     pub fn probe() -> Self {
-        let accelerated_paint_available = cfg!(target_os = "windows");
+        // Windows, Linux and macOS have each been verified end to end against
+        // a real CEF build (see the accelerated-OSR plan's phase table). The
+        // remaining honesty gap is the one the doc comment describes: whether
+        // *this* CEF distribution was built with GPU support can only be
+        // confirmed once `OnAcceleratedPaint` actually fires.
+        let accelerated_paint_available = cfg!(any(
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "macos"
+        ));
         let cpu_paint_available = cfg!(feature = "cpu-paint-fallback");
         let preferred_mode = if accelerated_paint_available {
             CefSurfaceMode::AcceleratedPaint
@@ -74,10 +83,19 @@ impl CefSurfaceCapabilities {
                 "CEF result-bearing script bridge is not wired yet",
             ),
             devtools: BrowserFeatureStatus::Supported,
-            downloads: BrowserFeatureStatus::Partial("CEF download callbacks require host wiring"),
-            popups: BrowserFeatureStatus::Supported,
-            context_menus: BrowserFeatureStatus::Partial(
-                "CEF context-menu callbacks require host wiring",
+            downloads: BrowserFeatureStatus::Unsupported(
+                "no CefDownloadHandler is registered; downloads are silently dropped",
+            ),
+            // Popup *creation* is denied and reported as NewWindowRequested.
+            // Popup *surfaces* (select dropdowns, autocomplete, date pickers)
+            // are a separate matter: CEF paints them as their own OSR element
+            // and welding skips those paints, so they do not render at all.
+            popups: BrowserFeatureStatus::Partial(
+                "creation is denied and surfaced as NewWindowRequested; popup widget \
+                 surfaces (select dropdowns, autocomplete) are not rendered",
+            ),
+            context_menus: BrowserFeatureStatus::Unsupported(
+                "no CefContextMenuHandler is registered; CEF's default menu is inert under OSR",
             ),
             console_messages: BrowserFeatureStatus::Supported,
         }
@@ -89,6 +107,46 @@ pub enum BrowserFeatureStatus {
     Supported,
     Unsupported(&'static str),
     Partial(&'static str),
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    /// A capability report that overstates is worse than a missing feature,
+    /// so every `Supported` here is pinned to a handler that exists. When a
+    /// feature lands, flip the status *and* this test in the same change.
+    #[test]
+    fn probe_only_claims_what_is_wired() {
+        let caps = CefSurfaceCapabilities::probe();
+
+        // Wired: script execution, devtools, console messages (the display
+        // handler's on_console_message), and the accelerated paint path on all
+        // three verified platforms.
+        assert_eq!(caps.script_execution, BrowserFeatureStatus::Supported);
+        assert_eq!(caps.devtools, BrowserFeatureStatus::Supported);
+        assert_eq!(caps.console_messages, BrowserFeatureStatus::Supported);
+        assert!(caps.accelerated_paint_available);
+        assert_eq!(caps.preferred_mode, CefSurfaceMode::AcceleratedPaint);
+
+        // Not wired. These carry a reason string rather than a bare status so
+        // a host can report *why* to its own user.
+        for status in [
+            caps.cookies,
+            caps.cookie_change_events,
+            caps.script_result,
+            caps.downloads,
+            caps.context_menus,
+        ] {
+            assert!(
+                matches!(status, BrowserFeatureStatus::Unsupported(reason) if !reason.is_empty()),
+                "expected an explained Unsupported, got {status:?}"
+            );
+        }
+
+        // Popups are the split case: creation is handled, rendering is not.
+        assert!(matches!(caps.popups, BrowserFeatureStatus::Partial(_)));
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
