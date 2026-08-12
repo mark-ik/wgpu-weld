@@ -526,6 +526,18 @@ fn main() {
 
     let mut config = CefRuntimeConfig::new(&frameworks);
     config.cache_path = Some(std::env::temp_dir().join("welding-demo-mac-cache"));
+    // WELD_SWITCHES=disable-popup-blocking,lang=en-GB
+    if let Ok(list) = std::env::var("WELD_SWITCHES") {
+        config.command_line_switches = list
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| match s.split_once('=') {
+                Some((k, v)) => (k.to_owned(), Some(v.to_owned())),
+                None => (s.to_owned(), None),
+            })
+            .collect();
+        eprintln!("weld demo: switches {:?}", config.command_line_switches);
+    }
     let runtime = CefRuntime::initialize(config).expect("welding: CEF initialize failed");
 
     let exit_after_frames = std::env::var("WELD_EXIT_AFTER_FRAMES")

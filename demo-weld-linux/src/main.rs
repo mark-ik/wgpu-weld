@@ -560,6 +560,18 @@ fn main() {
     // Avoid sharing the default CEF cache directory across processes — pick a
     // per-binary subdir under the system temp dir.
     config.cache_path = Some(std::env::temp_dir().join("welding-demo-linux-cache"));
+    // WELD_SWITCHES=disable-popup-blocking,lang=en-GB
+    if let Ok(list) = std::env::var("WELD_SWITCHES") {
+        config.command_line_switches = list
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| match s.split_once('=') {
+                Some((k, v)) => (k.to_owned(), Some(v.to_owned())),
+                None => (s.to_owned(), None),
+            })
+            .collect();
+        eprintln!("weld demo: switches {:?}", config.command_line_switches);
+    }
     let runtime = CefRuntime::initialize(config).expect("welding: CEF initialize failed");
 
     let event_loop = EventLoop::new().expect("event loop creation failed");
