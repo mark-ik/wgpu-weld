@@ -55,6 +55,7 @@ struct DemoState {
     frame: Option<ImportedTexture>,
     frames_imported: u32,
     battery_started: bool,
+    ticks: u32,
     /// Cached popup widget surface, held across frames because CEF only
     /// repaints it on change and dropped when `popup_rect` goes to `None`.
     popup: Option<PopupSurface>,
@@ -191,6 +192,7 @@ impl ApplicationHandler for DemoApp {
             frame: None,
             frames_imported: 0,
             battery_started: false,
+            ticks: 0,
             popup: None,
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
@@ -385,7 +387,11 @@ impl ApplicationHandler for DemoApp {
                 // Parity battery: one run reports frames, script results,
                 // HiDPI layout and cookies, so the same evidence exists on
                 // every platform.
-                if !s.battery_started && s.frames_imported > 60 {
+                s.ticks += 1;
+                // Ticks, not imported frames: accelerated OSR only paints on
+                // change, so a static page yields one frame and the battery
+                // would never fire.
+                if !s.battery_started && s.ticks > 60 {
                     s.battery_started = true;
                     if let Ok(script) = std::env::var("WELD_SCRIPT") {
                         match s.producer.request_script_result(&script) {

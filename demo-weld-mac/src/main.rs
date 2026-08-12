@@ -84,6 +84,7 @@ struct DemoState {
     popup: Option<PopupSurface>,
     frames_imported: u32,
     battery_started: bool,
+    ticks: u32,
     popups_imported: u32,
     cursor: (f32, f32),
     mods: EventModifiers,
@@ -193,6 +194,7 @@ impl ApplicationHandler for DemoApp {
             popup: None,
             frames_imported: 0,
             battery_started: false,
+            ticks: 0,
             popups_imported: 0,
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
@@ -405,7 +407,10 @@ impl DemoApp {
             // Parity battery: one run reports frames, script results,
             // HiDPI layout and cookies, so the same evidence exists on
             // every platform.
-            if !s.battery_started && s.frames_imported > 60 {
+            s.ticks += 1;
+        // Ticks, not imported frames: accelerated OSR only paints on change,
+        // so a static page yields one frame and the battery would never fire.
+        if !s.battery_started && s.ticks > 60 {
                 s.battery_started = true;
                 if let Ok(script) = std::env::var("WELD_SCRIPT") {
                     match s.producer.request_script_result(&script) {
