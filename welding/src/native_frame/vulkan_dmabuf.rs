@@ -7,6 +7,9 @@
 
 use super::*;
 
+/// `DRM_FORMAT_MOD_INVALID` from `drm_fourcc.h`: "no explicit modifier".
+const DRM_FORMAT_MOD_INVALID: u64 = 0x00ff_ffff_ffff_ffff;
+
 /// The Linux half of [`WgpuTextureImporter::import`] for
 /// [`NativeFrame::DmaBufImage`] frames.
 pub(super) fn import_vulkan(
@@ -32,6 +35,22 @@ pub(super) fn import_vulkan(
     let plane = frame.planes[0];
     if plane.fd < 0 {
         return Err(ImportError::InvalidFrame("DMABUF plane fd is negative"));
+    }
+    // CEF sets DRM_FORMAT_MOD_INVALID when the buffer carries no explicit
+    // modifier, which is what AMD/RADV hands over in practice while Intel/Mesa
+    // supplies a real one. Passing it through to
+    // VkImageDrmFormatModifierExplicitCreateInfoEXT is invalid: vkCreateImage
+    // answers VK_ERROR_FORMAT_NOT_SUPPORTED, and the validation layer has been
+    // seen to abort the process while formatting that error. Refuse it here
+    // with something a host can act on.
+    //
+    // The real fix is a linear-tiling import path that carries the plane's
+    // stride, which needs a machine where the resulting pixels can be checked.
+    if frame.modifier == DRM_FORMAT_MOD_INVALID {
+        return Err(ImportError::VulkanImport(
+            "CEF supplied DRM_FORMAT_MOD_INVALID (no explicit modifier); welding's DMABUF import currently requires one. Seen on AMD/RADV; Intel/Mesa supplies a modifier and works."
+                .into(),
+        ));
     }
 
     let vk_format = match frame.format {

@@ -66,7 +66,7 @@ demos.
 | GPU frame import | Y (3 platforms, hw-verified) | Y | Y |
 | CPU fallback tier | P (feature-gated, never runtime-exercised) | Y | Y (readback demos) |
 | Explicit sync seam | N (implicit: callback copy + keyed mutex + cache-flush) | P (in-tree sync modules) | Y (owner) |
-| HiDPI scale factor | N (hardcoded 1.0, all three producers) | unverified, per-backend | o (host concern) |
+| HiDPI scale factor | Y (verified on Windows) | unverified, per-backend | o (host concern) |
 | Popup widget surfaces (select/autocomplete) | Y on Windows, structurally absent on macOS, unverified on Linux | o (webviews self-composite) | o (Servo self-composites) |
 | Navigation control | Y | Y | demo-level |
 | can_go_back / can_go_forward | N | Y | o |
@@ -295,6 +295,31 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
   `<select>` dropdowns and W1's `NewWindowRequested`. Retrying that W1 residual
   through a gesture-driven `window.open` is now cheap and should ride along
   with the next Windows run.
+
+  **Linux ran for the first time (2026-08-10), on the Fedora 44 ThinkPad
+  (AMD Renoir / RADV).** CEF initializes, example.com loads, and the Vulkan
+  backend is detected, but no frame imports: CEF hands over
+  `DRM_FORMAT_MOD_INVALID` for the DMABUF modifier, and welding fed that
+  straight into `VkImageDrmFormatModifierExplicitCreateInfoEXT`. vkCreateImage
+  answered `VK_ERROR_FORMAT_NOT_SUPPORTED` and the *validation layer* then
+  aborted the process while formatting its own error. welding now rejects the
+  invalid modifier with a typed `ImportError` naming the situation, so the
+  failure is attributable instead of a core dump.
+
+  That explains the Intel-versus-AMD split: the plan's original Linux
+  verification was on Intel/Mesa, which supplies a real modifier. The proper
+  fix is a linear-tiling import path carrying the plane stride, which needs a
+  machine where the resulting pixels can be checked, so it is a follow-up
+  rather than a guess. Until then, Linux + AMD is a documented no-import.
+
+  Two method notes from that session. Reaching the ThinkPad's display over SSH
+  needs `DISPLAY=:0` **plus** `XAUTHORITY=/run/user/1000/.mutter-Xwaylandauth.*`
+  (read it off the running Xwayland's `-auth` argument); without the cookie CEF
+  reports only "Missing X server or $DISPLAY". And a hypothesis about CEF not
+  finding `icudtl.dat` / `locales/` was wrong: an A/B with the setting removed
+  showed CEF resolves those from the `libcef.so` directory via
+  `LD_LIBRARY_PATH`, so no `resources_dir_path` is required and the speculative
+  fix was reverted.
 
   Also of note: running the Windows demo needs no separate CEF download.
   `cef-dll-sys` already fetched one, so
