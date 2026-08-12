@@ -52,6 +52,7 @@ struct DemoState {
     /// repaints it on change and dropped when `popup_rect` goes to `None`.
     popup: Option<PopupSurface>,
     frames_drawn: u32,
+    cookies_requested: bool,
     click_at: Option<(i32, i32)>,
     clicked: bool,
     cursor: (f32, f32),
@@ -170,6 +171,7 @@ impl ApplicationHandler for DemoApp {
             frame: None,
             popup: None,
             frames_drawn: 0,
+            cookies_requested: false,
             click_at: std::env::var("WELD_CLICK_AT").ok().and_then(|v| {
                 let (x, y) = v.split_once(',')?;
                 Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
@@ -368,6 +370,40 @@ impl ApplicationHandler for DemoApp {
                 if let Some(shape) = s.producer.poll_cursor_shape() {
                     eprintln!("weld demo: cursor -> {shape:?}");
                     s.window.set_cursor(winit_cursor(&shape));
+                }
+
+                // WELD_COOKIE_URL: request the store once a page has loaded,
+                // then print whatever comes back. Proves the async read.
+                if !s.cookies_requested && s.frames_drawn > 90 {
+                    if let Ok(url) = std::env::var("WELD_COOKIE_URL") {
+                        s.cookies_requested = true;
+                        // Write one first, so the read has something to find
+                        // even on a site that sets none.
+                        let probe = welding::Cookie {
+                            name: "weld_probe".into(),
+                            value: "w5".into(),
+                            domain: "example.com".into(),
+                            path: "/".into(),
+                            ..Default::default()
+                        };
+                        match s.producer.set_cookie(&url, &probe) {
+                            Ok(()) => eprintln!("weld demo: set_cookie accepted"),
+                            Err(e) => eprintln!("weld demo: set_cookie failed: {e}"),
+                        }
+                        match s.producer.request_cookies(Some(&url)) {
+                            Ok(()) => eprintln!("weld demo: requested cookies for {url}"),
+                            Err(e) => eprintln!("weld demo: request_cookies failed: {e}"),
+                        }
+                    }
+                }
+                if let Some(cookies) = s.producer.poll_cookies() {
+                    eprintln!("weld demo: COOKIES n={}", cookies.len());
+                    for c in cookies.iter().take(5) {
+                        eprintln!(
+                            "weld demo:   {}={} domain={} path={} secure={} http_only={}",
+                            c.name, c.value, c.domain, c.path, c.secure, c.http_only
+                        );
+                    }
                 }
 
                 while let Some(event) = s.producer.poll_navigation_event() {

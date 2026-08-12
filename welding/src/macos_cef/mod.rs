@@ -80,6 +80,8 @@ pub struct MacosCefProducer {
     cursor: Arc<crate::cursor::LatestCursor>,
     #[cfg(feature = "cef-runtime")]
     ime: Arc<crate::ime::LatestComposition>,
+    #[cfg(feature = "cef-runtime")]
+    cookies: Arc<crate::cookies::CookieJar>,
     events: Arc<Mutex<EventQueues>>,
     size: PhysicalSize<u32>,
 }
@@ -105,6 +107,7 @@ impl MacosCefProducer {
             let popup = Arc::new(crate::popup::PopupState::default());
             let cursor = Arc::new(crate::cursor::LatestCursor::default());
             let ime = Arc::new(crate::ime::LatestComposition::default());
+            let cookies = Arc::new(crate::cookies::CookieJar::default());
 
             let inner = WeldRenderHandlerInner {
                 frame_slot: frame_slot.clone(),
@@ -165,6 +168,7 @@ impl MacosCefProducer {
                 popup,
                 cursor,
                 ime,
+                cookies,
                 events,
                 size: initial_size,
             });
@@ -248,6 +252,53 @@ impl CefSurfaceProducer for MacosCefProducer {
             return Ok(());
         }
         Err(pending("cef_browser_host_t::was_resized"))
+    }
+
+    fn set_cookie(&mut self, url: &str, cookie: &crate::surface::Cookie) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            return crate::cookies::set(url, cookie);
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            let _ = (url, cookie);
+            Err(WeldError::PlatformUnsupported("cookies require the cef-runtime feature"))
+        }
+    }
+
+    fn request_cookies(&mut self, url: Option<&str>) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            return crate::cookies::request(&self.cookies, url);
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            let _ = url;
+            Err(WeldError::PlatformUnsupported("cookies require the cef-runtime feature"))
+        }
+    }
+
+    fn poll_cookies(&mut self) -> Option<Vec<crate::surface::Cookie>> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            return self.cookies.take();
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            None
+        }
+    }
+
+    fn delete_cookies(&mut self, url: Option<&str>, name: Option<&str>) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            return crate::cookies::delete(url, name);
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            let _ = (url, name);
+            Err(WeldError::PlatformUnsupported("cookies require the cef-runtime feature"))
+        }
     }
 
     fn set_visible(&mut self, visible: bool) -> Result<(), WeldError> {

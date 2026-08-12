@@ -15,6 +15,8 @@ mod view;
 mod cursor;
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
 mod ime;
+#[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
+mod cookies;
 
 #[cfg(feature = "cef-runtime")]
 mod cef_input;

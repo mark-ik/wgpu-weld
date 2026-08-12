@@ -74,13 +74,13 @@ impl CefSurfaceCapabilities {
             preferred_mode,
             accelerated_paint_available,
             cpu_paint_available,
-            cookies: BrowserFeatureStatus::Unsupported("CEF cookie manager is not wired yet"),
+            cookies: BrowserFeatureStatus::Supported,
             cookie_change_events: BrowserFeatureStatus::Unsupported(
                 "CEF cookie observers are not wired yet",
             ),
             script_execution: BrowserFeatureStatus::Supported,
             script_result: BrowserFeatureStatus::Unsupported(
-                "CEF result-bearing script bridge is not wired yet",
+                "a result-bearing script bridge needs a CefApp with a render-process handler in the subprocess; welding passes no app to execute_process",
             ),
             devtools: BrowserFeatureStatus::Supported,
             downloads: BrowserFeatureStatus::Unsupported(
@@ -127,13 +127,15 @@ mod capability_tests {
         assert_eq!(caps.script_execution, BrowserFeatureStatus::Supported);
         assert_eq!(caps.devtools, BrowserFeatureStatus::Supported);
         assert_eq!(caps.console_messages, BrowserFeatureStatus::Supported);
+        // Cookies went from a trait default that errored to real producer
+        // implementations over CEF's global cookie manager.
+        assert_eq!(caps.cookies, BrowserFeatureStatus::Supported);
         assert!(caps.accelerated_paint_available);
         assert_eq!(caps.preferred_mode, CefSurfaceMode::AcceleratedPaint);
 
         // Not wired. These carry a reason string rather than a bare status so
         // a host can report *why* to its own user.
         for status in [
-            caps.cookies,
             caps.cookie_change_events,
             caps.script_result,
             caps.downloads,
@@ -424,25 +426,35 @@ pub trait CefSurfaceProducer: Send {
         ))
     }
 
-    fn set_cookie(&mut self, cookie: &Cookie) -> Result<(), WeldError> {
-        let _ = cookie;
-        Err(WeldError::BrowserOp(
-            "CEF cookie manager is not wired yet".into(),
-        ))
+    /// Write a cookie, as if `url` had sent it in a `Set-Cookie` header.
+    ///
+    /// CEF validates the cookie's domain and path against `url` and rejects
+    /// mismatches, so pass the URL the cookie belongs to rather than any URL.
+    fn set_cookie(&mut self, _url: &str, _cookie: &Cookie) -> Result<(), WeldError> {
+        Err(WeldError::BrowserOp("cookies are not wired for this producer".into()))
     }
 
-    fn get_cookies_for_url(&mut self, url: &str) -> Result<Vec<Cookie>, WeldError> {
-        let _ = url;
-        Err(WeldError::BrowserOp(
-            "CEF cookie reads are not wired yet".into(),
-        ))
+    /// Start reading cookies. `url` of `None` reads the whole store.
+    ///
+    /// The answer arrives later through [`poll_cookies`](Self::poll_cookies);
+    /// CEF delivers cookies through a visitor, one at a time, and on Linux and
+    /// macOS the calling thread is CEF's own UI thread, so a blocking getter
+    /// would wait on the loop that produces the answer.
+    fn request_cookies(&mut self, _url: Option<&str>) -> Result<(), WeldError> {
+        Err(WeldError::BrowserOp("cookies are not wired for this producer".into()))
     }
 
-    fn delete_cookie(&mut self, cookie: &Cookie) -> Result<(), WeldError> {
-        let _ = cookie;
-        Err(WeldError::BrowserOp(
-            "CEF cookie delete is not wired yet".into(),
-        ))
+    /// The result of a [`request_cookies`](Self::request_cookies), once the
+    /// read has finished. An empty `Vec` means the store had none, which is a
+    /// different answer from `None`.
+    fn poll_cookies(&mut self) -> Option<Vec<Cookie>> {
+        None
+    }
+
+    /// Delete cookies. `url` of `None` means every URL, `name` of `None` means
+    /// every name, so both `None` clears the store.
+    fn delete_cookies(&mut self, _url: Option<&str>, _name: Option<&str>) -> Result<(), WeldError> {
+        Err(WeldError::BrowserOp("cookies are not wired for this producer".into()))
     }
 
     fn open_devtools(&self) -> Result<(), WeldError>;

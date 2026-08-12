@@ -1,6 +1,6 @@
 [package]
 name = "welding"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "MPL-2.0"
 repository = "https://github.com/merely-made/wgpu-weld"
