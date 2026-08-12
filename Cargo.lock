@@ -626,6 +626,8 @@ dependencies = [
 name = "demo-weld-win"
 version = "0.1.0"
 dependencies = [
+ "env_logger",
+ "log",
  "pollster",
  "raw-window-handle",
  "welding",

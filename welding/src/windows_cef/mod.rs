@@ -68,6 +68,8 @@ struct WeldRenderHandlerInner {
     frame_slot: Arc<Mutex<Option<ImportedTexture>>>,
     popup_slot: Arc<Mutex<Option<ImportedTexture>>>,
     popup: Arc<crate::popup::PopupState>,
+    cursor: Arc<crate::cursor::LatestCursor>,
+    ime: Arc<crate::ime::LatestComposition>,
     next_generation: Arc<AtomicU64>,
     host_ctx: HostWgpuContext,
     callback_copier: Arc<D3d11CallbackFrameCopier>,
@@ -106,6 +108,8 @@ pub struct WindowsCefProducer {
     popup_slot: Arc<Mutex<Option<ImportedTexture>>>,
     #[cfg(feature = "cef-runtime")]
     popup: Arc<crate::popup::PopupState>,
+    cursor: Arc<crate::cursor::LatestCursor>,
+    ime: Arc<crate::ime::LatestComposition>,
     events: Arc<Mutex<EventQueues>>,
     size: PhysicalSize<u32>,
 }
@@ -150,11 +154,15 @@ impl WindowsCefProducer {
 
             let popup_slot: Arc<Mutex<Option<ImportedTexture>>> = Arc::new(Mutex::new(None));
             let popup = Arc::new(crate::popup::PopupState::default());
+            let cursor = Arc::new(crate::cursor::LatestCursor::default());
+            let ime = Arc::new(crate::ime::LatestComposition::default());
 
             let inner = WeldRenderHandlerInner {
                 frame_slot: frame_slot.clone(),
                 popup_slot: popup_slot.clone(),
                 popup: popup.clone(),
+                cursor: cursor.clone(),
+                ime: ime.clone(),
                 next_generation,
                 host_ctx: host_ctx.clone(),
                 callback_copier,
@@ -220,6 +228,8 @@ impl WindowsCefProducer {
                 frame_slot,
                 popup_slot,
                 popup,
+                cursor,
+                ime,
                 events,
                 size: initial_size,
             });
@@ -315,6 +325,69 @@ impl CefSurfaceProducer for WindowsCefProducer {
             return Ok(());
         }
         Err(pending("cef_browser_host_t::was_resized"))
+    }
+
+    fn poll_cursor_shape(&mut self) -> Option<crate::surface::CursorShape> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            return self.cursor.take();
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            None
+        }
+    }
+
+    fn poll_ime_composition(&mut self) -> Option<crate::surface::ImeComposition> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            return self.ime.take();
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            None
+        }
+    }
+
+    fn ime_set_composition(&mut self, text: &str, selection: (u32, u32)) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            let text: cef::CefString = text.into();
+            let selection = cef::Range { from: selection.0, to: selection.1 };
+            // No underlines: CEF renders the composition inside the page, and
+            // the default styling is what a page author expects.
+            host.ime_set_composition(Some(&text), None, None, Some(&selection));
+            return Ok(());
+        }
+        Err(WeldError::PlatformUnsupported("IME requires the cef-runtime feature"))
+    }
+
+    fn ime_commit_text(&mut self, text: &str) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            let text: cef::CefString = text.into();
+            host.ime_commit_text(Some(&text), None, 0);
+            return Ok(());
+        }
+        Err(WeldError::PlatformUnsupported("IME requires the cef-runtime feature"))
+    }
+
+    fn ime_finish_composing(&mut self, keep_selection: bool) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            host.ime_finish_composing_text(keep_selection as _);
+            return Ok(());
+        }
+        Err(WeldError::PlatformUnsupported("IME requires the cef-runtime feature"))
+    }
+
+    fn ime_cancel_composition(&mut self) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            host.ime_cancel_composition();
+            return Ok(());
+        }
+        Err(WeldError::PlatformUnsupported("IME requires the cef-runtime feature"))
     }
 
     fn set_scale_factor(&mut self, scale: f32) -> Result<(), WeldError> {

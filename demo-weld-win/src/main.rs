@@ -363,6 +363,13 @@ impl ApplicationHandler for DemoApp {
                     eprintln!("weld demo: popup closed");
                 }
 
+                // The page owns the cursor's meaning; the host owns the
+                // pointer. Nothing shows an I-beam unless we apply it.
+                if let Some(shape) = s.producer.poll_cursor_shape() {
+                    eprintln!("weld demo: cursor -> {shape:?}");
+                    s.window.set_cursor(winit_cursor(&shape));
+                }
+
                 while let Some(event) = s.producer.poll_navigation_event() {
                     eprintln!("weld demo: navigation event: {event:?}");
                 }
@@ -374,7 +381,11 @@ impl ApplicationHandler for DemoApp {
                 if let Some((cx, cy)) = s.click_at {
                     if !s.clicked && s.frames_drawn > 120 {
                         s.clicked = true;
-                        eprintln!("weld demo: scripted click at {cx},{cy}");
+                        eprintln!("weld demo: scripted click at {cx},{cy} (scale {})", s.producer.scale_factor());
+                        // A window launched without activation never sees
+                        // Focused(true), and CEF routes hover/cursor updates
+                        // only to a focused browser.
+                        let _ = s.producer.move_focus(FocusDirection::Forward);
                         for action in
                             [MouseAction::Moved, MouseAction::Pressed, MouseAction::Released]
                         {
@@ -521,6 +532,11 @@ fn main() {
         std::process::exit(code);
     }
 
+    // After the fork-guard, so CEF's renderer/GPU helpers do not each stand up
+    // their own logger. Without this, welding's own log:: output is invisible,
+    // which is exactly the wrong thing for a reference demo.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
     let mut runtime_config = CefRuntimeConfig::new(&cef_path);
     runtime_config.cache_path = Some(std::env::temp_dir().join("wgpu-weld-demo-cache"));
     let runtime = CefRuntime::initialize(runtime_config)
@@ -532,6 +548,37 @@ fn main() {
     event_loop
         .run_app(&mut DemoApp::new(runtime))
         .expect("event loop error");
+}
+
+/// Shared vocabulary to winit's icons.
+fn winit_cursor(shape: &welding::CursorShape) -> winit::window::Cursor {
+    use welding::CursorShape as S;
+    use winit::window::CursorIcon as I;
+    let icon = match shape {
+        S::Default => I::Default,
+        S::Pointer => I::Pointer,
+        S::Text => I::Text,
+        S::Wait => I::Wait,
+        S::Crosshair => I::Crosshair,
+        S::Move => I::Move,
+        S::NotAllowed => I::NotAllowed,
+        S::Help => I::Help,
+        S::Progress => I::Progress,
+        S::ResizeNs => I::NsResize,
+        S::ResizeEw => I::EwResize,
+        S::ResizeNeSw => I::NeswResize,
+        S::ResizeNwSe => I::NwseResize,
+        S::ResizeAll => I::AllScroll,
+        S::Grab => I::Grab,
+        S::Grabbing => I::Grabbing,
+        S::ZoomIn => I::ZoomIn,
+        S::ZoomOut => I::ZoomOut,
+        // Includes CEF's "hidden cursor" request, which winit expresses as
+        // set_cursor_visible rather than an icon; left as Default here.
+        S::Custom(_) => I::Default,
+        _ => I::Default,
+    };
+    icon.into()
 }
 
 fn log_scale_err(err: welding::WeldError) {

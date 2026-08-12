@@ -129,6 +129,35 @@ cef::wrap_render_handler! {
             ));
         }
 
+        fn on_ime_composition_range_changed(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            selected_range: Option<&cef::Range>,
+            character_bounds: Option<&[cef::Rect]>,
+        ) {
+            let rects: Vec<crate::surface::PopupRect> = character_bounds
+                .unwrap_or(&[])
+                .iter()
+                .map(|r| crate::surface::PopupRect {
+                    x: r.x,
+                    y: r.y,
+                    width: r.width.max(0) as u32,
+                    height: r.height.max(0) as u32,
+                })
+                .collect();
+            let Some(bounds) = crate::ime::bounds_union(&rects) else { return };
+            // CEF reports these in DIP, like popup geometry.
+            let bounds = self.handler.metrics.lock().unwrap().rect_to_physical(bounds);
+            let (start, end) = selected_range
+                .map(|r| (r.from, r.to))
+                .unwrap_or((0, 0));
+            self.handler.ime.set(crate::surface::ImeComposition {
+                bounds,
+                selection_start: start,
+                selection_end: end,
+            });
+        }
+
         fn on_popup_show(&self, _browser: Option<&mut cef::Browser>, show: ::std::os::raw::c_int) {
             let showing = show != 0;
             self.handler.popup.set_visible(showing);
@@ -397,6 +426,19 @@ cef::wrap_display_handler! {
             self.inner.events.lock().unwrap().nav.push_back(
                 crate::surface::NavigationEvent::AddressChanged { url }
             );
+        }
+
+        // CEF puts OnCursorChange on the display handler, not the render
+        // handler, and types the handle differently per platform (::std::os::raw::c_ulong here).
+        fn on_cursor_change(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _cursor: ::std::os::raw::c_ulong,
+            type_: cef::CursorType,
+            _custom_cursor_info: Option<&cef::CursorInfo>,
+        ) -> ::std::os::raw::c_int {
+            self.inner.cursor.set(crate::cursor::from_cef(type_));
+            1 // handled: under OSR the host owns the pointer
         }
 
         fn on_console_message(

@@ -11,6 +11,10 @@ pub mod surface;
 mod popup;
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
 mod view;
+#[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
+mod cursor;
+#[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
+mod ime;
 
 #[cfg(feature = "cef-runtime")]
 mod cef_input;
@@ -48,5 +52,6 @@ pub use runtime::{CefLogSeverity, CefRuntime, CefRuntimeConfig};
 pub use surface::{
     BrowserFeatureStatus, CefSurfaceCapabilities, CefSurfaceConfig, CefSurfaceMode,
     CefSurfaceProducer, Cookie, EventModifiers, FocusDirection, KeyEvent, KeyEventKind,
-    MouseAction, MouseButton, MouseEvent, NavigationEvent, PopupRect, PopupSurface, SameSite,
+    CursorShape, ImeComposition, MouseAction, MouseButton, MouseEvent, NavigationEvent, PopupRect,
+    PopupSurface, SameSite,
 };

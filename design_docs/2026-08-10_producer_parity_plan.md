@@ -202,11 +202,37 @@ than a missing feature; this is the first thing to fix.
   1.0 was not soft text. CEF was laying out at twice the CSS width, so content
   rendered at half its intended size, and every mouse coordinate was off by the
   scale factor. Sharpness was never the issue; size and hit-testing were.
-- **W4, cursor + IME.** `OnCursorChange` to a polled cursor shape (adopt
-  scrying's `CursorShape` vocabulary); IME composition in
-  (`ImeSetComposition`/`ImeCommitText`) and composition-range feedback out.
-  Done when: I-beam shows over text in the demos and CJK input composes on
-  Windows and Linux.
+- **W4, cursor + IME. LANDED 2026-08-10, partly verified.** `CursorShape`
+  adopts scrying's vocabulary verbatim, including the crossed naming that the
+  unit test pins: CEF's `POINTER` is the arrow (`CursorShape::Default`), while
+  `CursorShape::Pointer` is the CSS link hand, CEF's `HAND`. `poll_cursor_shape`
+  and `poll_ime_composition` follow scrying's polling shape. IME input is
+  `ime_set_composition` / `ime_commit_text` / `ime_finish_composing` /
+  `ime_cancel_composition`; feedback is the union of CEF's per-character bounds,
+  converted DIP to physical, so a host can place a candidate window.
+
+  API note worth keeping: `OnCursorChange` is on CEF's **display** handler, not
+  the render handler, and its cursor-handle parameter is typed differently on
+  each platform (`cef::sys::HCURSOR`, `*mut u8`, `c_ulong`). Both cost a
+  compile round-trip.
+
+  **Verified**: the callback fires and reaches the host end to end. With
+  `RUST_LOG=welding=debug` the Windows demo logs
+  `on_cursor_change(CursorType(CT_POINTER))` and then applies `Default` to the
+  winit window.
+
+  **Not verified**: a shape *change* on hover. Three scripted attempts (pointer
+  over a text input, focusing the browser first, a follow-up move to defeat
+  coalescing) all produced only the initial arrow, so the I-beam-over-text
+  done-condition is unmet. The wiring is demonstrably live, so this reads as
+  synthetic moves not driving Chromium's hit-test rather than a dead callback,
+  but that is a hypothesis, not a result. A human hovering the window would
+  settle it in seconds. IME is compile-only: exercising it needs a real input
+  method.
+
+  Also fixed in passing: `demo-weld-win` never initialised a logger, so every
+  `log::` line welding emitted was invisible. That is why the first three
+  diagnostic rounds showed nothing.
 - **W5, cookies + script result truth.** Implement the already-declared trait
   methods in the producers (CEF cookie manager, result-bearing script bridge),
   then flip the probe statuses. Done when: trait defaults no longer error on

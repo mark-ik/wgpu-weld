@@ -201,6 +201,52 @@ pub struct PopupSurface {
     pub rect: PopupRect,
 }
 
+// ── Cursor and IME ───────────────────────────────────────────────────────────
+
+/// A cursor shape the page is asking the host to show.
+///
+/// Vocabulary shared with `scrying`'s `WebSurfaceProducer`, deliberately: a
+/// host that abstracts over both lanes should not need two mappings. Note the
+/// crossed names against CEF's own: `Pointer` here is the CSS `pointer`, the
+/// link hand, which CEF calls `HAND`; CEF's `POINTER` is the plain arrow and
+/// maps to `Default`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CursorShape {
+    Default,
+    Pointer,
+    Text,
+    Wait,
+    Crosshair,
+    Move,
+    NotAllowed,
+    Help,
+    Progress,
+    ResizeNs,
+    ResizeEw,
+    ResizeNeSw,
+    ResizeNwSe,
+    ResizeAll,
+    Grab,
+    Grabbing,
+    ZoomIn,
+    ZoomOut,
+    /// Anything the shared vocabulary has no name for. `"none"` means CEF
+    /// asked for a hidden cursor, which the vocabulary cannot express.
+    Custom(String),
+}
+
+/// Where the text currently being composed sits, so a host can place its IME
+/// candidate window under it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImeComposition {
+    /// Union of the per-character bounds CEF reported, in **physical** pixels.
+    pub bounds: PopupRect,
+    /// Selected range within the composition, in characters.
+    pub selection_start: u32,
+    pub selection_end: u32,
+}
+
 /// Configuration for a single CEF browser surface.
 pub struct CefSurfaceConfig {
     pub initial_url: String,
@@ -283,6 +329,46 @@ pub trait CefSurfaceProducer: Send {
     }
 
     /// Resize the view. `size` is in **physical** pixels.
+    /// The cursor shape the page is asking for, if it changed since the last
+    /// call. The host owns the pointer under windowless rendering, so nothing
+    /// happens unless the host applies it.
+    fn poll_cursor_shape(&mut self) -> Option<CursorShape> {
+        None
+    }
+
+    /// Where the text being composed sits, if it moved since the last call.
+    /// Use it to place an IME candidate window.
+    fn poll_ime_composition(&mut self) -> Option<ImeComposition> {
+        None
+    }
+
+    /// Set or update the in-progress IME composition (the "preedit" text).
+    ///
+    /// `selection` is a character range within `text`. CEF draws the
+    /// composition itself as part of the page.
+    fn ime_set_composition(
+        &mut self,
+        _text: &str,
+        _selection: (u32, u32),
+    ) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported("IME is not wired for this producer"))
+    }
+
+    /// Commit the composition, or insert `text` directly when there is none.
+    fn ime_commit_text(&mut self, _text: &str) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported("IME is not wired for this producer"))
+    }
+
+    /// Finish composing and keep what is there.
+    fn ime_finish_composing(&mut self, _keep_selection: bool) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported("IME is not wired for this producer"))
+    }
+
+    /// Abandon the composition.
+    fn ime_cancel_composition(&mut self) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported("IME is not wired for this producer"))
+    }
+
     fn resize(&mut self, size: PhysicalSize<u32>) -> Result<(), WeldError>;
 
     /// Follow the window's display scale, e.g. after it moves between a 1x and
