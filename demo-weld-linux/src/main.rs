@@ -152,6 +152,12 @@ impl ApplicationHandler for DemoApp {
 
         let cef_runtime = self.cef_runtime.take().unwrap();
         let win_size = window.inner_size();
+        // WELD_SCALE forces a scale factor regardless of the display, which is
+        // how the HiDPI path gets exercised on a 1x screen.
+        let scale = std::env::var("WELD_SCALE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or_else(|| window.scale_factor());
         log::info!("creating CEF browser ({}x{})", win_size.width, win_size.height);
         let producer = LinuxCefProducer::new(
             &cef_runtime,
@@ -159,6 +165,9 @@ impl ApplicationHandler for DemoApp {
                 surface: CefSurfaceConfig {
                     initial_url: "https://example.com".into(),
                     initial_size: win_size,
+                    // Physical size plus the display scale: CEF lays out at
+                    // size/scale CSS pixels and paints the full physical size.
+                    scale_factor: scale as f32,
                     ..Default::default()
                 },
             },
@@ -197,6 +206,13 @@ impl ApplicationHandler for DemoApp {
             WindowEvent::CloseRequested => {
                 let _ = s.producer.close();
                 el.exit();
+            }
+
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                // The window crossed onto a display with a different density.
+                if let Err(err) = s.producer.set_scale_factor(scale_factor as f32) {
+                    log_scale_err(err);
+                }
             }
 
             WindowEvent::Resized(size) => {
@@ -587,4 +603,8 @@ fn main() {
     event_loop
         .run_app(&mut DemoApp::new(runtime))
         .expect("event loop error");
+}
+
+fn log_scale_err(err: welding::WeldError) {
+    log::error!("set_scale_factor failed: {err}");
 }

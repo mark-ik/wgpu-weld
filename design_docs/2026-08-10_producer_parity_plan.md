@@ -182,10 +182,26 @@ than a missing feature; this is the first thing to fix.
   allocation and two copies per frame. The separate-surface API is the flexible
   zero-copy one and the demos show the recipe; compositing can be added later
   without breaking it.
-- **W3, HiDPI.** Take a scale factor in `CefSurfaceConfig`, honor it in
-  `view_rect`/`screen_info`, add a rescale path alongside `resize`, and pass
-  `window.scale_factor()` in the demos. Done when: text on a 2x display is
-  sharp and `coded_size` matches physical pixels.
+- **W3, HiDPI. DONE 2026-08-10.** `CefSurfaceConfig::scale_factor` plus a live
+  `set_scale_factor`, both feeding a shared `view::ViewMetrics` that owns the
+  size/scale pair under one lock. `GetViewRect` now answers in DIP,
+  `GetScreenInfo` reports the real factor, mouse input converts physical to
+  DIP, and popup rects convert DIP back to physical so a host can use them as a
+  viewport directly. The demos read `window.scale_factor()` and follow
+  `ScaleFactorChanged`; `WELD_SCALE` forces a factor on a 1x screen.
+
+  **Verified on Windows**, using W1's console channel to make the page report
+  its own layout. Same 1280x800 window:
+
+  | `WELD_SCALE` | page reports |
+  | --- | --- |
+  | 1 | `innerWidth=1280 innerHeight=800 dpr=1` |
+  | 2 | `innerWidth=640 innerHeight=400 dpr=2` |
+
+  Correction to how this was framed earlier: the symptom of the old hardcoded
+  1.0 was not soft text. CEF was laying out at twice the CSS width, so content
+  rendered at half its intended size, and every mouse coordinate was off by the
+  scale factor. Sharpness was never the issue; size and hit-testing were.
 - **W4, cursor + IME.** `OnCursorChange` to a polled cursor shape (adopt
   scrying's `CursorShape` vocabulary); IME composition in
   (`ImeSetComposition`/`ImeCommitText`) and composition-range feedback out.

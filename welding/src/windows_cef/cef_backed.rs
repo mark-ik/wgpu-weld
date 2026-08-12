@@ -19,11 +19,12 @@ cef::wrap_render_handler! {
             rect: Option<&mut cef::Rect>,
         ) {
             if let Some(rect) = rect {
-                let size = self.handler.size.lock().unwrap();
+                // GetViewRect is answered in DIP, not physical pixels.
+                let (w, h) = self.handler.metrics.lock().unwrap().logical();
                 rect.x = 0;
                 rect.y = 0;
-                rect.width = size.width as _;
-                rect.height = size.height as _;
+                rect.width = w;
+                rect.height = h;
             }
         }
 
@@ -33,7 +34,7 @@ cef::wrap_render_handler! {
             screen_info: Option<&mut cef::ScreenInfo>,
         ) -> ::std::os::raw::c_int {
             if let Some(info) = screen_info {
-                info.device_scale_factor = 1.0;
+                info.device_scale_factor = self.handler.metrics.lock().unwrap().scale();
                 return 1;
             }
             0

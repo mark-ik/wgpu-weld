@@ -54,7 +54,7 @@ struct WeldRenderHandlerInner {
     popup_slot: Arc<Mutex<PendingFrameSlot>>,
     popup: Arc<crate::popup::PopupState>,
     events: Arc<Mutex<EventQueues>>,
-    size: Arc<Mutex<PhysicalSize<u32>>>,
+    metrics: Arc<Mutex<crate::view::ViewMetrics>>,
 }
 
 // ── cef-runtime: render handler + client ─────────────────────────────────────
@@ -69,7 +69,7 @@ pub struct LinuxCefProducer {
     #[cfg(feature = "cef-runtime")]
     browser: cef::Browser,
     #[cfg(feature = "cef-runtime")]
-    cef_size: Arc<Mutex<PhysicalSize<u32>>>,
+    metrics: Arc<Mutex<crate::view::ViewMetrics>>,
     frame_slot: Arc<Mutex<PendingFrameSlot>>,
     #[cfg(feature = "cef-runtime")]
     popup_slot: Arc<Mutex<PendingFrameSlot>>,
@@ -92,7 +92,10 @@ impl LinuxCefProducer {
                 nav: VecDeque::new(),
                 web_messages: VecDeque::new(),
             }));
-            let cef_size = Arc::new(Mutex::new(initial_size));
+            let metrics = Arc::new(Mutex::new(crate::view::ViewMetrics::new(
+                initial_size,
+                config.surface.scale_factor,
+            )));
 
             let popup_slot = Arc::new(Mutex::new(PendingFrameSlot::default()));
             let popup = Arc::new(crate::popup::PopupState::default());
@@ -102,7 +105,7 @@ impl LinuxCefProducer {
                 popup_slot: popup_slot.clone(),
                 popup: popup.clone(),
                 events: events.clone(),
-                size: cef_size.clone(),
+                metrics: metrics.clone(),
             };
             let render_handler = cef_backed::WeldRenderHandler::build(inner.clone());
             let load_handler = cef_backed::WeldLoadHandler::build(inner.clone());
@@ -150,7 +153,7 @@ impl LinuxCefProducer {
             return Ok(LinuxCefProducer {
                 browser_id,
                 browser,
-                cef_size,
+                metrics,
                 frame_slot,
                 popup_slot,
                 popup,
@@ -197,6 +200,8 @@ impl CefSurfaceProducer for LinuxCefProducer {
             let Some(rect) = self.popup.rect_if_visible() else {
                 return Ok(None);
             };
+            // CEF reports popup geometry in DIP; hosts draw in physical pixels.
+            let rect = self.metrics.lock().unwrap().rect_to_physical(rect);
             let frame = self.popup_slot.lock().unwrap().take();
             return match frame {
                 None => Ok(None),
@@ -215,7 +220,8 @@ impl CefSurfaceProducer for LinuxCefProducer {
     fn popup_rect(&self) -> Option<crate::surface::PopupRect> {
         #[cfg(feature = "cef-runtime")]
         {
-            return self.popup.rect_if_visible();
+            let rect = self.popup.rect_if_visible()?;
+            return Some(self.metrics.lock().unwrap().rect_to_physical(rect));
         }
         #[cfg(not(feature = "cef-runtime"))]
         {
@@ -227,13 +233,45 @@ impl CefSurfaceProducer for LinuxCefProducer {
         self.size = size;
         #[cfg(feature = "cef-runtime")]
         {
-            *self.cef_size.lock().unwrap() = size;
+            self.metrics.lock().unwrap().set_size(size);
             if let Some(mut host) = self.browser.host() {
                 host.was_resized();
             }
             return Ok(());
         }
         Err(pending("cef_browser_host_t::was_resized"))
+    }
+
+    fn set_scale_factor(&mut self, scale: f32) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            self.metrics.lock().unwrap().set_scale(scale);
+            // CEF only re-reads GetViewRect / GetScreenInfo when told the view
+            // changed, so a scale change has to be announced like a resize or
+            // nothing repaints at the new density.
+            if let Some(mut host) = self.browser.host() {
+                host.notify_screen_info_changed();
+                host.was_resized();
+                host.invalidate(cef::PaintElementType::default());
+            }
+            return Ok(());
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            let _ = scale;
+            Err(WeldError::PlatformUnsupported("scale factor requires the cef-runtime feature"))
+        }
+    }
+
+    fn scale_factor(&self) -> f32 {
+        #[cfg(feature = "cef-runtime")]
+        {
+            return self.metrics.lock().unwrap().scale();
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            1.0
+        }
     }
 
     fn navigate_to_url(&mut self, url: &str) -> Result<(), WeldError> {
@@ -281,6 +319,10 @@ impl CefSurfaceProducer for LinuxCefProducer {
     fn send_mouse_input(&mut self, event: MouseEvent) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         if let Some(host) = self.browser.host() {
+            // Hosts speak physical pixels; CEF wants DIP. Skipping this makes
+            // every click land at the wrong place on a scaled display.
+            let (x, y) = self.metrics.lock().unwrap().point_to_dip(event.x, event.y);
+            let event = MouseEvent { x, y, ..event };
             crate::cef_input::send_mouse(&host, &event);
             return Ok(());
         }

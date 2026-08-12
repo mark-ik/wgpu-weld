@@ -9,6 +9,8 @@ pub mod surface;
 // worth unit-testing either way, so allow rather than cfg the module out.
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
 mod popup;
+#[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
+mod view;
 
 #[cfg(feature = "cef-runtime")]
 mod cef_input;

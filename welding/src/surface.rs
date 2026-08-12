@@ -172,8 +172,11 @@ pub struct Cookie {
 
 // ── Popup widget surfaces ────────────────────────────────────────────────────
 
-/// Where CEF wants the popup widget drawn, in view pixels, relative to the
-/// view's top-left.
+/// Where CEF wants the popup widget drawn, relative to the view's top-left.
+///
+/// In **physical** pixels, like everything else a host hands to or takes from
+/// this API. CEF reports popup geometry in DIP; welding scales it up so the
+/// rect can be used directly as a viewport.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PopupRect {
     pub x: i32,
@@ -210,6 +213,16 @@ pub struct CefSurfaceConfig {
     /// Persistent user-data directory for cookies, storage, etc.
     /// `None` = in-memory / incognito.
     pub user_data_dir: Option<std::path::PathBuf>,
+    /// Display scale factor, e.g. `2.0` for a 2x HiDPI screen.
+    ///
+    /// `initial_size` and every other size and coordinate in this API stay in
+    /// **physical** pixels; this tells CEF how many of those go to one CSS
+    /// pixel. Leave it at 1.0 and a HiDPI host gets a page laid out at twice
+    /// the CSS width, which renders everything at half its intended size.
+    ///
+    /// Follow the window at runtime with
+    /// [`CefSurfaceProducer::set_scale_factor`].
+    pub scale_factor: f32,
 }
 
 impl Default for CefSurfaceConfig {
@@ -220,6 +233,7 @@ impl Default for CefSurfaceConfig {
             transparent: false,
             prefer_accelerated: true,
             user_data_dir: None,
+            scale_factor: 1.0,
         }
     }
 }
@@ -268,7 +282,20 @@ pub trait CefSurfaceProducer: Send {
         None
     }
 
+    /// Resize the view. `size` is in **physical** pixels.
     fn resize(&mut self, size: PhysicalSize<u32>) -> Result<(), WeldError>;
+
+    /// Follow the window's display scale, e.g. after it moves between a 1x and
+    /// a 2x screen. Live rather than construction-time, because a window can
+    /// cross displays without ever being recreated.
+    fn set_scale_factor(&mut self, _scale: f32) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported("scale factor is not wired for this producer"))
+    }
+
+    /// The scale factor currently reported to CEF.
+    fn scale_factor(&self) -> f32 {
+        1.0
+    }
 
     fn navigate_to_url(&mut self, url: &str) -> Result<(), WeldError>;
     fn navigate_to_string(&mut self, content: &str, mime_type: &str) -> Result<(), WeldError>;
