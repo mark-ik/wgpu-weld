@@ -27,6 +27,7 @@ use welding::{
 
 mod blit;
 mod keys;
+mod scripted;
 
 use crate::{blit::build_blit_pipeline, keys::keycode_to_vk};
 
@@ -54,8 +55,7 @@ struct DemoState {
     frames_drawn: u32,
     cookies_requested: bool,
     script_requested: bool,
-    click_at: Option<(i32, i32)>,
-    clicked: bool,
+    scripted: scripted::ScriptedInput,
     cursor: (f32, f32),
     mods: EventModifiers,
     closing: bool,
@@ -171,11 +171,7 @@ impl ApplicationHandler for DemoApp {
             frames_drawn: 0,
             cookies_requested: false,
             script_requested: false,
-            click_at: std::env::var("WELD_CLICK_AT").ok().and_then(|v| {
-                let (x, y) = v.split_once(',')?;
-                Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
-            }),
-            clicked: false,
+            scripted: scripted::ScriptedInput::from_env(),
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
             closing: false,
@@ -431,31 +427,11 @@ impl ApplicationHandler for DemoApp {
                     eprintln!("weld demo: navigation event: {event:?}");
                 }
 
-                // WELD_CLICK_AT=x,y clicks once, a few frames in. A <select>
-                // dropdown needs a real gesture, so without this the popup path
-                // cannot be exercised without a human at the keyboard.
+                // The scripted gestures, for a machine nobody is sitting at:
+                // a <select> dropdown needs a real click, and a key never
+                // reaches the DOM without a real key event.
                 s.frames_drawn += 1;
-                if let Some((cx, cy)) = s.click_at {
-                    if !s.clicked && s.frames_drawn > 120 {
-                        s.clicked = true;
-                        eprintln!("weld demo: scripted click at {cx},{cy} (scale {})", s.producer.scale_factor());
-                        // A window launched without activation never sees
-                        // Focused(true), and CEF routes hover/cursor updates
-                        // only to a focused browser.
-                        let _ = s.producer.move_focus(FocusDirection::Forward);
-                        for action in
-                            [MouseAction::Moved, MouseAction::Pressed, MouseAction::Released]
-                        {
-                            let _ = s.producer.send_mouse_input(MouseEvent {
-                                x: cx,
-                                y: cy,
-                                button: MouseButton::Left,
-                                action,
-                                modifiers: EventModifiers::default(),
-                            });
-                        }
-                    }
-                }
+                s.scripted.tick(&mut s.producer, true);
 
                 let output = match s.surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(t)

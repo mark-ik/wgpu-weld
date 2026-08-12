@@ -1,0 +1,11 @@
+<!doctype html><meta charset="utf-8"><title>probe-ready</title>
+<body style="height:4000px;font:28px sans-serif">
+<p>weld input probe</p>
+<script>
+window.onkeydown = function (e) { document.title = "key:" + e.key; };
+window.onwheel = function (e) {
+  setTimeout(function () {
+    document.title = "wheel:" + Math.round(e.deltaY) + " scrollY:" + Math.round(window.scrollY);
+  }, 50);
+};
+</script>

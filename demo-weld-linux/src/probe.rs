@@ -1,7 +1,7 @@
 //! Reads a small corner of the imported texture back to the CPU.
 //!
-//! This demo's whole reason to exist is proving that `import_metal` produces a
-//! wgpu texture actually backed by CEF's IOSurface. A window on a screen nobody
+//! This demo's whole reason to exist is proving that the DMABUF import produces
+//! a wgpu texture actually backed by CEF's buffer. A window on a screen nobody
 //! is watching proves nothing, and "it did not crash" proves nearly as little.
 //! Sampling real pixels does: if CEF painted example.com, the corner is not
 //! uniformly zero.

@@ -32,6 +32,7 @@ use welding::{
 mod blit;
 mod keys;
 mod probe;
+mod scripted;
 
 use crate::{blit::build_blit_pipeline, keys::keycode_to_vk};
 
@@ -56,6 +57,7 @@ struct DemoState {
     frames_imported: u32,
     battery_started: bool,
     ticks: u32,
+    scripted: scripted::ScriptedInput,
     /// Cached popup widget surface, held across frames because CEF only
     /// repaints it on change and dropped when `popup_rect` goes to `None`.
     popup: Option<PopupSurface>,
@@ -190,6 +192,7 @@ impl ApplicationHandler for DemoApp {
             frames_imported: 0,
             battery_started: false,
             ticks: 0,
+            scripted: scripted::ScriptedInput::from_env(),
             popup: None,
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
@@ -389,6 +392,8 @@ impl ApplicationHandler for DemoApp {
                 // HiDPI layout and cookies, so the same evidence exists on
                 // every platform.
                 s.ticks += 1;
+                // The scripted gestures, for a machine nobody is sitting at.
+                s.scripted.tick(&mut s.producer, true);
                 // Ticks, not imported frames: accelerated OSR only paints on
                 // change, so a static page yields one frame and the battery
                 // would never fire.

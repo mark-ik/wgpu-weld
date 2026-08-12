@@ -28,6 +28,7 @@ mod blit;
 mod keys;
 mod present;
 mod probe;
+mod scripted;
 
 use std::{
     sync::Arc,
@@ -65,9 +66,7 @@ struct DemoApp {
     /// gesture on a machine nobody is sitting at: a `<select>` dropdown will
     /// not open, and Chromium's popup blocker swallows `window.open` before
     /// `on_before_popup` is ever reached.
-    click_at: Option<(i32, i32)>,
-    ticks_since_first_frame: u32,
-    clicked: bool,
+    scripted: scripted::ScriptedInput,
 }
 
 struct DemoState {
@@ -450,31 +449,14 @@ impl DemoApp {
             }
 
 
-        if let Some((x, y)) = self.click_at {
-            if s.frames_imported > 0 {
-                self.ticks_since_first_frame += 1;
-                // A few ticks of slack: the first paint can land before the
-                // page's own scripts and layout have settled.
-                if !self.clicked && self.ticks_since_first_frame > 30 {
-                    self.clicked = true;
-                    log::info!("scripted click at {x},{y}");
-                    for action in [MouseAction::Moved, MouseAction::Pressed, MouseAction::Released]
-                    {
-                        let _ = s.producer.send_mouse_input(MouseEvent {
-                            x,
-                            y,
-                            button: MouseButton::Left,
-                            action,
-                            modifiers: EventModifiers::default(),
-                        });
-                    }
-                }
-            }
-        }
+        // The scripted gestures, for a machine nobody is sitting at. Only
+        // once the page has painted: the first paint can land before its own
+        // scripts and layout have settled.
+        self.scripted.tick(&mut s.producer, s.frames_imported > 0);
 
         // With a scripted click the run has to outlive the frame that triggered
         // it, so the frame-count exit is replaced by a popup-count one.
-        let done = if self.click_at.is_some() {
+        let done = if self.scripted.armed() {
             self.exit_after_popups
                 .is_some_and(|n| s.popups_imported >= n)
         } else {
@@ -560,27 +542,20 @@ fn main() {
     let mut event_loop = EventLoop::new().expect("event loop creation failed");
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let click_at = std::env::var("WELD_CLICK_AT").ok().and_then(|v| {
-        let (x, y) = v.split_once(',')?;
-        Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
-    });
+    let scripted = scripted::ScriptedInput::from_env();
     let exit_after_popups = std::env::var("WELD_EXIT_AFTER_POPUPS")
         .ok()
         .and_then(|v| v.parse::<u32>().ok())
-        .or(click_at.map(|_| 1));
-    if let Some((x, y)) = click_at {
-        log::info!("scripted click armed at {x},{y}");
-    }
+        .or(scripted.armed().then_some(1));
 
+    let scripted_armed = scripted.armed();
     let mut app = DemoApp {
         cef_runtime: Some(runtime),
         state: None,
         exit_after_frames,
         exit_after_popups,
         should_exit: false,
-        click_at,
-        ticks_since_first_frame: 0,
-        clicked: false,
+        scripted,
     };
 
     // We drive the loop rather than handing it to `run_app`, so that CEF's
@@ -596,7 +571,7 @@ fn main() {
         if app.should_exit {
             break;
         }
-        if (exit_after_frames.is_some() || click_at.is_some()) && started.elapsed() >= timeout {
+        if (exit_after_frames.is_some() || scripted_armed) && started.elapsed() >= timeout {
             log::warn!("timed out after {}s", timeout.as_secs());
             app.report_now();
             break;
