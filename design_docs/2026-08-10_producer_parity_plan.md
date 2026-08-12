@@ -1,7 +1,8 @@
 # Producer Parity Plan: welding / scrying / grafting
 
 **Date:** 2026-08-10
-**Status:** Findings complete (all three surfaces read this session); work phases not started
+**Status:** W1-W6 landed and published (welding 0.4.0). W7-W9 open; see the
+phase list. Every "verified" claim below names the machine it was verified on.
 **Scope:** cross-repo. This doc lives in wgpu-weld because welding carries most
 of the gap list, but it assigns work to all three siblings.
 
@@ -40,10 +41,13 @@ JS toggle, context menus, accelerator keys, inactive scheduling). Its 18
 `NavigationEvent` variants include download lifecycle, auth, media capture,
 context menu, accelerator keys, and text-input focus.
 
-`welding` 0.1.0 has a solid control core (navigation, input basics, cookies
-in the trait, script with results, web messages, devtools, focus, close) and
-the strongest verified rendering story (all three platforms hardware-verified
-today), but the rendering-completeness and host-feedback surface is thin.
+`welding` was 0.1.0 when this was written, with a control core whose cookie and
+script-result methods were trait defaults that errored, and a thin
+rendering-completeness surface. As of 0.4.0 it has closed popups, HiDPI, cursor,
+IME, visibility, cookies, script results, command-line switches and the honest
+probe; what remains is the host-decision surface (downloads, auth, permissions,
+context menus) and the long tail. Its rendering story is still the
+best-verified of the three, on real hardware for all three platforms.
 
 `grafting` 0.4.0 is a different kind: the interop core the other two consume
 (welding: DX12 open-shared; scrying: DX12 open-shared) plus the Servo/GL
@@ -77,7 +81,7 @@ demos.
 | Cursor-shape reporting | Y (verified on Linux with a human pointer) | Y (all 5) | N |
 | IME | P (input + composition-range feedback wired; compile-only) | Y (GTK/WPE lanes; win/mac unverified) | N |
 | Drag / drop | N (CEF has StartDragging + DragTarget*) | mixed | N |
-| Cookies get/set/delete | P (trait methods exist; producer impls absent, defaults error) | Y | o |
+| Cookies get/set/delete | Y (request/poll; verified on Windows) | Y | o |
 | Cookie change events | N | Y (WKWebView) | o |
 | Script exec + result | Y (renderer round trip, JSON values) | Y | o |
 | Web message bridge | Y | Y | o |
@@ -96,12 +100,12 @@ demos.
 | DevTools window | Y | Y | o |
 | DevTools protocol (CDP) | N (CEF has ExecuteDevToolsMethod; unique leverage) | N (WebView2 could; not exposed) | o |
 | Multi-producer per process | Y | Y (except WPE) | Y |
-| Honest capability probe | N (see below) | Y (matrix + footnotes) | o |
+| Honest capability probe | Y (W1; a test pins every Supported to a live handler) | Y (matrix + footnotes) | o |
 
-### The capability probe lies in both directions
+### The capability probe lies in both directions (fixed in W1)
 
-`CefSurfaceCapabilities::probe` (surface.rs) is stale relative to today's
-state and was never fully honest:
+Kept as the record of what was wrong, since it is the reason W1 came first.
+`CefSurfaceCapabilities::probe` was stale in both directions:
 
 - `accelerated_paint_available = cfg!(target_os = "windows")` denies the
   Linux and macOS lanes that were hardware-verified today.
@@ -114,8 +118,10 @@ state and was never fully honest:
   the producer level even though the trait declares the methods; keep those
   honest until the impls land.
 
-Per the diagnostics doctrine, a capability report that overstates is worse
-than a missing feature; this is the first thing to fix.
+Per the diagnostics doctrine, a capability report that overstates is worse than
+a missing feature, which is why this was the first thing fixed. A unit test now
+pins every `Supported` to a handler that exists, so landing a feature has to
+flip the status and the test together.
 
 ### W6: the renderer-side CefApp (2026-08-10)
 
@@ -322,18 +328,30 @@ one-line explanation.
   Also fixed in passing: `demo-weld-win` never initialised a logger, so every
   `log::` line welding emitted was invisible. That is why the first three
   diagnostic rounds showed nothing.
-- **W5, cookies + script result truth.** Implement the already-declared trait
-  methods in the producers (CEF cookie manager, result-bearing script bridge),
-  then flip the probe statuses. Done when: trait defaults no longer error on
-  any shipped producer.
-- **W6, host-decision surfaces.** Downloads (lifecycle events + decision API,
+- **W5, cookies. DONE 2026-08-10.** `set_cookie(url, cookie)`,
+  `request_cookies` / `poll_cookies`, `delete_cookies` over CEF's global cookie
+  manager on all three producers. The synchronous `get_cookies_for_url` is gone
+  because it could not be honoured: CEF delivers cookies through a visitor, and
+  on Linux and macOS the calling thread is CEF's UI thread, so blocking waits on
+  the loop that produces the answer. Proven on Windows, writing `weld_probe=w5`
+  and reading it back.
+
+  The bug worth remembering: an empty store never calls the visitor at all, so
+  counting callbacks cannot detect completion and "none" is indistinguishable
+  from "not yet". Completion now rides on the visitor being released.
+
+- **W6, the renderer-side `CefApp`. DONE 2026-08-10.** Detailed under Findings
+  above. Script results, Chromium command-line switches, and W1's
+  `NewWindowRequested` residual, all of which were waiting on the same missing
+  render-process handler.
+- **W7, host-decision surfaces.** Downloads (lifecycle events + decision API,
   matching scrying's pause/resume/cancel shape), `GetAuthCredentials`,
   permission requests, context-menu events. Done when: the capability rows
   read Y with the same event/decision shapes scrying uses.
-- **W7, long tail.** Drag/drop, touch, find-in-page, PDF, zoom/UA/settings,
-  `WasHidden`-backed visibility, per-producer `RequestContext` profiles,
-  `can_go_back`/`can_go_forward`, snapshot helper.
-- **W8, CDP.** Expose `ExecuteDevToolsMethod` + the devtools message stream.
+- **W8, long tail.** Drag/drop, touch, find-in-page, PDF, zoom/UA/settings,
+  per-producer `RequestContext` profiles, `can_go_back`/`can_go_forward`,
+  snapshot helper. (`WasHidden`-backed visibility landed early, during W4.)
+- **W9, CDP.** Expose `ExecuteDevToolsMethod` + the devtools message stream.
   Nothing else in the family can offer full CDP; this is the CEF lane's
   distinguishing feature, worth doing once the table stakes above exist.
 

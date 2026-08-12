@@ -11,28 +11,46 @@ the shared `grafting` interop core).
 
 ## Status (2026-08-12)
 
-Prototype. `welding` 0.1.0 published to crates.io 2026-08-10 (MPL-2.0).
+Prototype. `welding` 0.4.0 on crates.io (MPL-2.0). Per-platform detail, and
+the difference between "verified on that hardware" and "implemented but not
+yet run there", is the table in [`welding/README.md`](welding/README.md).
 
 - All three platform import lanes are hardware-verified: Windows (D3D11
   copy, D3D12 shared handle via the `grafting` crate, into wgpu), Linux
   (DMABUF via Vulkan external memory, Fedora 44 + Intel/Mesa), macOS
-  (IOSurface via Metal, closed 2026-08-10).
+  (IOSurface via Metal, closed 2026-08-10). The Linux import needs an
+  explicit DRM format modifier: Intel/Mesa supplies one, AMD/RADV does not,
+  and that case is refused with a typed error pending wgpu enabling
+  `VK_EXT_image_drm_format_modifier`.
 - The capability probe reports honestly as of the 2026-08-10 truth pass: a
   unit test pins every "Supported" claim to a real handler.
 - Popup widget surfaces (`<select>` dropdowns and similar) render via a
   separate `acquire_popup` surface: verified on Windows, compile-only on
   Linux, and structurally impossible on macOS (Chromium uses a native menu
   there).
+- HiDPI is honoured (`scale_factor` plus a live `set_scale_factor`): sizes and
+  coordinates stay physical, and CEF is told how many make one CSS pixel.
+- Cursor shape, IME composition, and visibility are reported to the host;
+  cursor changes were confirmed with a real pointer on Fedora.
+- Cookies (`set_cookie`, `request_cookies` / `poll_cookies`, `delete_cookies`)
+  and script results (`request_script_result` / `poll_script_result`, values
+  returned as JSON from the renderer) both work, request-then-poll because CEF
+  answers asynchronously.
+- Chromium command-line switches are reachable through
+  `CefRuntimeConfig::command_line_switches`, for the many behaviours with no
+  CEF API.
 - Three runnable demos (`demo-weld-win`, `demo-weld-linux`,
   `demo-weld-mac`); the macOS demo ships a CEF helper binary, an `.app`
   bundler, and unattended pixel-readback validation.
 - Without the `cef-runtime` feature the library compiles with no CEF
   distribution; producer constructors return a pending-wiring error.
 
-Current plan (`design_docs/`, 2026-08-10 parity plan): close the feature gap
-to wgpu-scry in phases W3-W8, starting with HiDPI scale factor, then cursor
-and IME, cookies and script results, host-decision surfaces, and finally the
-Chrome DevTools Protocol as this lane's distinguishing feature.
+Current plan (`design_docs/`, 2026-08-10 parity plan): W1 through W6 have
+landed. What remains is W7, the host-decision surfaces (downloads, auth
+challenges, permission requests, context menus); W8, the long tail (drag,
+touch, find-in-page, PDF, zoom and UA settings, per-producer profiles); and
+W9, the Chrome DevTools Protocol, which is this lane's distinguishing feature
+and the one thing no sibling can offer.
 
 ## Use
 
