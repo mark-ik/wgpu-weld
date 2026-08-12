@@ -1,8 +1,10 @@
 # Producer Parity Plan: welding / scrying / grafting
 
 **Date:** 2026-08-10
-**Status:** W1-W6 landed and published (welding 0.4.0). W7-W9 open; see the
+**Status:** W1-W6 landed and published (welding 0.4.1). W7-W9 open; see the
 phase list. Every "verified" claim below names the machine it was verified on.
+A three-platform parity battery was run on 2026-08-12; results under
+"Parity battery, 2026-08-12" below.
 **Scope:** cross-repo. This doc lives in wgpu-weld because welding carries most
 of the gap list, but it assigns work to all three siblings.
 
@@ -209,6 +211,48 @@ one-line explanation.
    for no load-bearing reason. Convergence is cheap now and expensive later.
    Per the module doctrine this is alignment by convention, not a new shared
    crate.
+
+## Parity battery, 2026-08-12
+
+Run on all three machines with the same environment knobs: Windows 11 (this
+laptop), macOS 15.7.7 on the Intel iMac at `192.168.4.105`, and Fedora on the
+ThinkPad at `192.168.4.28` (AMD Renoir/RADV). Mayola's M4 iMac was asleep and
+was not part of the run, so no Apple Silicon result is claimed.
+
+Turned from "wired" to "verified" on every platform: mouse, wheel and keyboard
+input; cursor shape; HiDPI scale; navigation and title events; console
+messages; cookies; script results; Chromium command-line switches.
+
+Still untested on every platform, and so still "wired": IME composition,
+`set_visible`, and the DevTools window. These are coverage gaps, not parity
+gaps.
+
+Four defects surfaced, all in the test harness rather than the library, and all
+of the same family: **a demo mistook a paint for a clock.**
+
+1. The battery was gated on `frames_imported > 60`. An accelerated producer
+   paints only on change, so a static page delivers one frame and goes quiet;
+   the macOS battery reported frames and nothing else. Now tick-driven.
+2. The scripted gestures were then spaced by tick count, which stalls the same
+   way. The Windows click fired and the wheel never did. Now spaced by elapsed
+   time, which is the only honest clock here.
+3. `WELD_SCALE`, which exists to exercise HiDPI on a 1x display, was undone
+   seconds later by winit's `ScaleFactorChanged` reporting the real 1.0.
+   Traced `view_rect` answers went `640x351` (correct) then back to
+   `1366x701`, and the page reported `dpr: 1`. A forced scale now outranks the
+   event.
+4. The demos had drifted: `WELD_SWITCHES` was Windows-only and scripted input
+   was Windows and macOS only, so three "wired" rows could not be exercised at
+   all on Linux. One `scripted.rs`, the same in all three.
+
+The Linux popup result is worth recording precisely, because the first run
+looked like a missing feature and was not. `on_popup_show` and `on_popup_size`
+were silent, so "CEF never offered a dropdown" and "the dropdown was offered
+and failed to import" produced identical logs. With a trace added, the
+ThinkPad reports `on_popup_show(true)` then `on_popup_size 320x197 at 0,80`:
+routing and geometry are correct, and only the texture import is refused, by
+the same AMD/RADV implicit-modifier limitation that blocks the main frame on
+that GPU.
 
 ## Plan
 

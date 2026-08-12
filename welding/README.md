@@ -14,28 +14,30 @@ of them import through.
 
 ## State, 2026-08-12
 
-Version 0.4.0. Every claim in the table below was checked by running it, and
-the platform column says where.
+Version 0.4.1. Every "verified" below was checked by running it on that
+platform's hardware, in one battery per machine: Windows 11 (this laptop),
+macOS 15.7 on an Intel iMac, and Fedora on a ThinkPad (AMD Renoir/RADV).
 
 | | Windows | macOS | Linux |
 | --- | --- | --- | --- |
 | Accelerated frame import | DX12 shared texture | IOSurface to Metal | DMABUF to Vulkan [^linux] |
 | Page renders end to end | verified | verified | verified [^linux] |
-| Mouse, wheel, keyboard | verified | wired | verified |
-| HiDPI scale factor | verified | wired | wired |
-| Popup widgets (`<select>`, autocomplete) | verified | **not possible** [^macpopup] | wired |
-| Cursor shape | wired | wired | verified |
-| Navigation events | verified | wired | verified |
-| Console messages | verified | verified | wired |
-| Cookies (read, write, delete) | verified | wired | wired |
-| Script results (JS value back) | verified | wired | wired |
-| Chromium command-line switches | verified | wired | wired |
+| Mouse, wheel, keyboard | verified | verified | verified |
+| Cursor shape | verified | verified | verified |
+| HiDPI scale factor | verified | verified | verified |
+| Navigation and title events | verified | verified | verified |
+| Console messages | verified | verified | verified |
+| Cookies (read, write, delete) | verified | verified | verified |
+| Script results (JS value back) | verified | verified | verified |
+| Chromium command-line switches | verified | verified | verified |
+| Popup widgets (`<select>`) | verified | **not possible** [^macpopup] | opens, import blocked [^linux] |
 | IME composition | wired | wired | wired |
 | Visibility (`set_visible`) | wired | wired | wired |
 | DevTools window | wired | wired | wired |
 
 "verified" means observed working on that platform's hardware. "wired" means
-implemented and compiling there, but not yet exercised on that machine.
+implemented and compiling there, but not yet exercised on any machine — the
+last three rows are untested everywhere, not gaps in one platform.
 
 Not implemented yet, and `CefSurfaceCapabilities::probe` will tell you so at
 runtime rather than failing quietly: downloads, auth challenges, permission
@@ -44,15 +46,41 @@ pointer/pen, zoom and user-agent settings, per-producer profile isolation, and
 the DevTools protocol.
 
 [^linux]: Linux needs the DMABUF buffer to carry an **explicit** DRM format
-modifier. Intel/Mesa supplies one; AMD/RADV hands over `DRM_FORMAT_MOD_INVALID`,
-and importing that needs `VK_EXT_image_drm_format_modifier` enabled on the wgpu
-device, which wgpu does not do. `welding` refuses such a buffer with a typed
-error naming the situation rather than producing a broken texture.
+modifier. Intel/Mesa supplies one, and the frame import is verified there;
+AMD/RADV hands over `DRM_FORMAT_MOD_INVALID`, and importing that needs
+`VK_EXT_image_drm_format_modifier` enabled on the wgpu device, which wgpu does
+not do. `welding` refuses such a buffer with a typed error naming the situation
+rather than producing a broken texture. This is why the popup row reads
+"opens": on the AMD test machine CEF offers the dropdown and reports its
+geometry (`on_popup_show`, then `on_popup_size 320x197 at 0,80`), and only the
+texture import is refused, by the same modifier limitation.
 
 [^macpopup]: Chromium uses a native menu for `<select>` on macOS and windowless
 rendering does not reroute it, so `OnPopupShow` never fires. A macOS host that
 needs dropdowns has to draw its own control from the DOM. This is a platform
 fact, not a gap in `welding`.
+
+## Checking it yourself
+
+The three demos take the same environment knobs, so one battery runs on all
+three platforms and the results are comparable. Input is scripted because a
+machine nobody is sitting at cannot click:
+
+```sh
+export WELD_URL=file:///path/to/testing/weld_input_probe.html
+export WELD_SCALE=2                # force HiDPI on a 1x display
+export WELD_CLICK_AT=100,100       # physical pixels
+export WELD_WHEEL=-360             # scroll after the click
+export WELD_KEY=k                  # then type one character
+export WELD_SCRIPT='({dpr: window.devicePixelRatio})'
+export WELD_COOKIE_URL=https://example.com/
+export WELD_SWITCHES=disable-popup-blocking,lang=en-GB
+```
+
+`testing/weld_input_probe.html` reports what it received through
+`document.title`, which comes back as a `TitleChanged` navigation event, so
+every gesture becomes a checkable claim. `testing/weld_select_probe.html` does
+the same for the popup path.
 
 ## Using it
 

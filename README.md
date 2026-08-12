@@ -11,9 +11,15 @@ the shared `grafting` interop core).
 
 ## Status (2026-08-12)
 
-Prototype. `welding` 0.4.0 on crates.io (MPL-2.0). Per-platform detail, and
+Prototype. `welding` 0.4.1 on crates.io (MPL-2.0). Per-platform detail, and
 the difference between "verified on that hardware" and "implemented but not
 yet run there", is the table in [`welding/README.md`](welding/README.md).
+
+A parity battery was run on all three platforms on 2026-08-12 (Windows 11,
+macOS 15.7 on an Intel iMac, Fedora on an AMD ThinkPad). Input, cursor, HiDPI,
+navigation, console, cookies, script results and command-line switches are now
+verified on every one. What is still untested everywhere is IME composition,
+`set_visible`, and the DevTools window.
 
 - All three platform import lanes are hardware-verified: Windows (D3D11
   copy, D3D12 shared handle via the `grafting` crate, into wgpu), Linux
@@ -25,13 +31,17 @@ yet run there", is the table in [`welding/README.md`](welding/README.md).
 - The capability probe reports honestly as of the 2026-08-10 truth pass: a
   unit test pins every "Supported" claim to a real handler.
 - Popup widget surfaces (`<select>` dropdowns and similar) render via a
-  separate `acquire_popup` surface: verified on Windows, compile-only on
-  Linux, and structurally impossible on macOS (Chromium uses a native menu
-  there).
+  separate `acquire_popup` surface: verified on Windows, and structurally
+  impossible on macOS (Chromium uses a native menu there). On Linux the
+  dropdown opens and reports its geometry, and only the texture import is
+  refused, by the AMD/RADV modifier limitation above.
 - HiDPI is honoured (`scale_factor` plus a live `set_scale_factor`): sizes and
   coordinates stay physical, and CEF is told how many make one CSS pixel.
-- Cursor shape, IME composition, and visibility are reported to the host;
-  cursor changes were confirmed with a real pointer on Fedora.
+  Verified on all three by forcing a 2x scale on a 1x panel and having the page
+  report its own `devicePixelRatio` and `innerWidth`.
+- Cursor shape, IME composition, and visibility are reported to the host.
+  Cursor changes are verified on all three platforms, by clicking a known
+  element and reading back the shape CEF asked for.
 - Cookies (`set_cookie`, `request_cookies` / `poll_cookies`, `delete_cookies`)
   and script results (`request_script_result` / `poll_script_result`, values
   returned as JSON from the renderer) both work, request-then-poll because CEF
@@ -41,7 +51,9 @@ yet run there", is the table in [`welding/README.md`](welding/README.md).
   CEF API.
 - Three runnable demos (`demo-weld-win`, `demo-weld-linux`,
   `demo-weld-mac`); the macOS demo ships a CEF helper binary, an `.app`
-  bundler, and unattended pixel-readback validation.
+  bundler, and unattended pixel-readback validation. All three take the same
+  environment knobs and can script a click, a wheel scroll and a keypress, so
+  the input path is provable without a human at the keyboard.
 - Without the `cef-runtime` feature the library compiles with no CEF
   distribution; producer constructors return a pending-wiring error.
 
