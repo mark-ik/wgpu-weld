@@ -63,7 +63,7 @@ demos.
 
 | Capability | welding (CEF) | scrying (best backend) | grafting |
 | --- | --- | --- | --- |
-| GPU frame import | Y (3 platforms, hw-verified) | Y | Y |
+| GPU frame import | Y (3 platforms hw-verified; Linux needs an explicit DMABUF modifier, see below) | Y | Y |
 | CPU fallback tier | P (feature-gated, never runtime-exercised) | Y | Y (readback demos) |
 | Explicit sync seam | N (implicit: callback copy + keyed mutex + cache-flush) | P (in-tree sync modules) | Y (owner) |
 | HiDPI scale factor | Y (verified on Windows) | unverified, per-backend | o (host concern) |
@@ -116,6 +116,39 @@ state and was never fully honest:
 
 Per the diagnostics doctrine, a capability report that overstates is worse
 than a missing feature; this is the first thing to fix.
+
+### Linux + implicit-modifier DMABUF is blocked upstream in wgpu
+
+Tried on the Fedora ThinkPad (AMD Renoir / RADV, 2026-08-10), not reasoned
+about. CEF supplies `DRM_FORMAT_MOD_INVALID` there; Intel/Mesa supplies a real
+modifier, which is why the original Phase 4 verification passed and this never
+surfaced. Both ways of importing such a buffer are closed on a **wgpu-created**
+device:
+
+1. `VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT` requires
+   `VK_EXT_image_drm_format_modifier` enabled on the device. wgpu does not
+   enable it. `vkCreateImage` answers `VK_ERROR_FORMAT_NOT_SUPPORTED`
+   (`VUID-VkImageCreateInfo-tiling-parameter`), and the validation layer was
+   observed **aborting the process** while formatting its own error.
+2. Plain `VK_IMAGE_TILING_LINEAR` does create an image, but
+   `vkGetPhysicalDeviceImageFormatProperties2` reports DMA_BUF as an
+   incompatible handle type for that combination
+   (`VUID-VkImageCreateInfo-pNext-00990`), and the resulting texture panics
+   inside `wgpu_core` on first use. Measured, not predicted: the frame imported
+   and then took the process down.
+
+welding cannot route around this, because the imported texture has to live on
+the *host's* device rather than one welding creates. So the fix is upstream:
+**wgpu should enable `VK_EXT_image_drm_format_modifier`** when the adapter
+supports it (RADV does). With that, this case becomes the ordinary
+explicit-modifier path using `DRM_FORMAT_MOD_LINEAR`, and the code is already
+shaped for it.
+
+This sits with the other wgpu external-memory item in the structural findings
+below, and grafting owns that tracking issue since it owns the import core.
+Until then welding refuses implicit-modifier buffers with a typed error naming
+all of the above, which is the difference between a puzzling core dump and a
+one-line explanation.
 
 ### Structural findings
 

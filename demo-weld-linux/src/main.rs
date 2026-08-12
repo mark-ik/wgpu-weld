@@ -31,6 +31,7 @@ use welding::{
 
 mod blit;
 mod keys;
+mod probe;
 
 use crate::{blit::build_blit_pipeline, keys::keycode_to_vk};
 
@@ -52,6 +53,7 @@ struct DemoState {
     bg_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     frame: Option<ImportedTexture>,
+    frames_imported: u32,
     /// Cached popup widget surface, held across frames because CEF only
     /// repaints it on change and dropped when `popup_rect` goes to `None`.
     popup: Option<PopupSurface>,
@@ -186,6 +188,7 @@ impl ApplicationHandler for DemoApp {
             bg_layout,
             sampler,
             frame: None,
+            frames_imported: 0,
             popup: None,
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
@@ -329,8 +332,10 @@ impl ApplicationHandler for DemoApp {
 
                 match s.producer.acquire_frame(&s.host_ctx) {
                     Ok(Some(new_frame)) => {
-                        log::debug!(
-                            "imported frame ({}x{} {:?})",
+                        s.frames_imported += 1;
+                        log::info!(
+                            "imported frame #{} ({}x{} {:?})",
+                            s.frames_imported,
                             new_frame.size.width,
                             new_frame.size.height,
                             new_frame.format
@@ -373,6 +378,18 @@ impl ApplicationHandler for DemoApp {
 
                 while let Some(event) = s.producer.poll_navigation_event() {
                     log::info!("nav: {event:?}");
+                }
+
+                // Unattended verdict, the same instrument demo-weld-mac uses:
+                // a window nobody is watching proves nothing, so read the
+                // imported pixels back and say what they were.
+                if let Some(limit) = exit_after_frames() {
+                    if s.frames_imported >= limit {
+                        report(s);
+                        let _ = s.producer.close();
+                        el.exit();
+                        return;
+                    }
                 }
 
                 let output = match s.surface.get_current_texture() {
@@ -530,6 +547,28 @@ fn winit_cursor(shape: &welding::CursorShape) -> winit::window::Cursor {
         _ => I::Default,
     };
     icon.into()
+}
+
+/// `WELD_EXIT_AFTER_FRAMES=N`: probe frame N and exit.
+fn exit_after_frames() -> Option<u32> {
+    std::env::var("WELD_EXIT_AFTER_FRAMES").ok().and_then(|v| v.parse().ok())
+}
+
+/// Read a corner of the imported texture back and report what landed there.
+fn report(s: &mut DemoState) {
+    match s.frame.as_ref() {
+        Some(frame) => match probe::sample(&s.host_ctx.device, &s.host_ctx.queue, &frame.texture) {
+            Ok(rb) if rb.looks_painted() => log::info!(
+                "VALIDATION PASS: {} frame(s) imported, {}/{} bytes non-zero, first pixels {:?}",
+                s.frames_imported, rb.non_zero_bytes, rb.total_bytes, rb.first_pixels
+            ),
+            Ok(rb) => log::error!(
+                "VALIDATION FAIL: imported but entirely zero ({} bytes)", rb.total_bytes
+            ),
+            Err(e) => log::error!("VALIDATION FAIL: readback failed: {e}"),
+        },
+        None => log::error!("VALIDATION FAIL: no frame was ever imported"),
+    }
 }
 
 fn log_scale_err(err: welding::WeldError) {
