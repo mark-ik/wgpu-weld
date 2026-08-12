@@ -86,3 +86,6 @@ example.com waits until `WELD_TIMEOUT_SECS` (default 60) gives up.
 ## Verified on
 
 macOS 15.7.7, Intel iMac (`x86_64-apple-darwin`), 2026-08-10.
+
+macOS 26.5.1, Apple M4 iMac (`aarch64-apple-darwin`, Metal 4, native 2x
+display), 2026-08-12 — full battery, popup surfaces included.

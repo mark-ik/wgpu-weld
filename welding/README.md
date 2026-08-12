@@ -16,7 +16,9 @@ of them import through.
 
 Version 0.4.1. Every "verified" below was checked by running it on that
 platform's hardware, in one battery per machine: Windows 11 (this laptop),
-macOS 15.7 on an Intel iMac, and Fedora on a ThinkPad (AMD Renoir/RADV).
+macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac (the
+first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
+(AMD Renoir/RADV).
 
 | | Windows | macOS | Linux |
 | --- | --- | --- | --- |
@@ -30,7 +32,7 @@ macOS 15.7 on an Intel iMac, and Fedora on a ThinkPad (AMD Renoir/RADV).
 | Cookies (read, write, delete) | verified | verified | verified |
 | Script results (JS value back) | verified | verified | verified |
 | Chromium command-line switches | verified | verified | verified |
-| Popup widgets (`<select>`) | verified | **not possible** [^macpopup] | opens, import blocked [^linux] |
+| Popup widgets (`<select>`) | verified | **differs by macOS** [^macpopup] | opens, import blocked [^linux] |
 | IME composition | wired | wired | wired |
 | Visibility (`set_visible`) | wired | wired | wired |
 | DevTools window | wired | wired | wired |
@@ -55,10 +57,12 @@ rather than producing a broken texture. This is why the popup row reads
 geometry (`on_popup_show`, then `on_popup_size 320x197 at 0,80`), and only the
 texture import is refused, by the same modifier limitation.
 
-[^macpopup]: Chromium uses a native menu for `<select>` on macOS and windowless
-rendering does not reroute it, so `OnPopupShow` never fires. A macOS host that
-needs dropdowns has to draw its own control from the DOM. This is a platform
-fact, not a gap in `welding`.
+[^macpopup]: Split by macOS generation. On macOS 15.7 (Intel) Chromium used a
+native menu for `<select>` and `OnPopupShow` never fired; on macOS 26.5 (Apple
+Silicon M4, 2026-08-12) the same click delivers the popup through OSR and the
+surface imports with real pixels. Until the Intel machine is retested, treat
+dropdowns as version-dependent, and keep the DOM fallback for hosts that must
+run on older macOS.
 
 ## Checking it yourself
 

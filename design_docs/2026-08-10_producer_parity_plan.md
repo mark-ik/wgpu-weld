@@ -72,8 +72,8 @@ demos.
 | GPU frame import | Y (3 platforms hw-verified; Linux needs an explicit DMABUF modifier, see below) | Y | Y |
 | CPU fallback tier | P (feature-gated, never runtime-exercised) | Y | Y (readback demos) |
 | Explicit sync seam | N (implicit: callback copy + keyed mutex + cache-flush) | P (in-tree sync modules) | Y (owner) |
-| HiDPI scale factor | Y (verified on Windows) | unverified, per-backend | o (host concern) |
-| Popup widget surfaces (select/autocomplete) | Y on Windows, structurally absent on macOS, unverified on Linux | o (webviews self-composite) | o (Servo self-composites) |
+| HiDPI scale factor | Y (all three via `WELD_SCALE`; native 2x on the M4 iMac, 2026-08-12) | unverified, per-backend | o (host concern) |
+| Popup widget surfaces (select/autocomplete) | Y on Windows and on macOS 26/arm64 (2026-08-12); absent in the macOS 15.7/Intel test; Linux opens, import blocked (RADV modifier) | o (webviews self-composite) | o (Servo self-composites) |
 | Navigation control | Y | Y | demo-level |
 | can_go_back / can_go_forward | N | Y | o |
 | Navigation events | Y (all declared variants emit; NewWindowRequested proven via a switch) | Y (18 variants) | o |
@@ -98,7 +98,7 @@ demos.
 | Zoom / UA / settings | N | Y (apply_settings) | o |
 | Visibility (WasHidden / set_visible) | Y (set_visible on all three) | Y | o |
 | Per-producer profile isolation | P (global root_cache_path only; CEF has RequestContext) | Y (per-producer data_dir) | o |
-| Render-process crash recovery | N (variant declared, never emitted) | P | o |
+| Render-process crash recovery | P (`ContentProcessTerminated` emits — M4 iMac, 2026-08-12; the demo then hung, see that progress entry) | P | o |
 | DevTools window | Y | Y | o |
 | DevTools protocol (CDP) | N (CEF has ExecuteDevToolsMethod; unique leverage) | N (WebView2 could; not exposed) | o |
 | Multi-producer per process | Y | Y (except WPE) | Y |
@@ -217,7 +217,9 @@ one-line explanation.
 Run on all three machines with the same environment knobs: Windows 11 (this
 laptop), macOS 15.7.7 on the Intel iMac at `192.168.4.105`, and Fedora on the
 ThinkPad at `192.168.4.28` (AMD Renoir/RADV). Mayola's M4 iMac was asleep and
-was not part of the run, so no Apple Silicon result is claimed.
+was not part of the run, so no Apple Silicon result was claimed here. (It ran
+later the same day and is green; see the 2026-08-12 M4 progress entry, which
+also corrects two of this section's claims.)
 
 Turned from "wired" to "verified" on every platform: mouse, wheel and keyboard
 input; cursor shape; HiDPI scale; navigation and title events; console
@@ -291,6 +293,13 @@ that GPU.
   changes that. A host that needs them there has to draw its own control from
   the DOM. Linux is compile-verified only; no Linux box was reachable this
   session.
+
+  **Correction 2026-08-12: the macOS negative does not generalise.** On
+  Mayola's M4 iMac (macOS 26.5.1, arm64) the same select probe and a scripted
+  click delivered the full popup path — `on_popup_show(true)`,
+  `on_popup_size 320x197 at 0,80`, and a POPUP PASS import with real pixels.
+  The claim above was true of macOS 15.7 on the Intel iMac and stands as its
+  record; see the 2026-08-12 M4 progress entry for the variables in play.
 
   Deviation from the original plan: the composited single-texture mode is not
   built. Compositing must go to a third welding-owned texture (the imported
@@ -456,7 +465,9 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
     re-checked afterwards against the bindings (`ImplClient::request_handler`
     is the correct getter and is implemented), so this reads as an
     inconclusive test rather than a known defect. Needs a deliberate
-    crash-recovery scenario to settle.
+    crash-recovery scenario to settle. **Settled 2026-08-12 on the M4 iMac:
+    it emits.** See that progress entry, which also records the post-crash
+    hang the same test surfaced.
 
   Method note: the first attempt at that crash test used
   `pgrep -f "Helper \(Renderer\)" | head -1`, which matches every Electron app
@@ -502,3 +513,91 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
   `cef-dll-sys` already fetched one, so
   `CEF_PATH=target/debug/build/cef-dll-sys-*/out/cef_windows_x86_64` is enough
   to launch it.
+
+- 2026-08-12: **The Apple Silicon gap is closed: the battery is green on
+  Mayola's M4 iMac** (Apple M4, macOS 26.5.1, Metal 4, native 2x display;
+  arm64 CEF 148 / Chromium 147; first arm64 build of welding). Frames, wheel
+  and key to the DOM, cursor shape, cookies, script results, command-line
+  switches, navigation and title events: all verified in one run. Build note:
+  `cef-dll-sys` fetched `cef_macos_aarch64` on its own, but the sandbox
+  wrapper needs `cmake` and `ninja`, which this machine did not have —
+  `brew install cmake ninja` and the bundle built first try.
+
+  Three findings, each of which corrects the record:
+
+  1. **HiDPI is now verified on real 2x hardware.** Every earlier HiDPI proof
+     forced `WELD_SCALE=2` on a 1x panel. On the M4's native 2x display with
+     no override, the page reported `dpr=2, innerWidth=640, innerHeight=400`
+     in a 1280x800 physical window, and the popup rect came back converted:
+     CEF said `320x197 at 0,80` DIP, the import was `640x394 at 0,160`
+     physical.
+
+  2. **macOS popup widgets work here, which overturns W2's "structurally
+     absent".** A scripted click on the select probe fired
+     `on_popup_show(true)`, `on_popup_size 320x197 at 0,80`, and the popup
+     surface imported with real pixels (POPUP PASS, 14323/16384 non-zero).
+     The 2026-08-10 negative was macOS 15.7, Intel, 1x; this run is macOS
+     26.5.1, arm64, 2x, same crate code and CEF major. Which variable flips
+     the behaviour is not knowable from this machine alone. Until the Intel
+     iMac is retested, the honest matrix cell is "differs by macOS
+     generation", not "impossible" — and a host that needs dropdowns on
+     old-macOS still needs the DOM fallback.
+
+  3. **The battery's VALIDATION verdict was lying on its own probe pages, on
+     every platform.** welding never sets CEF's windowless
+     `background_color`, so CEF's default (transparent) applies, and a page
+     that declares no CSS background renders transparent — `[0,0,0,0]`,
+     which the probe reads as "not carrying paint". Both `testing/` pages
+     declared no background. The diagnosis was differential: example.com
+     (whose stylesheet sets `#eee`) passed probed immediately *and* after
+     being held 12s; the input probe failed even probed at import; a magenta
+     `data:` URL passed. So: not an import failure, not surface staleness —
+     an unset background. Both probe pages now declare `background:#fff`,
+     and the re-run is green end to end (16384/16384 non-zero, white). The
+     Windows and Linux 2026-08-12 battery verdicts ran the same pages and
+     should be re-read with this in mind. Follow-ups: expose
+     `background_color` in `CefSurfaceConfig` (configurability doctrine),
+     and document that pages without a background import with premultiplied
+     transparency today. A side benefit of the 12s-hold control: a held
+     IOSurface frame does not rot — CEF does not recycle it under the host.
+
+  **W1's last unproven variant is proven: `ContentProcessTerminated` emits.**
+  Killing the renderer helper produced
+  `weld: CEF render process terminated (code 9, 9)` and the event reached
+  the host. The wiring was always right; the 2026-08-10 test was
+  inconclusive for test reasons.
+
+  **The aftermath is a new defect worth its own session.** After the event,
+  the demo's main loop hung past `WELD_TIMEOUT_SECS`, CEF respawned renderer
+  processes repeatedly, the profile singleton stayed held (a second launch
+  answered "Opening in existing browser session" and failed
+  `CefInitialize`), and only SIGKILL ended it — orphaning the GPU, network
+  and storage helpers. Whether the hang is the demo's tick-driven timeout
+  never ticking or `CefDoMessageLoopWork` blocking after renderer death is
+  unresolved; until then, post-crash on macOS is "event delivered, process
+  unusable", so the crash-recovery matrix row is P, not Y.
+
+  Method notes, in the spirit of the existing pgrep one:
+
+  - `pkill -f` patterns are regexes: `Helper (Renderer)` matches nothing,
+    because the parens group instead of matching. Bracket them
+    (`[(]Renderer[)]`).
+  - Scoping the kill to the absolute bundle path missed the *main* process,
+    which had been launched as `./demo-weld-mac.app/...` and so carries a
+    relative argv[0]. The first "main is gone, only helpers linger" read
+    was wrong because of this; the hung main was alive the whole time,
+    respawning what the kills removed. Launch by absolute path, or write
+    patterns that survive both.
+  - A battery on a machine with a human at it picks up the human: a stray
+    terminal Return keyup became `key:Unidentified` right after load, and a
+    mid-run click on the demo window navigated it to iana.org. The
+    accidental upside: real, non-synthetic mouse input is hereby also
+    proven on this stack.
+
+  Doc correction queued by reading the code: the top-level README's
+  constraint 2 ("welding copies inside the callback and exposes only owned
+  resources") is not what the macOS lane does — it `CFRetain`s the
+  IOSurface and wraps it zero-copy into an `MTLTexture`
+  (`native_frame/metal.rs`). No misbehaviour observed from the aliasing
+  (see the 12s hold above), but the claim should match the code, and G3's
+  sync question now has a second concrete instance.
