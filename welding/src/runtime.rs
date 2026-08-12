@@ -34,6 +34,12 @@ pub struct CefRuntimeConfig {
     ///   Under `cef-runtime` this is passed to `cef::load_library`.
     /// - Linux: folder with `libcef.so`, `icudtl.dat`, locale files, etc.
     pub cef_path: PathBuf,
+    /// Chromium command-line switches, applied before CEF processes its own.
+    ///
+    /// `("disable-popup-blocking", None)` for a bare flag,
+    /// `("lang", Some("en-GB".into()))` for one with a value. This is the only
+    /// way to reach a great many Chromium behaviours, which have no CEF API.
+    pub command_line_switches: Vec<(String, Option<String>)>,
 
     /// Path to the subprocess helper executable. `None` = re-use this binary
     /// (requires calling [`CefRuntime::execute_process_from`] at `main()` start).
@@ -52,6 +58,7 @@ impl CefRuntimeConfig {
     pub fn new(cef_path: impl Into<PathBuf>) -> Self {
         CefRuntimeConfig {
             cef_path: cef_path.into(),
+            command_line_switches: Vec::new(),
             browser_subprocess_path: None,
             cache_path: None,
             single_process: false,
@@ -83,21 +90,6 @@ mod cef_backed {
     // Minimal no-op App impl: CEF requires an App on all initialize paths; this
     // satisfies that without requiring callers to depend on the cef crate.
     #[derive(Clone)]
-    struct WeldApp;
-
-    cef::wrap_app! {
-        struct WeldAppWrapper {
-            app: WeldApp,
-        }
-        impl App {}
-    }
-
-    impl WeldAppWrapper {
-        fn build() -> cef::App {
-            Self::new(WeldApp)
-        }
-    }
-
     /// CEF global runtime under `cef-runtime`. The `cef` crate (via `cef-dll-sys`)
     /// owns the process-global CEF state; this struct is a thin RAII drop-guard
     /// that calls `cef::shutdown` when dropped.
@@ -118,7 +110,9 @@ mod cef_backed {
             maybe_load_library(cef_path)?;
             pin_cef_api_version();
             let args = Args::new();
-            let mut app = WeldAppWrapper::build();
+            // The same app both roles need: its render-process handler is what
+            // makes script evaluation possible in the renderer.
+            let mut app = crate::app::WeldApp::build(std::sync::Arc::new(Vec::new()));
             let code = cef::execute_process(
                 Some(args.as_main_args()),
                 Some(&mut app),
@@ -127,13 +121,31 @@ mod cef_backed {
             if code >= 0 { Ok(Some(code)) } else { Ok(None) }
         }
 
+        /// Run a CEF subprocess that loads the framework itself.
+        ///
+        /// macOS launches separate helper executables rather than re-running
+        /// the host binary, and those helpers must hand CEF the *same* app, or
+        /// the renderer has no handlers and anything needing the render process
+        /// (script results) silently never answers. A helper that calls
+        /// `cef_execute_process` on its own cannot know that.
+        pub fn run_subprocess(args: &cef::args::Args) -> i32 {
+            pin_cef_api_version();
+            let mut app = crate::app::WeldApp::build(std::sync::Arc::new(Vec::new()));
+            cef::execute_process(
+                Some(args.as_main_args()),
+                Some(&mut app),
+                std::ptr::null_mut(),
+            )
+        }
+
         /// Initialise CEF. Call after [`Self::execute_process_from`] confirms
         /// this is the browser process.
         pub fn initialize(config: CefRuntimeConfig) -> Result<Self, WeldError> {
             maybe_load_library(&config.cef_path)?;
             pin_cef_api_version();
             let args = Args::new();
-            let mut app = WeldAppWrapper::build();
+            let mut app =
+                crate::app::WeldApp::build(std::sync::Arc::new(config.command_line_switches.clone()));
             let settings = build_settings(&config);
             let code = cef::initialize(
                 Some(args.as_main_args()),

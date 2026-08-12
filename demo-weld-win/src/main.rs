@@ -53,6 +53,7 @@ struct DemoState {
     popup: Option<PopupSurface>,
     frames_drawn: u32,
     cookies_requested: bool,
+    script_requested: bool,
     click_at: Option<(i32, i32)>,
     clicked: bool,
     cursor: (f32, f32),
@@ -172,6 +173,7 @@ impl ApplicationHandler for DemoApp {
             popup: None,
             frames_drawn: 0,
             cookies_requested: false,
+            script_requested: false,
             click_at: std::env::var("WELD_CLICK_AT").ok().and_then(|v| {
                 let (x, y) = v.split_once(',')?;
                 Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
@@ -396,6 +398,24 @@ impl ApplicationHandler for DemoApp {
                         }
                     }
                 }
+                // WELD_SCRIPT: evaluate once the page is up, then print the
+                // value the renderer sent back.
+                if !s.script_requested && s.frames_drawn > 90 {
+                    if let Ok(script) = std::env::var("WELD_SCRIPT") {
+                        s.script_requested = true;
+                        match s.producer.request_script_result(&script) {
+                            Ok(id) => eprintln!("weld demo: script request #{id}: {script}"),
+                            Err(e) => eprintln!("weld demo: request_script_result failed: {e}"),
+                        }
+                    }
+                }
+                if let Some(result) = s.producer.poll_script_result() {
+                    match result.value {
+                        Ok(json) => eprintln!("weld demo: SCRIPT #{} => {json}", result.id),
+                        Err(err) => eprintln!("weld demo: SCRIPT #{} threw: {err}", result.id),
+                    }
+                }
+
                 if let Some(cookies) = s.producer.poll_cookies() {
                     eprintln!("weld demo: COOKIES n={}", cookies.len());
                     for c in cookies.iter().take(5) {
@@ -574,6 +594,18 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let mut runtime_config = CefRuntimeConfig::new(&cef_path);
+    // WELD_SWITCHES=disable-popup-blocking,lang=en-GB
+    if let Ok(list) = std::env::var("WELD_SWITCHES") {
+        runtime_config.command_line_switches = list
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| match s.split_once('=') {
+                Some((k, v)) => (k.to_owned(), Some(v.to_owned())),
+                None => (s.to_owned(), None),
+            })
+            .collect();
+        eprintln!("weld demo: switches {:?}", runtime_config.command_line_switches);
+    }
     runtime_config.cache_path = Some(std::env::temp_dir().join("wgpu-weld-demo-cache"));
     let runtime = CefRuntime::initialize(runtime_config)
         .expect("weld: CEF initialize failed");

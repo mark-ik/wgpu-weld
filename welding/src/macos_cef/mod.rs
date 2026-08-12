@@ -25,7 +25,7 @@ use crate::{
 
 
 #[cfg(feature = "cef-runtime")]
-use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
+use cef::{ImplBrowser, ImplBrowserHost, ImplFrame, ImplListValue, ImplProcessMessage};
 
 // ── Public config ─────────────────────────────────────────────────────────────
 
@@ -82,6 +82,10 @@ pub struct MacosCefProducer {
     ime: Arc<crate::ime::LatestComposition>,
     #[cfg(feature = "cef-runtime")]
     cookies: Arc<crate::cookies::CookieJar>,
+    #[cfg(feature = "cef-runtime")]
+    scripts: Arc<crate::app::ScriptResults>,
+    #[cfg(feature = "cef-runtime")]
+    next_script_id: u32,
     events: Arc<Mutex<EventQueues>>,
     size: PhysicalSize<u32>,
 }
@@ -108,6 +112,7 @@ impl MacosCefProducer {
             let cursor = Arc::new(crate::cursor::LatestCursor::default());
             let ime = Arc::new(crate::ime::LatestComposition::default());
             let cookies = Arc::new(crate::cookies::CookieJar::default());
+            let scripts = Arc::new(crate::app::ScriptResults::default());
 
             let inner = WeldRenderHandlerInner {
                 frame_slot: frame_slot.clone(),
@@ -129,6 +134,7 @@ impl MacosCefProducer {
                 display_handler,
                 life_span_handler,
                 request_handler,
+                scripts.clone(),
                 events.clone(),
             );
 
@@ -169,6 +175,8 @@ impl MacosCefProducer {
                 cursor,
                 ime,
                 cookies,
+                scripts,
+                next_script_id: 0,
                 events,
                 size: initial_size,
             });
@@ -252,6 +260,43 @@ impl CefSurfaceProducer for MacosCefProducer {
             return Ok(());
         }
         Err(pending("cef_browser_host_t::was_resized"))
+    }
+
+    fn request_script_result(&mut self, script: &str) -> Result<u32, WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            self.next_script_id = self.next_script_id.wrapping_add(1);
+            let id = self.next_script_id;
+            let Some(frame) = self.browser.main_frame() else {
+                return Err(WeldError::BrowserOp("browser has no main frame yet".into()));
+            };
+            let name: cef::CefString = crate::app::EVAL_REQUEST.into();
+            let mut message = cef::process_message_create(Some(&name))
+                .ok_or_else(|| WeldError::BrowserOp("could not create a process message".into()))?;
+            if let Some(args) = message.argument_list() {
+                args.set_int(0, id as i32);
+                let script: cef::CefString = script.into();
+                args.set_string(1, Some(&script));
+            }
+            frame.send_process_message(cef::ProcessId::RENDERER, Some(&mut message));
+            return Ok(id);
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            let _ = script;
+            Err(WeldError::PlatformUnsupported("script results require the cef-runtime feature"))
+        }
+    }
+
+    fn poll_script_result(&mut self) -> Option<crate::app::ScriptResult> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            return self.scripts.take_one();
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            None
+        }
     }
 
     fn set_cookie(&mut self, url: &str, cookie: &crate::surface::Cookie) -> Result<(), WeldError> {

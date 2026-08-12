@@ -11,7 +11,9 @@
 
 use std::sync::Mutex;
 
-use crate::surface::{Cookie, SameSite};
+use crate::surface::Cookie;
+#[cfg(feature = "cef-runtime")]
+use crate::surface::SameSite;
 
 /// Collects a visitor's cookies until the read finishes, then hands the batch
 /// to the host exactly once.

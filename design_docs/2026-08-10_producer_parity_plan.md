@@ -70,7 +70,7 @@ demos.
 | Popup widget surfaces (select/autocomplete) | Y on Windows, structurally absent on macOS, unverified on Linux | o (webviews self-composite) | o (Servo self-composites) |
 | Navigation control | Y | Y | demo-level |
 | can_go_back / can_go_forward | N | Y | o |
-| Navigation events | P (load/title/address wired; 3 declared variants never fire) | Y (18 variants) | o |
+| Navigation events | Y (all declared variants emit; NewWindowRequested proven via a switch) | Y (18 variants) | o |
 | Mouse / keyboard / wheel | Y (Windows and Linux both proven to the DOM; mac thinner) | Y (caveats per backend) | demo-level |
 | Pointer (pen) input | N | Y | N |
 | Touch input | N (CEF has SendTouchEvent) | unverified | N |
@@ -79,7 +79,7 @@ demos.
 | Drag / drop | N (CEF has StartDragging + DragTarget*) | mixed | N |
 | Cookies get/set/delete | P (trait methods exist; producer impls absent, defaults error) | Y | o |
 | Cookie change events | N | Y (WKWebView) | o |
-| Script exec + result | Y / P (result bridge is trait-default error) | Y | o |
+| Script exec + result | Y (renderer round trip, JSON values) | Y | o |
 | Web message bridge | Y | Y | o |
 | Custom URL scheme handlers | N (CEF has scheme handler factory) | Y (all 5) | o |
 | Downloads (lifecycle + decisions) | N | Y (incl. pause/resume/cancel) | o |
@@ -116,6 +116,39 @@ state and was never fully honest:
 
 Per the diagnostics doctrine, a capability report that overstates is worse
 than a missing feature; this is the first thing to fix.
+
+### W6: the renderer-side CefApp (2026-08-10)
+
+welding now owns a real `CefApp`, constructed identically in the browser
+process and in every subprocess. It was the single thing several unrelated
+features were waiting on, because a `CefApp` is the only hook that exists in
+both processes and welding's was an empty stub.
+
+Three things landed on it, all proven on Windows:
+
+- **Script results.** `request_script_result` / `poll_script_result`, request
+  and poll for the same reason cookies are: the value comes back from the
+  renderer over process messages, so blocking would wait on the loop carrying
+  the reply. Evaluation happens in the frame's V8 context and the value returns
+  as JSON, because a script can return anything.
+  `({title: document.title, sum: 2+2, h1: ...})` came back as
+  `{"title":"Example Domain","sum":4,"h1":"Example Domain"}`.
+- **Chromium command-line switches**, via `on_before_command_line_processing`
+  and `CefRuntimeConfig::command_line_switches`. A great many Chromium
+  behaviours have no CEF API and are reachable only this way.
+- **W1's last residual, closed.** `NewWindowRequested` was wired in W1 but
+  unprovable, because Chromium's popup blocker swallows a non-gesture
+  `window.open` before `on_before_popup` runs. With
+  `disable-popup-blocking` as a switch it fires exactly as designed:
+  `NewWindowRequested { url: "https://example.org/popup", user_gesture: false }`.
+
+The macOS helper now goes through `CefRuntime::run_subprocess` rather than
+calling `cef_execute_process` itself, so it hands CEF the same app. A helper
+that does its own thing gets a renderer with no handlers, and script results
+there would simply never answer.
+
+This also opens the page-to-host direction: a render-process handler is what a
+real bridge needs, and the `weld.message` path can now be finished properly.
 
 ### Linux + implicit-modifier DMABUF is blocked upstream in wgpu
 

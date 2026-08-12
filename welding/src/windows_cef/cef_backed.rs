@@ -290,6 +290,7 @@ cef::wrap_client! {
         load_handler: cef::LoadHandler,
         display_handler: cef::DisplayHandler,
         request_handler: cef::RequestHandler,
+        scripts: Arc<crate::app::ScriptResults>,
         events: Arc<Mutex<EventQueues>>,
     }
 
@@ -323,7 +324,21 @@ cef::wrap_client! {
         ) -> ::std::os::raw::c_int {
             if source_process != cef::ProcessId::RENDERER { return 0; }
             let Some(msg) = message else { return 0 };
-            if cef::CefString::from(&msg.name()).to_string() != "weld.message" { return 0; }
+            let name = cef::CefString::from(&msg.name()).to_string();
+            if name == crate::app::EVAL_RESULT {
+                // The renderer answering a request_script_result.
+                if let Some(args) = msg.argument_list() {
+                    let id = args.int(0) as u32;
+                    let ok = args.int(1) != 0;
+                    let payload = cef::CefString::from(&args.string(2)).to_string();
+                    self.scripts.push(crate::app::ScriptResult {
+                        id,
+                        value: if ok { Ok(payload) } else { Err(payload) },
+                    });
+                }
+                return 1;
+            }
+            if name != "weld.message" { return 0; }
             if let Some(args) = msg.argument_list() {
                 let text = cef::CefString::from(&args.string(0)).to_string();
                 self.events.lock().unwrap().web_messages.push_back(text);
@@ -340,6 +355,7 @@ impl WeldClient {
         load_handler: cef::LoadHandler,
         display_handler: cef::DisplayHandler,
         request_handler: cef::RequestHandler,
+        scripts: Arc<crate::app::ScriptResults>,
         events: Arc<Mutex<EventQueues>>,
     ) -> cef::Client {
         Self::new(
@@ -348,6 +364,7 @@ impl WeldClient {
             load_handler,
             display_handler,
             request_handler,
+            scripts,
             events,
         )
     }

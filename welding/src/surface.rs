@@ -79,9 +79,7 @@ impl CefSurfaceCapabilities {
                 "CEF cookie observers are not wired yet",
             ),
             script_execution: BrowserFeatureStatus::Supported,
-            script_result: BrowserFeatureStatus::Unsupported(
-                "a result-bearing script bridge needs a CefApp with a render-process handler in the subprocess; welding passes no app to execute_process",
-            ),
+            script_result: BrowserFeatureStatus::Supported,
             devtools: BrowserFeatureStatus::Supported,
             downloads: BrowserFeatureStatus::Unsupported(
                 "no CefDownloadHandler is registered; downloads are silently dropped",
@@ -130,6 +128,10 @@ mod capability_tests {
         // Cookies went from a trait default that errored to real producer
         // implementations over CEF's global cookie manager.
         assert_eq!(caps.cookies, BrowserFeatureStatus::Supported);
+        // Script results went from impossible to wired when welding gained a
+        // CefApp with a render-process handler: evaluation happens in the
+        // renderer, so nothing in the browser process could ever answer it.
+        assert_eq!(caps.script_result, BrowserFeatureStatus::Supported);
         assert!(caps.accelerated_paint_available);
         assert_eq!(caps.preferred_mode, CefSurfaceMode::AcceleratedPaint);
 
@@ -137,7 +139,6 @@ mod capability_tests {
         // a host can report *why* to its own user.
         for status in [
             caps.cookie_change_events,
-            caps.script_result,
             caps.downloads,
             caps.context_menus,
         ] {
@@ -415,15 +416,25 @@ pub trait CefSurfaceProducer: Send {
     /// requiring a CDP round-trip.
     fn execute_script(&mut self, script: &str, source_url: &str) -> Result<(), WeldError>;
 
-    fn execute_script_with_result(
-        &mut self,
-        script: &str,
-        timeout: std::time::Duration,
-    ) -> Result<String, WeldError> {
-        let _ = (script, timeout);
-        Err(WeldError::BrowserOp(
-            "CEF result-bearing script bridge is not wired yet".into(),
-        ))
+    /// Evaluate `script` and ask for its value back. Returns the request id.
+    ///
+    /// The answer arrives through
+    /// [`poll_script_result`](Self::poll_script_result), because the value has
+    /// to be fetched from the renderer process over CEF's process-message
+    /// channel. A blocking call would wait on the very loop that carries the
+    /// reply.
+    ///
+    /// Results come back as JSON: `2+2` yields `4`, `document.title` yields a
+    /// quoted string, an object yields an object. A script that throws yields
+    /// `Err` with the exception message.
+    fn request_script_result(&mut self, _script: &str) -> Result<u32, WeldError> {
+        Err(WeldError::BrowserOp("script results are not wired for this producer".into()))
+    }
+
+    /// The next finished [`request_script_result`](Self::request_script_result),
+    /// in the order the renderer answered.
+    fn poll_script_result(&mut self) -> Option<crate::app::ScriptResult> {
+        None
     }
 
     /// Write a cookie, as if `url` had sent it in a `Set-Cookie` header.

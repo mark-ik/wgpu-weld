@@ -23,13 +23,11 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Same pin welding's runtime applies. The helper talks to CEF directly
-    // rather than through welding, so it has to do this itself; without it the
-    // vtable layout the bindings expect need not match libcef's.
-    let _ = cef::api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
-
+    // Go through welding rather than calling cef::execute_process directly, so
+    // this helper hands CEF the same app the browser process does. Without it
+    // the renderer has no handlers and script results never answer.
     let args = cef::args::Args::new();
-    let code = cef::execute_process(Some(args.as_main_args()), None, std::ptr::null_mut());
+    let code = welding::CefRuntime::run_subprocess(&args);
     std::process::exit(code);
 }
 

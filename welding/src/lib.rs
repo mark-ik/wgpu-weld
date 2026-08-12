@@ -17,6 +17,8 @@ mod cursor;
 mod ime;
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
 mod cookies;
+#[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
+pub mod app;
 
 #[cfg(feature = "cef-runtime")]
 mod cef_input;
@@ -50,6 +52,7 @@ pub use native_frame::{
     HostWgpuContext, ImportError, ImportedTexture, InteropBackend, NativeFrame, NativeFrameKind,
     WgpuTextureImporter,
 };
+pub use app::ScriptResult;
 pub use runtime::{CefLogSeverity, CefRuntime, CefRuntimeConfig};
 pub use surface::{
     BrowserFeatureStatus, CefSurfaceCapabilities, CefSurfaceConfig, CefSurfaceMode,
