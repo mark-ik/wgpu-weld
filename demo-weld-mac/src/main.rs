@@ -510,16 +510,24 @@ fn main() {
 
     let mut config = CefRuntimeConfig::new(&frameworks);
     config.cache_path = Some(std::env::temp_dir().join("welding-demo-mac-cache"));
+    // Never touch the login keychain: without this, Chromium's Safe Storage
+    // asks for the user's password on launch — a modal prompt that blocks
+    // CefInitialize for as long as nobody answers it, and crashes the network
+    // service if answered Deny. A parity demo on a machine nobody sits at
+    // cannot type a password.
+    config
+        .command_line_switches
+        .push(("use-mock-keychain".to_owned(), None));
     // WELD_SWITCHES=disable-popup-blocking,lang=en-GB
     if let Ok(list) = std::env::var("WELD_SWITCHES") {
-        config.command_line_switches = list
-            .split(',')
-            .filter(|s| !s.is_empty())
-            .map(|s| match s.split_once('=') {
-                Some((k, v)) => (k.to_owned(), Some(v.to_owned())),
-                None => (s.to_owned(), None),
-            })
-            .collect();
+        config.command_line_switches.extend(
+            list.split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| match s.split_once('=') {
+                    Some((k, v)) => (k.to_owned(), Some(v.to_owned())),
+                    None => (s.to_owned(), None),
+                }),
+        );
         eprintln!("weld demo: switches {:?}", config.command_line_switches);
     }
     let runtime = CefRuntime::initialize(config).expect("welding: CEF initialize failed");
@@ -527,6 +535,11 @@ fn main() {
     let exit_after_frames = std::env::var("WELD_EXIT_AFTER_FRAMES")
         .ok()
         .and_then(|v| v.parse::<u32>().ok());
+    // An explicit WELD_TIMEOUT_SECS arms the timeout by itself. It used to
+    // count only in unattended modes, so an interactive run with a timeout
+    // set ran forever — which read as a post-crash hang the first time a
+    // crash test relied on it.
+    let timeout_explicit = std::env::var("WELD_TIMEOUT_SECS").is_ok();
     let timeout = Duration::from_secs(
         std::env::var("WELD_TIMEOUT_SECS")
             .ok()
@@ -572,7 +585,9 @@ fn main() {
         if app.should_exit {
             break;
         }
-        if (exit_after_frames.is_some() || scripted_armed) && started.elapsed() >= timeout {
+        if (exit_after_frames.is_some() || scripted_armed || timeout_explicit)
+            && started.elapsed() >= timeout
+        {
             log::warn!("timed out after {}s", timeout.as_secs());
             app.report_now();
             break;

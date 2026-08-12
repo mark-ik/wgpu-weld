@@ -98,7 +98,7 @@ demos.
 | Zoom / UA / settings | N | Y (apply_settings) | o |
 | Visibility (WasHidden / set_visible) | Y (set_visible on all three) | Y | o |
 | Per-producer profile isolation | P (global root_cache_path only; CEF has RequestContext) | Y (per-producer data_dir) | o |
-| Render-process crash recovery | P (`ContentProcessTerminated` emits — M4 iMac, 2026-08-12; the demo then hung, see that progress entry) | P | o |
+| Render-process crash recovery | P (`ContentProcessTerminated` emits and the host loop survives — M4 iMac, 2026-08-12; no relaunch API yet) | P | o |
 | DevTools window | Y | Y | o |
 | DevTools protocol (CDP) | N (CEF has ExecuteDevToolsMethod; unique leverage) | N (WebView2 could; not exposed) | o |
 | Multi-producer per process | Y | Y (except WPE) | Y |
@@ -567,15 +567,35 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
   the host. The wiring was always right; the 2026-08-10 test was
   inconclusive for test reasons.
 
-  **The aftermath is a new defect worth its own session.** After the event,
-  the demo's main loop hung past `WELD_TIMEOUT_SECS`, CEF respawned renderer
-  processes repeatedly, the profile singleton stayed held (a second launch
-  answered "Opening in existing browser session" and failed
-  `CefInitialize`), and only SIGKILL ended it — orphaning the GPU, network
-  and storage helpers. Whether the hang is the demo's tick-driven timeout
-  never ticking or `CefDoMessageLoopWork` blocking after renderer death is
-  unresolved; until then, post-crash on macOS is "event delivered, process
-  unusable", so the crash-recovery matrix row is P, not Y.
+  **The aftermath looked like a new defect, and was not — retracted later
+  the same day.** The "hang past `WELD_TIMEOUT_SECS`" was the test's own
+  doing, in the same family as "a demo mistook a paint for a clock": the
+  timeout only armed in unattended modes, and that crash test ran the demo
+  interactively, so "runs forever" was the demo working as designed. The
+  held singleton and the orphaned helpers were side effects of SIGKILLing a
+  healthy process. The rerun that would have shown this was then corrupted
+  by a second, real finding: on a fresh profile Chromium's Safe Storage
+  asks the login keychain for a password, a modal prompt that blocks
+  `CefInitialize` for as long as nobody answers — and answering Deny
+  crashes the network service ("Network service crashed or was terminated,
+  restarting service."), after which no page loads. A parity demo on a
+  machine nobody sits at cannot type a password, so the macOS demo now
+  passes `use-mock-keychain` unconditionally, and an explicit
+  `WELD_TIMEOUT_SECS` arms the timeout in any mode.
+
+  The clean re-run settles it: renderer killed mid-run,
+  `ContentProcessTerminated` delivered, the loop kept ticking, the timeout
+  fired, the report ran (the held pre-crash frame still probed real pixels),
+  exit code 0, zero leftover processes. Post-crash on macOS is "event
+  delivered, host loop fine"; the matrix row stays P only because there is
+  no relaunch/recovery API, not because anything breaks.
+
+  Drift note for the next demo pass: `WELD_TIMEOUT_SECS` exists only in the
+  macOS demo; Windows and Linux have no timeout instrument at all. Both
+  crash-test runs also navigated themselves to iana.org within seconds of
+  launch — a click on the freshly-focused window sitting under a live
+  pointer is the suspected cause (a human was at the machine both times);
+  noted, not chased.
 
   Method notes, in the spirit of the existing pgrep one:
 
