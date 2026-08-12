@@ -150,7 +150,8 @@ impl ApplicationHandler for DemoApp {
             &cef_runtime,
             LinuxCefConfig {
                 surface: CefSurfaceConfig {
-                    initial_url: "https://example.com".into(),
+                    initial_url: std::env::var("WELD_URL")
+                        .unwrap_or_else(|_| "https://example.com".into()),
                     initial_size: win_size,
                     // Physical size plus the display scale: CEF lays out at
                     // size/scale CSS pixels and paints the full physical size.
@@ -345,6 +346,13 @@ impl ApplicationHandler for DemoApp {
                     log::info!("popup closed");
                 }
 
+                // The page owns the cursor's meaning; the host owns the
+                // pointer. Nothing shows an I-beam unless we apply it.
+                if let Some(shape) = s.producer.poll_cursor_shape() {
+                    log::info!("cursor -> {shape:?}");
+                    s.window.set_cursor(winit_cursor(&shape));
+                }
+
                 while let Some(event) = s.producer.poll_navigation_event() {
                     log::info!("nav: {event:?}");
                 }
@@ -475,6 +483,35 @@ fn main() {
     event_loop
         .run_app(&mut DemoApp::new(runtime))
         .expect("event loop error");
+}
+
+/// Shared vocabulary to winit's icons.
+fn winit_cursor(shape: &welding::CursorShape) -> winit::window::Cursor {
+    use welding::CursorShape as S;
+    use winit::window::CursorIcon as I;
+    let icon = match shape {
+        S::Default => I::Default,
+        S::Pointer => I::Pointer,
+        S::Text => I::Text,
+        S::Wait => I::Wait,
+        S::Crosshair => I::Crosshair,
+        S::Move => I::Move,
+        S::NotAllowed => I::NotAllowed,
+        S::Help => I::Help,
+        S::Progress => I::Progress,
+        S::ResizeNs => I::NsResize,
+        S::ResizeEw => I::EwResize,
+        S::ResizeNeSw => I::NeswResize,
+        S::ResizeNwSe => I::NwseResize,
+        S::ResizeAll => I::AllScroll,
+        S::Grab => I::Grab,
+        S::Grabbing => I::Grabbing,
+        S::ZoomIn => I::ZoomIn,
+        S::ZoomOut => I::ZoomOut,
+        S::Custom(_) => I::Default,
+        _ => I::Default,
+    };
+    icon.into()
 }
 
 fn log_scale_err(err: welding::WeldError) {

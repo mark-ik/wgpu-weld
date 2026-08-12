@@ -168,3 +168,32 @@ pub(crate) fn report(s: &mut DemoState) {
     }
 }
 
+
+/// Shared vocabulary to winit's icons.
+pub(crate) fn winit_cursor(shape: &welding::CursorShape) -> winit::window::Cursor {
+    use welding::CursorShape as S;
+    use winit::window::CursorIcon as I;
+    let icon = match shape {
+        S::Default => I::Default,
+        S::Pointer => I::Pointer,
+        S::Text => I::Text,
+        S::Wait => I::Wait,
+        S::Crosshair => I::Crosshair,
+        S::Move => I::Move,
+        S::NotAllowed => I::NotAllowed,
+        S::Help => I::Help,
+        S::Progress => I::Progress,
+        S::ResizeNs => I::NsResize,
+        S::ResizeEw => I::EwResize,
+        S::ResizeNeSw => I::NeswResize,
+        S::ResizeNwSe => I::NwseResize,
+        S::ResizeAll => I::AllScroll,
+        S::Grab => I::Grab,
+        S::Grabbing => I::Grabbing,
+        S::ZoomIn => I::ZoomIn,
+        S::ZoomOut => I::ZoomOut,
+        S::Custom(_) => I::Default,
+        _ => I::Default,
+    };
+    icon.into()
+}

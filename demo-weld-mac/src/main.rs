@@ -391,6 +391,11 @@ impl DemoApp {
             log::info!("popup closed");
         }
 
+        if let Some(shape) = s.producer.poll_cursor_shape() {
+            log::info!("cursor -> {shape:?}");
+            s.window.set_cursor(present::winit_cursor(&shape));
+        }
+
         while let Some(event) = s.producer.poll_navigation_event() {
             log::info!("nav: {event:?}");
         }
