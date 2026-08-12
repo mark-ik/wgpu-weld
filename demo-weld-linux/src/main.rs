@@ -145,10 +145,7 @@ impl ApplicationHandler for DemoApp {
         let win_size = window.inner_size();
         // WELD_SCALE forces a scale factor regardless of the display, which is
         // how the HiDPI path gets exercised on a 1x screen.
-        let scale = std::env::var("WELD_SCALE")
-            .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or_else(|| window.scale_factor());
+        let scale = forced_scale().unwrap_or_else(|| window.scale_factor());
         log::info!("creating CEF browser ({}x{})", win_size.width, win_size.height);
         let mut producer = LinuxCefProducer::new(
             &cef_runtime,
@@ -217,7 +214,11 @@ impl ApplicationHandler for DemoApp {
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 // The window crossed onto a display with a different density.
-                if let Err(err) = s.producer.set_scale_factor(scale_factor as f32) {
+                // A forced WELD_SCALE outranks it: on a 1x panel winit reports
+                // 1.0 here and would undo the very override being tested.
+                if forced_scale().is_some() {
+                    log::info!("ScaleFactorChanged({scale_factor}) ignored: WELD_SCALE pins the scale");
+                } else if let Err(err) = s.producer.set_scale_factor(scale_factor as f32) {
                     log_scale_err(err);
                 }
             }
@@ -631,6 +632,15 @@ fn report(s: &mut DemoState) {
         },
         None => log::error!("VALIDATION FAIL: no frame was ever imported"),
     }
+}
+
+/// WELD_SCALE pins the scale factor for testing HiDPI on a 1x display. When it
+/// is set it has to survive winit's ScaleFactorChanged, which reports the real
+/// display density.
+fn forced_scale() -> Option<f64> {
+    std::env::var("WELD_SCALE")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
 }
 
 fn log_scale_err(err: welding::WeldError) {
