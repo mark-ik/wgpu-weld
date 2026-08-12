@@ -250,6 +250,15 @@ impl CefSurfaceProducer for MacosCefProducer {
         Err(pending("cef_browser_host_t::was_resized"))
     }
 
+    fn set_visible(&mut self, visible: bool) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser.host() {
+            host.was_hidden(if visible { 0 } else { 1 });
+            return Ok(());
+        }
+        Err(WeldError::PlatformUnsupported("visibility requires the cef-runtime feature"))
+    }
+
     fn poll_cursor_shape(&mut self) -> Option<crate::surface::CursorShape> {
         #[cfg(feature = "cef-runtime")]
         {

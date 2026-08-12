@@ -146,7 +146,7 @@ impl ApplicationHandler for DemoApp {
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or_else(|| window.scale_factor());
         log::info!("creating CEF browser ({}x{})", win_size.width, win_size.height);
-        let producer = LinuxCefProducer::new(
+        let mut producer = LinuxCefProducer::new(
             &cef_runtime,
             LinuxCefConfig {
                 surface: CefSurfaceConfig {
@@ -162,6 +162,18 @@ impl ApplicationHandler for DemoApp {
         )
         .expect("failed to create CEF browser surface");
         log::info!("CEF browser created");
+        // Tell CEF the browser has focus straight away. winit only emits
+        // Focused(true) on a *change*, so a window that is already focused when
+        // it appears never triggers it, and an unfocused OSR browser is a
+        // candidate for ignoring input.
+        if let Err(err) = producer.move_focus(FocusDirection::Forward) {
+            log::warn!("initial move_focus failed: {err}");
+        }
+        // CEF starts a windowless browser in an unspecified visibility state;
+        // say it plainly.
+        if let Err(err) = producer.set_visible(true) {
+            log::warn!("initial set_visible failed: {err}");
+        }
 
         self.state = Some(DemoState {
             window,
@@ -284,13 +296,16 @@ impl ApplicationHandler for DemoApp {
                 } else {
                     MouseAction::Released
                 };
-                let _ = s.producer.send_mouse_input(MouseEvent {
+                match s.producer.send_mouse_input(MouseEvent {
                     x: s.cursor.0 as i32,
                     y: s.cursor.1 as i32,
                     button: mb,
                     action,
                     modifiers: s.mods,
-                });
+                }) {
+                    Ok(()) => log::info!("send_mouse_input(click) -> Ok"),
+                    Err(err) => log::error!("send_mouse_input(click) -> {err}"),
+                }
             }
 
             WindowEvent::MouseWheel { delta, .. } => {

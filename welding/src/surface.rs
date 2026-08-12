@@ -329,6 +329,15 @@ pub trait CefSurfaceProducer: Send {
     }
 
     /// Resize the view. `size` is in **physical** pixels.
+    /// Tell CEF whether the surface is visible.
+    ///
+    /// A windowless browser that CEF believes is hidden throttles or drops
+    /// work, so a host that never says otherwise can end up with a browser
+    /// that paints but ignores input.
+    fn set_visible(&mut self, _visible: bool) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported("visibility is not wired for this producer"))
+    }
+
     /// The cursor shape the page is asking for, if it changed since the last
     /// call. The host owns the pointer under windowless rendering, so nothing
     /// happens unless the host applies it.

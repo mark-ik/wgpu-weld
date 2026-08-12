@@ -20,6 +20,7 @@ cef::wrap_render_handler! {
             if let Some(rect) = rect {
                 // GetViewRect is answered in DIP, not physical pixels.
                 let (w, h) = self.handler.metrics.lock().unwrap().logical();
+                log::trace!("view_rect -> {w}x{h} dip");
                 rect.width = w;
                 rect.height = h;
             }

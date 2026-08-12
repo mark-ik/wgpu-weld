@@ -71,10 +71,10 @@ demos.
 | Navigation control | Y | Y | demo-level |
 | can_go_back / can_go_forward | N | Y | o |
 | Navigation events | P (load/title/address wired; 3 declared variants never fire) | Y (18 variants) | o |
-| Mouse / keyboard / wheel | Y (Win+Linux verified; mac thinner) | Y (caveats per backend) | demo-level |
+| Mouse / keyboard / wheel | Y (Windows and Linux both proven to the DOM; mac thinner) | Y (caveats per backend) | demo-level |
 | Pointer (pen) input | N | Y | N |
 | Touch input | N (CEF has SendTouchEvent) | unverified | N |
-| Cursor-shape reporting | P (wired + fires, but always reports the arrow; open defect) | Y (all 5) | N |
+| Cursor-shape reporting | Y (verified on Linux with a human pointer) | Y (all 5) | N |
 | IME | P (input + composition-range feedback wired; compile-only) | Y (GTK/WPE lanes; win/mac unverified) | N |
 | Drag / drop | N (CEF has StartDragging + DragTarget*) | mixed | N |
 | Cookies get/set/delete | P (trait methods exist; producer impls absent, defaults error) | Y | o |
@@ -90,7 +90,7 @@ demos.
 | PDF / print | N (CEF has PrintToPDF) | Y (win/mac) | o |
 | Snapshot to PNG | N (demo probe only) | Y | o |
 | Zoom / UA / settings | N | Y (apply_settings) | o |
-| Visibility (WasHidden / set_visible) | N | Y | o |
+| Visibility (WasHidden / set_visible) | Y (set_visible on all three) | Y | o |
 | Per-producer profile isolation | P (global root_cache_path only; CEF has RequestContext) | Y (per-producer data_dir) | o |
 | Render-process crash recovery | N (variant declared, never emitted) | P | o |
 | DevTools window | Y | Y | o |
@@ -221,26 +221,35 @@ than a missing feature; this is the first thing to fix.
   `on_cursor_change(CursorType(CT_POINTER))` and then applies `Default` to the
   winit window.
 
-  **Not verified, and now a known open defect**: the reported shape never
-  *changes*. Three scripted attempts on Windows produced only the arrow, and the
-  natural explanation was that synthetic moves do not drive Chromium's
-  hit-test. **A human pointer on the Fedora ThinkPad disproved that.** Mark
-  swept a real mouse across a page that was a full-window `<a href="#">` over a
-  full-window `<textarea>`, then clicked. The log shows:
+  **Verified end to end on Linux, with a human at the machine (2026-08-10).**
+  Mark moved a real pointer over a page that was a full-window `<a>` with
+  `cursor:pointer`, and reported seeing the hand. The log agrees: 8 `Pointer`,
+  16 `Text` (the link's text), 24 `Default`, while the page independently
+  reported `tag=A cursor=pointer` under the pointer. CEF to welding's mapping to
+  the host to an actual cursor on screen, all of it.
 
-  - exactly one `cursor -> Default`, stamped at the moment he moved, so the
-    callback fires and reaches the host, but reports the arrow over a link;
-  - no `AddressChanged` from the click on the `#` link;
-  - **fresh paint attempts seconds after the click**, so CEF did receive the
-    input and re-rendered in response.
+  Getting there took six rounds because **every earlier negative was my own test
+  being wrong**, not the code:
 
-  So input arrives, CEF repaints, and the cursor still says arrow. Synthetic
-  versus real input is not the variable. Candidates not yet excluded: the
-  browser being treated as hidden (welding never calls `WasHidden`, which is
-  its own missing row in this matrix), a coordinate space mismatch between what
-  the host forwards and what CEF hit-tests, or `on_cursor_change` reporting a
-  stale type. Worth its own session with CEF logging turned up, rather than
-  more guesses.
+  - round 1-2: the interaction was with window chrome (a title-bar double-click)
+    and the GNOME overview, so nothing was ever over page content. The repaints
+    I read as "input arrives" were the resize from maximising.
+  - rounds 3-5: `href="#"` pages with no confirmed hover target, chasing
+    `external_message_pump`, focus, and visibility as causes. All three were
+    reverted or kept on their own merits, none of them fixed anything.
+  - round 6: a page that reports `elementFromPoint` and its computed cursor
+    settled it in one move.
+
+  Two things this did establish for free. **Linux input is fully working**: a
+  page with `mousemove`/`click` listeners logged 30 `PAGE-SAW` events, so
+  winit to welding to CEF to the DOM is proven on Linux, not just Windows. And
+  `set_visible` (CEF `WasHidden`) is now implemented on all three producers,
+  which closes its own row in the matrix above; it was written as a fix
+  candidate, did not fix anything, and is kept because it is a real feature.
+
+  The lesson worth carrying: when a negative result depends on where a pointer
+  is, make the page report what it thinks is under the pointer before believing
+  the negative.
 
   IME is compile-only: exercising it needs a real input method.
 

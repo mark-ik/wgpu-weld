@@ -254,6 +254,15 @@ impl CefSurfaceProducer for LinuxCefProducer {
         Err(pending("cef_browser_host_t::was_resized"))
     }
 
+    fn set_visible(&mut self, visible: bool) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser.host() {
+            host.was_hidden(if visible { 0 } else { 1 });
+            return Ok(());
+        }
+        Err(WeldError::PlatformUnsupported("visibility requires the cef-runtime feature"))
+    }
+
     fn poll_cursor_shape(&mut self) -> Option<crate::surface::CursorShape> {
         #[cfg(feature = "cef-runtime")]
         {
@@ -397,6 +406,13 @@ impl CefSurfaceProducer for LinuxCefProducer {
             // Hosts speak physical pixels; CEF wants DIP. Skipping this makes
             // every click land at the wrong place on a scaled display.
             let (x, y) = self.metrics.lock().unwrap().point_to_dip(event.x, event.y);
+            {
+                let m = self.metrics.lock().unwrap();
+                log::debug!(
+                    "input {:?}: physical {},{} -> dip {},{} (scale {}, view {:?} dip)",
+                    event.action, event.x, event.y, x, y, m.scale(), m.logical()
+                );
+            }
             let event = MouseEvent { x, y, ..event };
             crate::cef_input::send_mouse(&host, &event);
             return Ok(());
