@@ -157,6 +157,7 @@ cef::wrap_render_handler! {
 
         fn on_popup_show(&self, _browser: Option<&mut cef::Browser>, show: ::std::os::raw::c_int) {
             let showing = show != 0;
+            log::debug!("on_popup_show({showing})");
             self.handler.popup.set_visible(showing);
             if !showing {
                 // A hidden popup never paints again; drop the stale surface so
@@ -167,6 +168,10 @@ cef::wrap_render_handler! {
 
         fn on_popup_size(&self, _browser: Option<&mut cef::Browser>, rect: Option<&cef::Rect>) {
             let Some(rect) = rect else { return };
+            log::debug!(
+                "on_popup_size {}x{} at {},{}",
+                rect.width, rect.height, rect.x, rect.y
+            );
             self.handler.popup.set_rect(crate::surface::PopupRect {
                 x: rect.x,
                 y: rect.y,
