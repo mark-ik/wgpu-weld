@@ -108,7 +108,9 @@ pub struct WindowsCefProducer {
     popup_slot: Arc<Mutex<Option<ImportedTexture>>>,
     #[cfg(feature = "cef-runtime")]
     popup: Arc<crate::popup::PopupState>,
+    #[cfg(feature = "cef-runtime")]
     cursor: Arc<crate::cursor::LatestCursor>,
+    #[cfg(feature = "cef-runtime")]
     ime: Arc<crate::ime::LatestComposition>,
     events: Arc<Mutex<EventQueues>>,
     size: PhysicalSize<u32>,
