@@ -974,9 +974,9 @@ dependencies = [
 
 [[package]]
 name = "grafting"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6513d516bb795f82bc367bc988180e9764b9a2935e549457d84452975c6881f"
+checksum = "0780e598202ead95c45fb8a23dc9271930275e0d7a62d338ba16b5b23727a623"
 dependencies = [
  "ash",
  "dpi",
