@@ -74,8 +74,8 @@ demos.
 | Mouse / keyboard / wheel | Y (Win+Linux verified; mac thinner) | Y (caveats per backend) | demo-level |
 | Pointer (pen) input | N | Y | N |
 | Touch input | N (CEF has SendTouchEvent) | unverified | N |
-| Cursor-shape reporting | N (CEF has OnCursorChange) | Y (all 5) | N |
-| IME | N (CEF has ImeSetComposition + range callbacks) | Y (GTK/WPE lanes; win/mac unverified) | N |
+| Cursor-shape reporting | P (wired + fires, but always reports the arrow; open defect) | Y (all 5) | N |
+| IME | P (input + composition-range feedback wired; compile-only) | Y (GTK/WPE lanes; win/mac unverified) | N |
 | Drag / drop | N (CEF has StartDragging + DragTarget*) | mixed | N |
 | Cookies get/set/delete | P (trait methods exist; producer impls absent, defaults error) | Y | o |
 | Cookie change events | N | Y (WKWebView) | o |
@@ -221,14 +221,28 @@ than a missing feature; this is the first thing to fix.
   `on_cursor_change(CursorType(CT_POINTER))` and then applies `Default` to the
   winit window.
 
-  **Not verified**: a shape *change* on hover. Three scripted attempts (pointer
-  over a text input, focusing the browser first, a follow-up move to defeat
-  coalescing) all produced only the initial arrow, so the I-beam-over-text
-  done-condition is unmet. The wiring is demonstrably live, so this reads as
-  synthetic moves not driving Chromium's hit-test rather than a dead callback,
-  but that is a hypothesis, not a result. A human hovering the window would
-  settle it in seconds. IME is compile-only: exercising it needs a real input
-  method.
+  **Not verified, and now a known open defect**: the reported shape never
+  *changes*. Three scripted attempts on Windows produced only the arrow, and the
+  natural explanation was that synthetic moves do not drive Chromium's
+  hit-test. **A human pointer on the Fedora ThinkPad disproved that.** Mark
+  swept a real mouse across a page that was a full-window `<a href="#">` over a
+  full-window `<textarea>`, then clicked. The log shows:
+
+  - exactly one `cursor -> Default`, stamped at the moment he moved, so the
+    callback fires and reaches the host, but reports the arrow over a link;
+  - no `AddressChanged` from the click on the `#` link;
+  - **fresh paint attempts seconds after the click**, so CEF did receive the
+    input and re-rendered in response.
+
+  So input arrives, CEF repaints, and the cursor still says arrow. Synthetic
+  versus real input is not the variable. Candidates not yet excluded: the
+  browser being treated as hidden (welding never calls `WasHidden`, which is
+  its own missing row in this matrix), a coordinate space mismatch between what
+  the host forwards and what CEF hit-tests, or `on_cursor_change` reporting a
+  stale type. Worth its own session with CEF logging turned up, rather than
+  more guesses.
+
+  IME is compile-only: exercising it needs a real input method.
 
   Also fixed in passing: `demo-weld-win` never initialised a logger, so every
   `log::` line welding emitted was invisible. That is why the first three
