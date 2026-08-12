@@ -259,6 +259,8 @@ impl ApplicationHandler for DemoApp {
             }
 
             WindowEvent::CursorMoved { position, .. } => {
+                // Separates "winit never delivered it" from "CEF ignored it".
+                log::debug!("winit CursorMoved {},{}", position.x as i32, position.y as i32);
                 s.cursor = (position.x as f32, position.y as f32);
                 let _ = s.producer.send_mouse_input(MouseEvent {
                     x: position.x as i32,
@@ -270,6 +272,7 @@ impl ApplicationHandler for DemoApp {
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
+                log::info!("winit MouseInput {state:?} {button:?} at {:?}", s.cursor);
                 let mb = match button {
                     WinitMouseButton::Left => MouseButton::Left,
                     WinitMouseButton::Right => MouseButton::Right,
