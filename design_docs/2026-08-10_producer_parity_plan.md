@@ -597,6 +597,31 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
   pointer is the suspected cause (a human was at the machine both times);
   noted, not chased.
 
+- 2026-08-12, later still: **the Intel iMac retest, over SSH.** With the
+  key authorized the whole loop ran remotely — wake the machine by pinging
+  `192.168.4.105`, ssh in, pull, rebuild, run — no human at that keyboard.
+
+  - **The W2 popup negative is real, and reconfirmed.** The identical
+    select probe, scripted click and `welding=debug` logging that produce
+    the full popup path on the M4 produce *no* `on_popup_show` on macOS
+    15.7.7/Intel, while the view renders and passes validation. Same crate
+    code, same CEF 148, same day: the split is a stack difference, not a
+    bad test. macOS generation remains the likely variable; Intel-vs-arm64
+    stays conflated because nothing here runs macOS 26 on Intel.
+  - **The Intel battery is green with the fixed probe pages** — cookies,
+    script results, wheel and key to the DOM, cursor, and a VALIDATION
+    PASS these pages could not produce before the background fix.
+  - `use-mock-keychain` earned its keep immediately: over SSH the login
+    keychain is locked, which would otherwise have been the
+    blocked-`CefInitialize` failure from the keychain finding, invisible
+    at the far end of an ssh session.
+
+  Correction to the M4 entry above: "every earlier HiDPI proof forced
+  `WELD_SCALE`" overstated. The Intel iMac reports `dpr=2, innerWidth=640`
+  with no `WELD_SCALE` set — it is itself a native 2x panel, so the
+  2026-08-12 battery there already exercised real HiDPI. What the M4 adds
+  is arm64, macOS 26 and Metal 4, not the first 2x hardware.
+
   Method notes, in the spirit of the existing pgrep one:
 
   - `pkill -f` patterns are regexes: `Helper (Renderer)` matches nothing,

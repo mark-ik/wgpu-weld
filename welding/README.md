@@ -57,12 +57,12 @@ rather than producing a broken texture. This is why the popup row reads
 geometry (`on_popup_show`, then `on_popup_size 320x197 at 0,80`), and only the
 texture import is refused, by the same modifier limitation.
 
-[^macpopup]: Split by macOS generation. On macOS 15.7 (Intel) Chromium used a
-native menu for `<select>` and `OnPopupShow` never fired; on macOS 26.5 (Apple
-Silicon M4, 2026-08-12) the same click delivers the popup through OSR and the
-surface imports with real pixels. Until the Intel machine is retested, treat
-dropdowns as version-dependent, and keep the DOM fallback for hosts that must
-run on older macOS.
+[^macpopup]: Split by macOS generation, both sides verified the same day with
+the identical scripted click. On macOS 15.7 (Intel) Chromium uses a native
+menu for `<select>` and `OnPopupShow` never fires; on macOS 26.5 (Apple
+Silicon M4) the same click delivers the popup through OSR and the surface
+imports with real pixels. Treat dropdowns as version-dependent, and keep the
+DOM fallback for hosts that must run on older macOS.
 
 ## Checking it yourself
 
