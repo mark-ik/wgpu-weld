@@ -54,6 +54,7 @@ struct DemoState {
     sampler: wgpu::Sampler,
     frame: Option<ImportedTexture>,
     frames_imported: u32,
+    battery_started: bool,
     /// Cached popup widget surface, held across frames because CEF only
     /// repaints it on change and dropped when `popup_rect` goes to `None`.
     popup: Option<PopupSurface>,
@@ -189,6 +190,7 @@ impl ApplicationHandler for DemoApp {
             sampler,
             frame: None,
             frames_imported: 0,
+            battery_started: false,
             popup: None,
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
@@ -379,6 +381,48 @@ impl ApplicationHandler for DemoApp {
                 while let Some(event) = s.producer.poll_navigation_event() {
                     log::info!("nav: {event:?}");
                 }
+
+                // Parity battery: one run reports frames, script results,
+                // HiDPI layout and cookies, so the same evidence exists on
+                // every platform.
+                if !s.battery_started && s.frames_imported > 60 {
+                    s.battery_started = true;
+                    if let Ok(script) = std::env::var("WELD_SCRIPT") {
+                        match s.producer.request_script_result(&script) {
+                            Ok(id) => log::info!("script request #{id}"),
+                            Err(e) => log::error!("request_script_result failed: {e}"),
+                        }
+                    }
+                    if let Ok(url) = std::env::var("WELD_COOKIE_URL") {
+                        let probe = welding::Cookie {
+                            name: "weld_probe".into(),
+                            value: "parity".into(),
+                            domain: "example.com".into(),
+                            path: "/".into(),
+                            ..Default::default()
+                        };
+                        match s.producer.set_cookie(&url, &probe) {
+                            Ok(()) => log::info!("set_cookie accepted"),
+                            Err(e) => log::error!("set_cookie failed: {e}"),
+                        }
+                        if let Err(e) = s.producer.request_cookies(Some(&url)) {
+                            log::error!("request_cookies failed: {e}");
+                        }
+                    }
+                }
+                if let Some(result) = s.producer.poll_script_result() {
+                    match result.value {
+                        Ok(json) => log::info!("SCRIPT #{} => {json}", result.id),
+                        Err(err) => log::error!("SCRIPT #{} threw: {err}", result.id),
+                    }
+                }
+                if let Some(cookies) = s.producer.poll_cookies() {
+                    log::info!("COOKIES n={}", cookies.len());
+                    for c in cookies.iter().take(3) {
+                        log::info!("  {}={} domain={}", c.name, c.value, c.domain);
+                    }
+                }
+
 
                 // Unattended verdict, the same instrument demo-weld-mac uses:
                 // a window nobody is watching proves nothing, so read the
