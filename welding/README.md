@@ -79,6 +79,7 @@ export WELD_KEY=k                  # then type one character
 export WELD_SCRIPT='({dpr: window.devicePixelRatio})'
 export WELD_COOKIE_URL=https://example.com/
 export WELD_SWITCHES=disable-popup-blocking,lang=en-GB
+export WELD_BACKGROUND=transparent # or rrggbb; unset = opaque white
 ```
 
 `testing/weld_input_probe.html` reports what it received through

@@ -171,6 +171,7 @@ impl ApplicationHandler for DemoApp {
                     // Physical size plus the display scale: CEF lays out at
                     // size/scale CSS pixels and paints the full physical size.
                     scale_factor: scale as f32,
+                    background_color: env_background(),
                     ..Default::default()
                 },
             },
@@ -586,6 +587,20 @@ fn forced_scale() -> Option<f64> {
     std::env::var("WELD_SCALE")
         .ok()
         .and_then(|v| v.parse::<f64>().ok())
+}
+
+/// `WELD_BACKGROUND=transparent` for alpha-0 windowless painting,
+/// `WELD_BACKGROUND=rrggbb` for an opaque colour; unset or unparsable is the
+/// library default (opaque white).
+fn env_background() -> Option<[u8; 3]> {
+    match std::env::var("WELD_BACKGROUND") {
+        Ok(v) if v.eq_ignore_ascii_case("transparent") => None,
+        Ok(v) => u32::from_str_radix(v.trim_start_matches('#'), 16)
+            .ok()
+            .map(|n| [(n >> 16) as u8, (n >> 8) as u8, n as u8])
+            .or(Some([255, 255, 255])),
+        Err(_) => Some([255, 255, 255]),
+    }
 }
 
 fn log_scale_err(err: welding::WeldError) {

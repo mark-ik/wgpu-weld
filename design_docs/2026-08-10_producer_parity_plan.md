@@ -601,3 +601,17 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
   (`native_frame/metal.rs`). No misbehaviour observed from the aliasing
   (see the 12s hold above), but the claim should match the code, and G3's
   sync question now has a second concrete instance.
+
+- 2026-08-12, later: **`background_color` landed (welding 0.5.0).**
+  `CefSurfaceConfig::transparent` turned out to be declared, documented,
+  defaulted to `false`, and wired to nothing — which is how every page
+  without a CSS background silently rendered transparent. It is replaced by
+  `background_color: Option<[u8; 3]>` — `Some(rgb)` opaque, `None`
+  transparent (CEF has no partial alpha), default opaque white — fed to
+  `CefBrowserSettings.background_color` on all three producers, with the
+  ARGB mapping pinned by a unit test. Field removal is the semver break
+  behind the 0.5.0 bump; not yet published. Verified on the M4 with a
+  background-less `data:` page: unset probes white where it probed
+  `[0,0,0,0]` before, `WELD_BACKGROUND=transparent` keeps the old behaviour
+  on request, `WELD_BACKGROUND=ff0000` probes BGRA red. All three demos
+  share the `WELD_BACKGROUND` knob.

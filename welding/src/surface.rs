@@ -151,6 +151,24 @@ mod capability_tests {
         // Popups are the split case: creation is handled, rendering is not.
         assert!(matches!(caps.popups, BrowserFeatureStatus::Partial(_)));
     }
+
+    /// CEF's `cef_color_t` is ARGB, and windowless transparency is enabled by
+    /// alpha 0 — there is no partial option. Pin the mapping: `Some` is fully
+    /// opaque, `None` is all-zero, and the default is opaque white (an unset
+    /// background used to silently render every CSS-background-less page
+    /// transparent).
+    #[test]
+    fn background_color_maps_to_cef_argb() {
+        let mut config = CefSurfaceConfig::default();
+        assert_eq!(config.background_color, Some([255, 255, 255]));
+        assert_eq!(config.cef_background_color(), 0xFFFF_FFFF);
+
+        config.background_color = Some([0x12, 0x34, 0x56]);
+        assert_eq!(config.cef_background_color(), 0xFF12_3456);
+
+        config.background_color = None;
+        assert_eq!(config.cef_background_color(), 0);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -254,8 +272,19 @@ pub struct ImeComposition {
 pub struct CefSurfaceConfig {
     pub initial_url: String,
     pub initial_size: PhysicalSize<u32>,
-    /// Render the page with a transparent background.
-    pub transparent: bool,
+    /// What CEF paints where the page itself paints nothing (no CSS
+    /// `background` on `<body>`/`<html>`, or during load).
+    ///
+    /// `Some([r, g, b])` paints those regions that opaque colour. `None`
+    /// renders them transparent: the imported texture carries premultiplied
+    /// alpha 0 there, which a readback sees as `[0, 0, 0, 0]`. CEF has no
+    /// partially-transparent option — alpha is either 0 or 255.
+    ///
+    /// The default is opaque white, what a normal browser window shows.
+    /// Before 0.5.0 this knob did not exist (a `transparent: bool` was
+    /// declared but wired to nothing) and every page without its own CSS
+    /// background silently rendered transparent.
+    pub background_color: Option<[u8; 3]>,
     /// Prefer `OnAcceleratedPaint` over `OnPaint`. If accelerated paint is
     /// unavailable and `cpu-paint-fallback` is enabled, falls back automatically.
     pub prefer_accelerated: bool,
@@ -279,10 +308,24 @@ impl Default for CefSurfaceConfig {
         CefSurfaceConfig {
             initial_url: "about:blank".into(),
             initial_size: PhysicalSize::new(800, 600),
-            transparent: false,
+            background_color: Some([255, 255, 255]),
             prefer_accelerated: true,
             user_data_dir: None,
             scale_factor: 1.0,
+        }
+    }
+}
+
+impl CefSurfaceConfig {
+    /// [`Self::background_color`] as CEF's ARGB `cef_color_t`: opaque for
+    /// `Some`, all-zero (which is what enables transparent windowless
+    /// painting) for `None`.
+    pub(crate) fn cef_background_color(&self) -> u32 {
+        match self.background_color {
+            Some([r, g, b]) => {
+                0xFF00_0000 | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)
+            }
+            None => 0,
         }
     }
 }

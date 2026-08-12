@@ -152,6 +152,7 @@ impl LinuxCefProducer {
             };
             let browser_settings = cef::BrowserSettings {
                 windowless_frame_rate: 60,
+                background_color: config.surface.cef_background_color(),
                 ..Default::default()
             };
             let url: cef::CefString = config.surface.initial_url.as_str().into();
