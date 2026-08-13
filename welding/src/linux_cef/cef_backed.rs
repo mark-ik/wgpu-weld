@@ -174,7 +174,7 @@ cef::wrap_render_handler! {
         fn on_popup_size(&self, _browser: Option<&mut cef::Browser>, rect: Option<&cef::Rect>) {
             let Some(rect) = rect else { return };
             log::debug!(
-                "on_popup_size {}x{} at {},{}",
+                "on_popup_size({}x{} at {},{})",
                 rect.width, rect.height, rect.x, rect.y
             );
             self.handler.popup.set_rect(crate::surface::PopupRect {
