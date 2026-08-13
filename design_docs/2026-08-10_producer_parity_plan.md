@@ -700,9 +700,24 @@ now (first, then every 500th).
   verified on all three platforms, and `GetAuthCredentials` is wired but never
   called by CEF. Done when: those capability rows read Y with the same event/decision
   shapes scrying uses.
-- **W8, long tail.** Drag/drop, touch, find-in-page, PDF, zoom/UA/settings,
-  per-producer `RequestContext` profiles, `can_go_back`/`can_go_forward`,
-  snapshot helper. (`WasHidden`-backed visibility landed early, during W4.)
+- **W8, long tail. PARTLY DONE 2026-08-13.** Find-in-page, zoom, and
+  `can_go_back`/`can_go_forward` are in and verified on Windows and Linux
+  (macOS wired, same code). A page built with exactly seven matches reports
+  `count: 7`, progressively, with `final_update` on the last.
+
+  Zoom needed a control to believe. Reading `zoom_level()` straight after two
+  zoom-ins returned 0.0, which reads like nothing happened — but CEF documents
+  `GetZoomLevel` as UI-thread-only and Windows runs CEF's UI thread separately,
+  so the *read* was invalid, not the zoom. Confirmed from the page instead: the
+  viewport went 640 -> 512 CSS px on Windows, which is Chromium's two-notch
+  125%. On Linux the first measurement was confounded by the window manager
+  resizing the window mid-run, so it needed a no-zoom control in the same
+  session: 546 unzoomed against 390 zoomed. Third time this week a UI-thread-only
+  getter has produced a plausible wrong number.
+
+  Still open in W8: drag/drop, touch, PDF and print, user-agent settings,
+  per-producer `RequestContext` profiles, snapshot helper. (`WasHidden`-backed
+  visibility landed early, during W4.)
 - **W9, CDP. DONE 2026-08-13**, verified on all three (Windows, M4, ThinkPad):
   `Browser.getVersion` returns a real protocol result
   (`{"protocolVersion":"1.3","product":"Chrome/147.0.7727.138",...}`) and

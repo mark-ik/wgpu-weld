@@ -11,7 +11,7 @@ the shared `grafting` interop core).
 
 ## Status (2026-08-12)
 
-Prototype. `welding` 0.7.0 in this repo, 0.6.0 published on crates.io
+Prototype. `welding` 0.8.0 in this repo, 0.7.0 published on crates.io
 (MPL-2.0). Per-platform detail, and
 the difference between "verified on that hardware" and "implemented but not
 yet run there", is the table in [`welding/README.md`](welding/README.md).
@@ -92,7 +92,9 @@ menus are verified on all three platforms; `GetAuthCredentials` is wired and
 answerable but CEF has never been observed to call it. **W9, the Chrome DevTools Protocol, is done and verified on all three** — the
 one capability this lane has that a system webview cannot: the wire format
 passes through unwrapped, JSON in and JSON out, so an existing CDP client can
-drive an off-screen browser. What remains is W8, the long tail. What remains is W7, the host-decision surfaces (downloads, auth
+drive an off-screen browser. W8, the long tail, is under way: find-in-page, zoom and history state are in
+and verified; drag/drop, touch, PDF, user-agent settings and per-producer
+profiles remain. What remains is W7, the host-decision surfaces (downloads, auth
 challenges, permission requests, context menus); W8, the long tail (drag,
 touch, find-in-page, PDF, zoom and UA settings, per-producer profiles); and
 W9, the Chrome DevTools Protocol, which is this lane's distinguishing feature

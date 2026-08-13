@@ -14,7 +14,7 @@ of them import through.
 
 ## State, 2026-08-12
 
-Version 0.7.0. Every "verified" below was checked by running it on that
+Version 0.8.0. Every "verified" below was checked by running it on that
 platform's hardware, in one battery per machine: Windows 11 (this laptop),
 macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac (the
 first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
@@ -42,15 +42,17 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | Permission requests | verified | verified | verified |
 | Context menus | verified | verified [^macmenu] | verified |
 | DevTools protocol (CDP) | verified | verified | verified |
+| Find in page | verified | wired | verified |
+| Zoom | verified | wired | verified [^zoomlevel] |
+| History state (`can_go_back`) | verified | wired | verified |
 
 "verified" means observed working on that platform's hardware. "wired" means
 implemented and compiling there, but not yet exercised on any machine — the
 last three rows are untested everywhere, not gaps in one platform.
 
 Not implemented yet, and `CefSurfaceCapabilities::probe` will tell you so at
-runtime rather than failing quietly: find-in-page, PDF and print, drag and
-drop, touch, pointer/pen, zoom and user-agent settings, and per-producer
-profile isolation.
+runtime rather than failing quietly: PDF and print, drag and drop, touch,
+pointer/pen, user-agent settings, and per-producer profile isolation.
 
 [^linux]: Linux needs the DMABUF buffer to carry an **explicit** DRM format
 modifier. Intel/Mesa supplies one, and the frame import is verified there;
@@ -61,6 +63,11 @@ rather than producing a broken texture. This is why the popup row reads
 "opens": on the AMD test machine CEF offers the dropdown and reports its
 geometry (`on_popup_show`, then `on_popup_size 320x197 at 0,80`), and only the
 texture import is refused, by the same modifier limitation.
+
+[^zoomlevel]: `zoom` works everywhere. `zoom_level`, the getter, only reads
+truly where the host thread is CEF's UI thread — Linux and macOS here. CEF
+documents `GetZoomLevel` as UI-thread-only and Windows runs CEF's UI thread
+separately, so it reads 0.0 there however the page is actually zoomed.
 
 [^macmenu]: macOS reports an extra `Selection` target, because a right-click
 there selects the word under the cursor first. The event is otherwise identical
