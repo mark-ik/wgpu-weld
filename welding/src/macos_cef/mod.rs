@@ -569,10 +569,19 @@ impl CefSurfaceProducer for MacosCefProducer {
         #[cfg(feature = "cef-runtime")]
         {
             if let Some(host) = self.browser.host() {
-                // All-default: CEF opens DevTools in its own native window,
-                // which is what a host without its own inspector surface
-                // wants. A windowless DevTools would need its own producer.
-                host.show_dev_tools(None, None, None, None);
+                // A real WindowInfo, not None. CEF dereferences it on macOS:
+                // passing None crashed the host inside the framework with
+                // EXC_BAD_ACCESS at null+0x150, while Windows tolerated it and
+                // opened the window -- exactly the kind of difference that
+                // ships if only one platform is tried. Windowless is left off
+                // so CEF opens DevTools in its own native window; a windowless
+                // DevTools would need a producer of its own.
+                let window_info = cef::WindowInfo {
+                    bounds: cef::Rect { x: 0, y: 0, width: 1024, height: 768 },
+                    ..Default::default()
+                };
+                let settings = cef::BrowserSettings::default();
+                host.show_dev_tools(Some(&window_info), None, Some(&settings), None);
                 return Ok(());
             }
         }
