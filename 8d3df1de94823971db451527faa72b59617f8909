@@ -1,0 +1,6 @@
+Correction: the Co-Authored-By: Claude trailer in this commit message was
+added against this repository's standing policy, which puts no
+Claude-attribution trailer on any commit, PR body, or other authored artifact.
+The trailer does not reflect authorship and should be disregarded. The history
+is left unrewritten because these commits are published and referenced by
+release tags.
