@@ -98,7 +98,7 @@ demos.
 | Zoom / UA / settings | N | Y (apply_settings) | o |
 | Visibility (WasHidden / set_visible) | Y (set_visible on all three) | Y | o |
 | Per-producer profile isolation | P (global root_cache_path only; CEF has RequestContext) | Y (per-producer data_dir) | o |
-| Render-process crash recovery | P (`ContentProcessTerminated` emits and the host loop survives — M4 iMac, 2026-08-12; no relaunch API yet) | P | o |
+| Render-process crash recovery | Y (status-carrying event + `request_repaint`; frames resume after a deliberate crash on Windows and macOS, not delivered at all on Linux — 2026-08-12) | P | o |
 | DevTools window | Y | Y | o |
 | DevTools protocol (CDP) | N (CEF has ExecuteDevToolsMethod; unique leverage) | N (WebView2 could; not exposed) | o |
 | Multi-producer per process | Y | Y (except WPE) | Y |
@@ -255,6 +255,50 @@ ThinkPad reports `on_popup_show(true)` then `on_popup_size 320x197 at 0,80`:
 routing and geometry are correct, and only the texture import is refused, by
 the same AMD/RADV implicit-modifier limitation that blocks the main frame on
 that GPU.
+
+## Crash recovery, 2026-08-12 (evening)
+
+The row moves from P to Y on two platforms, and the reason it was P turned out
+to be two separate things.
+
+`ContentProcessTerminated` was a bare variant. CEF hands `OnRenderProcessTerminated`
+a status, an error code and a string, and all three were dropped on the floor,
+so a host learned its renderer had died but not whether it was killed, crashed
+or ran out of memory. That is exactly the fact that decides whether retrying is
+sensible. The event now carries all three, with an `Unknown(i32)` arm so a
+newer CEF cannot silently look ordinary.
+
+Then the recovery itself needs two steps, and the second is not obvious.
+Navigating again brings the page back -- Chromium spawns a fresh renderer for
+the navigation -- but **painting is change-driven and the replacement has
+nothing queued for the surface**, so the host keeps presenting its pre-crash
+frame. `request_repaint()` is the nudge: `was_resized` to make CEF re-query the
+view, `invalidate` to ask for the paint. Same family as everything else that
+went wrong this week.
+
+Measured with `WELD_CRASH_AFTER_SECS` (navigates to `chrome://crash`) against
+a control with recovery off, counting frames imported after the crash:
+
+| | before crash | after, no recovery | after, with recovery |
+| --- | --- | --- | --- |
+| Windows 11 | 2 | 0 | 2 |
+| macOS 26.5, M4 | 1 | 0 | 1 |
+
+The first Windows attempt read 0 both ways and looked like a failure. It was
+not: the Windows demo had no frame-import logging at all, so the instrument was
+measuring nothing. Worth stating plainly because it is the third time this week
+a demo's own instrument produced a confident wrong answer.
+
+**Linux does not deliver the event.** Chromium logs `Intentionally crashing`,
+so the renderer really dies, and then `Failed to send GetTerminationStatus
+request to zygote` -- and `OnRenderProcessTerminated` never fires. Not a wiring
+difference: `request_handler()` is registered identically on all three and
+fires on the other two. `--no-zygote` does not change it, and a 70s window
+rules out late delivery. Killing the renderer directly was not reachable either,
+because on Linux the renderers are forked from the zygote and keep its cmdline
+rather than re-execing the host binary. Recovery there is untestable until the
+event arrives; the AMD test machine also imports no frames at all, so even the
+metric used above is unavailable on it.
 
 ## Plan
 

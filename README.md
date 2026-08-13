@@ -50,6 +50,13 @@ DevTools window.
   and script results (`request_script_result` / `poll_script_result`, values
   returned as JSON from the renderer) both work, request-then-poll because CEF
   answers asynchronously.
+- A dead renderer is survivable: `ContentProcessTerminated` now carries CEF's
+  termination status, and `request_repaint()` is the nudge that gets the
+  replacement renderer painting again (navigating alone leaves the host on its
+  pre-crash frame). Verified on Windows and macOS by crashing on purpose and
+  counting frames imported afterwards, 0 without the recovery and non-zero
+  with. On Linux the crash never reaches the host at all; see the footnote in
+  `welding/README.md`.
 - Chromium command-line switches are reachable through
   `CefRuntimeConfig::command_line_switches`, for the many behaviours with no
   CEF API.

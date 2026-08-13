@@ -33,6 +33,7 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | Script results (JS value back) | verified | verified | verified |
 | Chromium command-line switches | verified | verified | verified |
 | Popup widgets (`<select>`) | verified | **differs by macOS** [^macpopup] | opens, import blocked [^linux] |
+| Renderer crash recovery | verified | verified | event not delivered [^linuxcrash] |
 | IME composition | wired | wired | wired |
 | Visibility (`set_visible`) | wired | wired | wired |
 | DevTools window | wired | wired | wired |
@@ -56,6 +57,14 @@ rather than producing a broken texture. This is why the popup row reads
 "opens": on the AMD test machine CEF offers the dropdown and reports its
 geometry (`on_popup_show`, then `on_popup_size 320x197 at 0,80`), and only the
 texture import is refused, by the same modifier limitation.
+
+[^linuxcrash]: A renderer crash on Linux does not reach the host. Chromium logs
+`Intentionally crashing` and then `Failed to send GetTerminationStatus request
+to zygote`, and `OnRenderProcessTerminated` never fires, so `welding` has
+nothing to report. The handler is registered identically on all three
+platforms and fires on the other two, so this is Chromium's behaviour on Linux
+rather than missing wiring; `--no-zygote` does not change it. Recovery itself
+is untestable there until the event arrives.
 
 [^macpopup]: Split by macOS generation, both sides verified the same day with
 the identical scripted click. On macOS 15.7 (Intel) Chromium uses a native
@@ -137,6 +146,24 @@ if let Some(cookies) = producer.poll_cookies() { /* Some(vec![]) means none */ }
 if let Some(result) = producer.poll_script_result() {
     // result.value is Ok(json) or Err(exception message)
     // => {"title":"Example Domain","n":4}
+}
+```
+
+When the renderer dies, the browser survives and the host gets told what
+happened. Recovering takes two steps, and the second one is easy to miss:
+
+```rust,ignore
+if let NavigationEvent::ContentProcessTerminated { status, .. } = event {
+    // Not worth retrying an OutOfMemory: the retry reaches it again.
+    if status != ProcessTerminationStatus::OutOfMemory {
+        // Somewhere known-good. Reloading re-runs the page that just killed
+        // the renderer, which kills its replacement too.
+        producer.navigate_to_url(&home_url)?;
+        // Painting is change-driven and the fresh renderer has nothing queued
+        // for this surface, so without this the host presents its pre-crash
+        // frame forever.
+        producer.request_repaint()?;
+    }
 }
 ```
 
