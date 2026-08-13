@@ -39,13 +39,14 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | IME composition | verified | verified | verified |
 | Downloads | verified | verified | verified |
 | Auth challenges | **never fires** [^auth] | wired | wired |
+| Permission requests | verified | verified | verified |
 
 "verified" means observed working on that platform's hardware. "wired" means
 implemented and compiling there, but not yet exercised on any machine — the
 last three rows are untested everywhere, not gaps in one platform.
 
 Not implemented yet, and `CefSurfaceCapabilities::probe` will tell you so at
-runtime rather than failing quietly: permission requests, context menus, find-in-page, PDF and print, drag and drop, touch,
+runtime rather than failing quietly: context menus, find-in-page, PDF and print, drag and drop, touch,
 pointer/pen, zoom and user-agent settings, per-producer profile isolation, and
 the DevTools protocol.
 
@@ -153,6 +154,27 @@ let config = CefSurfaceConfig {
 // and when the window moves to another display:
 producer.set_scale_factor(new_scale)?;
 ```
+
+Permission requests — camera, microphone, location, notifications — are
+reported and denied unless the host opts in, because an unanswered request
+leaves the page waiting forever:
+
+```rust,ignore
+let config = CefSurfaceConfig {
+    handle_permission_requests: true,   // off by default: report and deny
+    ..Default::default()
+};
+
+if let NavigationEvent::PermissionRequested { id, origin, permissions, .. } = event {
+    // permissions is e.g. [PermissionKind::Geolocation]; anything this build
+    // does not name still arrives, as PermissionKind::Other(bit).
+    if trusted(&origin) { producer.grant_permission(id)?; }
+    else { producer.deny_permission(id)?; }
+}
+```
+
+Chromium remembers a decision per origin in the profile, so a granted
+permission stays granted across runs sharing a `cache_path`.
 
 Downloads are refused unless the host says where they may land. CEF asks for a
 destination inside a callback it cancels the download without an answer to, and

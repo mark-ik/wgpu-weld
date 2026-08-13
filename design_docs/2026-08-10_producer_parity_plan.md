@@ -643,8 +643,41 @@ now (first, then every 500th).
   item *before* it asks where to put it, so the first run reported progress on
   a download the host had not been told existed.
 
-  Still open in W7: `GetAuthCredentials`, permission requests, context-menu
-  events. Done when: those capability rows read Y with the same event/decision
+  **W7b, auth challenges: wired, never fires.** `GetAuthCredentials` is
+  registered on all three with the whole answer path behind it, and CEF has
+  never been observed to call it. A probe inside the handler counted zero
+  invocations against a top-level 401 that Chromium itself failed with
+  `ERR_INVALID_AUTH_CREDENTIALS`, with and without `CEF_RUNTIME_STYLE_ALLOY`,
+  while other methods on that same handler fire normally. Reported `Partial`
+  with that reason. Proxy auth is untested and may work; CEF reports `is_proxy`
+  separately. Unlike scrying there is no page/download source split — CEF has
+  one challenge channel, so the field would have been a claim it cannot fill.
+
+  **W7c, permission requests: done 2026-08-13**, verified on all three (grant
+  and deny, with the page reporting Chromium's own decision:
+  `notif:granted` / `notif:denied`, and on Windows `geo:denied:1` by default).
+
+  Probed first, on W7b's lesson — a handler with nothing but a log line, to see
+  whether CEF calls it at all before building an API on top. It does, through
+  *two* callbacks that answer differently: the prompt wants accept/deny, media
+  wants the subset of capture bits being granted. The host gets one id and one
+  pair of verbs; the module remembers which kind it was. Off by default for the
+  same reason as auth.
+
+  The two bitmasks are separate enums that both use `1 << 0`, so they get
+  separate decoders and a test pins every named bit distinct; unnamed bits reach
+  the host as `Other` rather than vanishing.
+
+  Two measurement traps worth remembering, both of which briefly looked like
+  bugs: Chromium **persists a permission decision per origin**, so a grant run
+  after a deny run silently reuses the stored answer unless the profile is
+  cleared — and the profile is per demo, so clearing the wrong one proves
+  nothing. And geolocation grant looks like failure on a machine with no
+  location provider: the page gets error **2** (position unavailable), not 1
+  (permission denied). `Notification.requestPermission()` is the better probe,
+  because it resolves with the decision itself.
+
+  Still open in W7: context-menu events. Done when: those capability rows read Y with the same event/decision
   shapes scrying uses.
 - **W8, long tail.** Drag/drop, touch, find-in-page, PDF, zoom/UA/settings,
   per-producer `RequestContext` profiles, `can_go_back`/`can_go_forward`,
