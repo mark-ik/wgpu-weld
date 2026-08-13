@@ -180,6 +180,9 @@ impl ApplicationHandler for DemoApp {
                     // WELD_AUTH=user:pass answers auth challenges; unset
                     // declines them, which is the default.
                     handle_auth_challenges: std::env::var("WELD_AUTH").is_ok(),
+                    // WELD_PERMISSIONS=grant|deny answers permission requests;
+                    // unset denies them, which is the default.
+                    handle_permission_requests: std::env::var("WELD_PERMISSIONS").is_ok(),
                     ..Default::default()
                 },
             },
@@ -414,6 +417,7 @@ impl DemoApp {
             log::info!("nav: {event:?}");
             scripted::recover_if_crashed(&mut s.producer, &s.recover_url, &event);
             scripted::answer_auth_if_challenged(&mut s.producer, &event);
+            scripted::answer_permission_if_asked(&mut s.producer, &event);
         }
 
             // Parity battery: one run reports frames, script results,

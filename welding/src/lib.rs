@@ -19,6 +19,7 @@ mod ime;
 mod auth;
 mod cookies;
 mod downloads;
+mod permissions;
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
 pub mod app;
 
@@ -64,3 +65,4 @@ pub use surface::{
 };
 pub use auth::AuthId;
 pub use downloads::DownloadId;
+pub use permissions::{PermissionId, PermissionKind};

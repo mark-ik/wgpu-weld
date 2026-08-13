@@ -255,6 +255,27 @@ pub fn answer_auth_if_challenged<P: CefSurfaceProducer + ?Sized>(
     }
 }
 
+/// `WELD_PERMISSIONS=grant|deny` answers a permission request as it arrives.
+pub fn answer_permission_if_asked<P: CefSurfaceProducer + ?Sized>(
+    producer: &mut P,
+    event: &NavigationEvent,
+) {
+    let NavigationEvent::PermissionRequested { id, origin, permissions, raw } = event else {
+        return;
+    };
+    eprintln!("weld demo: permission #{id} from {origin} wants {permissions:?} ({raw:#x})");
+    let Ok(answer) = std::env::var("WELD_PERMISSIONS") else { return };
+    let result = if answer == "grant" {
+        producer.grant_permission(*id)
+    } else {
+        producer.deny_permission(*id)
+    };
+    match result {
+        Ok(()) => eprintln!("weld demo: {answer}ed permission #{id}"),
+        Err(e) => eprintln!("weld demo: answering permission #{id} failed: {e}"),
+    }
+}
+
 /// `WELD_RECOVER` sends the browser back to its starting page when the render
 /// process dies, which is the whole crash-recovery story in one place.
 ///

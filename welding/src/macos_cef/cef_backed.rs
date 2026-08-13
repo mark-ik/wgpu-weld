@@ -171,6 +171,7 @@ cef::wrap_client! {
         life_span_handler: cef::LifeSpanHandler,
         request_handler: cef::RequestHandler,
         download_handler: cef::DownloadHandler,
+        permission_handler: cef::PermissionHandler,
         scripts: Arc<crate::app::ScriptResults>,
         events: Arc<Mutex<EventQueues>>,
     }
@@ -194,6 +195,10 @@ cef::wrap_client! {
 
         fn download_handler(&self) -> Option<cef::DownloadHandler> {
             Some(self.download_handler.clone())
+        }
+
+        fn permission_handler(&self) -> Option<cef::PermissionHandler> {
+            Some(self.permission_handler.clone())
         }
 
         fn display_handler(&self) -> Option<cef::DisplayHandler> {
@@ -241,6 +246,7 @@ impl WeldClient {
         life_span_handler: cef::LifeSpanHandler,
         request_handler: cef::RequestHandler,
         download_handler: cef::DownloadHandler,
+        permission_handler: cef::PermissionHandler,
         scripts: Arc<crate::app::ScriptResults>,
         events: Arc<Mutex<EventQueues>>,
     ) -> cef::Client {
@@ -251,6 +257,7 @@ impl WeldClient {
             life_span_handler,
             request_handler,
             download_handler,
+            permission_handler,
             scripts,
             events,
         )
@@ -657,5 +664,85 @@ impl WeldDownloadHandler {
         downloads: Arc<crate::downloads::Downloads>,
     ) -> cef::DownloadHandler {
         Self::new(events, downloads)
+    }
+}
+
+// ── Permission handler ────────────────────────────────────────────────────
+
+cef::wrap_permission_handler! {
+    pub(super) struct WeldPermissionHandler {
+        events: Arc<Mutex<EventQueues>>,
+        permissions: Arc<crate::permissions::Permissions>,
+    }
+
+    impl PermissionHandler {
+        fn on_show_permission_prompt(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _prompt_id: u64,
+            requesting_origin: Option<&cef::CefString>,
+            requested_permissions: u32,
+            callback: Option<&mut cef::PermissionPromptCallback>,
+        ) -> ::std::os::raw::c_int {
+            let id = self.permissions.next_id();
+            self.events.lock().unwrap().nav.push_back(
+                crate::surface::NavigationEvent::PermissionRequested {
+                    id,
+                    origin: requesting_origin.map(|s| s.to_string()).unwrap_or_default(),
+                    permissions: crate::permissions::decode(requested_permissions),
+                    raw: requested_permissions,
+                }
+            );
+            let Some(callback) = callback else { return 0 };
+            if self.permissions.is_enabled() {
+                self.permissions.hold(id, crate::permissions::Pending::Prompt(callback.clone()));
+            } else {
+                // Denied now rather than held: an unanswered prompt leaves the
+                // page waiting forever.
+                callback.cont(cef::PermissionRequestResult::DENY);
+            }
+            1
+        }
+
+        fn on_request_media_access_permission(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _frame: Option<&mut cef::Frame>,
+            requesting_origin: Option<&cef::CefString>,
+            requested_permissions: u32,
+            callback: Option<&mut cef::MediaAccessCallback>,
+        ) -> ::std::os::raw::c_int {
+            let id = self.permissions.next_id();
+            self.events.lock().unwrap().nav.push_back(
+                crate::surface::NavigationEvent::PermissionRequested {
+                    id,
+                    origin: requesting_origin.map(|s| s.to_string()).unwrap_or_default(),
+                    // Media capture arrives on its own callback with its own
+                    // bits, so it is decoded from the media set rather than the
+                    // prompt set.
+                    permissions: crate::permissions::decode_media(requested_permissions),
+                    raw: requested_permissions,
+                }
+            );
+            let Some(callback) = callback else { return 0 };
+            if self.permissions.is_enabled() {
+                self.permissions.hold(
+                    id,
+                    crate::permissions::Pending::Media(callback.clone(), requested_permissions),
+                );
+            } else {
+                callback.cont(0);
+            }
+            1
+        }
+    }
+}
+
+impl WeldPermissionHandler {
+    pub fn build(
+        events: Arc<Mutex<EventQueues>>,
+        permissions: Arc<crate::permissions::Permissions>,
+    ) -> cef::PermissionHandler {
+        Self::new(events, permissions)
     }
 }

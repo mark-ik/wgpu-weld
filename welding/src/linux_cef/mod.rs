@@ -27,7 +27,8 @@ use crate::{
 
 #[cfg(feature = "cef-runtime")]
 use cef::{
-    ImplAuthCallback, ImplBrowser, ImplBrowserHost, ImplFrame, ImplListValue, ImplProcessMessage,
+    ImplAuthCallback, ImplBrowser, ImplBrowserHost, ImplFrame, ImplListValue,
+    ImplMediaAccessCallback, ImplPermissionPromptCallback, ImplProcessMessage,
 };
 
 // ── Public config ─────────────────────────────────────────────────────────────
@@ -87,6 +88,7 @@ pub struct LinuxCefProducer {
     cookies: Arc<crate::cookies::CookieJar>,
     downloads: Arc<crate::downloads::Downloads>,
     auth: Arc<crate::auth::AuthChallenges>,
+    permissions: Arc<crate::permissions::Permissions>,
     #[cfg(feature = "cef-runtime")]
     scripts: Arc<crate::app::ScriptResults>,
     #[cfg(feature = "cef-runtime")]
@@ -140,6 +142,10 @@ impl LinuxCefProducer {
             downloads.set_dir(config.surface.download_dir.clone());
             let download_handler =
                 cef_backed::WeldDownloadHandler::build(events.clone(), downloads.clone());
+            let permissions = Arc::new(crate::permissions::Permissions::default());
+            permissions.set_enabled(config.surface.handle_permission_requests);
+            let permission_handler =
+                cef_backed::WeldPermissionHandler::build(events.clone(), permissions.clone());
             let mut client = cef_backed::WeldClient::build(
                 render_handler,
                 load_handler,
@@ -147,6 +153,7 @@ impl LinuxCefProducer {
                 life_span_handler,
                 request_handler,
                 download_handler,
+                permission_handler,
                 scripts.clone(),
                 events.clone(),
             );
@@ -193,6 +200,7 @@ impl LinuxCefProducer {
                 cookies,
                 downloads,
                 auth,
+                permissions,
                 scripts,
                 next_script_id: 0,
                 events,
@@ -214,6 +222,41 @@ impl LinuxCefProducer {
 
 #[allow(unreachable_code, unused_mut, unused_variables)]
 impl LinuxCefProducer {
+    /// Answer a held permission request. Media hands back the subset being
+    /// granted, everything else an accept/deny result.
+    fn answer_permission(
+        &mut self,
+        id: crate::PermissionId,
+        granted: bool,
+    ) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            let Some(pending) = self.permissions.take(id) else {
+                return Err(WeldError::PlatformUnsupported(
+                    "no permission request is waiting on that id",
+                ));
+            };
+            match pending {
+                crate::permissions::Pending::Prompt(callback) => {
+                    callback.cont(if granted {
+                        cef::PermissionRequestResult::ACCEPT
+                    } else {
+                        cef::PermissionRequestResult::DENY
+                    });
+                }
+                crate::permissions::Pending::Media(callback, requested) => {
+                    callback.cont(if granted { requested } else { 0 });
+                }
+            }
+            return Ok(());
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            let _ = (id, granted);
+            Err(pending("cef_permission_prompt_callback_t"))
+        }
+    }
+
     /// Record a download request. It is applied on that download's next
     /// update, because CEF's download callback exists only inside one.
     fn request_download(
@@ -541,6 +584,14 @@ impl CefSurfaceProducer for LinuxCefProducer {
             }
         }
         Err(pending("cef_browser_host_t::invalidate"))
+    }
+
+    fn grant_permission(&mut self, id: crate::PermissionId) -> Result<(), WeldError> {
+        self.answer_permission(id, true)
+    }
+
+    fn deny_permission(&mut self, id: crate::PermissionId) -> Result<(), WeldError> {
+        self.answer_permission(id, false)
     }
 
     fn answer_auth(

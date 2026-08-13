@@ -3,6 +3,7 @@ use dpi::PhysicalSize;
 use crate::{
     auth::AuthId,
     downloads::DownloadId,
+    permissions::{PermissionId, PermissionKind},
     error::WeldError,
     native_frame::{HostWgpuContext, ImportedTexture},
 };
@@ -36,6 +37,7 @@ pub struct CefSurfaceCapabilities {
     pub devtools: BrowserFeatureStatus,
     pub downloads: BrowserFeatureStatus,
     pub auth_challenges: BrowserFeatureStatus,
+    pub permission_requests: BrowserFeatureStatus,
     pub popups: BrowserFeatureStatus,
     pub context_menus: BrowserFeatureStatus,
     pub console_messages: BrowserFeatureStatus,
@@ -104,6 +106,10 @@ impl CefSurfaceCapabilities {
             // with and without CEF_RUNTIME_STYLE_ALLOY, while other methods on
             // that same handler fire normally. Proxy authentication is
             // untested.
+            // Both CEF permission callbacks are registered and answerable;
+            // a page's own geolocation success callback has been seen to fire
+            // after grant_permission on Windows.
+            permission_requests: BrowserFeatureStatus::Supported,
             auth_challenges: BrowserFeatureStatus::Partial(
                 "GetAuthCredentials is wired and answerable, but CEF 147 was not                  observed to call it for server auth; proxy auth untested",
             ),
@@ -178,6 +184,8 @@ mod capability_tests {
                 "expected an explained Unsupported, got {status:?}"
             );
         }
+
+        assert_eq!(caps.permission_requests, BrowserFeatureStatus::Supported);
 
         // Auth is the other split case: implemented and registered, never
         // seen to fire.
@@ -326,6 +334,13 @@ pub struct CefSurfaceConfig {
     /// Persistent user-data directory for cookies, storage, etc.
     /// `None` = in-memory / incognito.
     pub user_data_dir: Option<std::path::PathBuf>,
+    /// Whether the host answers permission requests itself.
+    ///
+    /// Off by default, and for the same reason as `handle_auth_challenges`: an
+    /// unanswered request leaves the page waiting forever. Left off, `welding`
+    /// reports the request and immediately denies it, which is what a browser
+    /// does when a user dismisses the prompt.
+    pub handle_permission_requests: bool,
     /// Whether the host answers HTTP auth challenges itself.
     ///
     /// Off by default, and deliberately: CEF's auth callback can be answered
@@ -367,6 +382,7 @@ impl Default for CefSurfaceConfig {
             background_color: Some([255, 255, 255]),
             prefer_accelerated: true,
             user_data_dir: None,
+            handle_permission_requests: false,
             handle_auth_challenges: false,
             download_dir: None,
             scale_factor: 1.0,
@@ -504,6 +520,21 @@ pub trait CefSurfaceProducer: Send {
     fn navigate_to_url(&mut self, url: &str) -> Result<(), WeldError>;
     fn navigate_to_string(&mut self, content: &str, mime_type: &str) -> Result<(), WeldError>;
     fn reload(&mut self) -> Result<(), WeldError>;
+
+    /// Grant a permission request. Media requests are granted exactly what
+    /// they asked for; anything else is accepted.
+    fn grant_permission(&mut self, _id: PermissionId) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "permission requests are not wired for this producer",
+        ))
+    }
+
+    /// Deny a permission request.
+    fn deny_permission(&mut self, _id: PermissionId) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "permission requests are not wired for this producer",
+        ))
+    }
 
     /// Answer an auth challenge.
     ///
@@ -785,6 +816,23 @@ pub enum NavigationEvent {
     NewWindowRequested {
         url: String,
         user_gesture: bool,
+    },
+    /// A page asked for something Chromium gates behind a prompt: the
+    /// camera, the microphone, the user's location, notifications.
+    ///
+    /// Answer with [`CefSurfaceProducer::grant_permission`] or
+    /// [`CefSurfaceProducer::deny_permission`], quoting `id`. If
+    /// `CefSurfaceConfig::handle_permission_requests` is off, `welding` has
+    /// already denied it and this is a notification rather than a question.
+    PermissionRequested {
+        id: PermissionId,
+        /// The origin asking, e.g. `https://example.com/`.
+        origin: String,
+        /// What was asked for. Bits this build does not name still arrive, as
+        /// `PermissionKind::Other`.
+        permissions: Vec<PermissionKind>,
+        /// CEF's raw bitmask, for hosts that want to be exact.
+        raw: u32,
     },
     /// A server or proxy demanded credentials.
     ///
