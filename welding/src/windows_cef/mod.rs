@@ -709,7 +709,19 @@ impl CefSurfaceProducer for WindowsCefProducer {
                     ..Default::default()
                 };
                 let settings = cef::BrowserSettings::default();
-                host.show_dev_tools(Some(&window_info), None, Some(&settings), None);
+                // `inspect_element_at` must be a real pointer too. CEF's C++ API
+                // takes it as `const CefPoint&` and its generated entry point
+                // lists it "unverified", meaning libcef dereferences it without
+                // a null check -- which is how a None here became a crash inside
+                // the framework on macOS rather than an error. (0,0) is the
+                // "inspect nothing in particular" value.
+                let inspect_at = cef::Point { x: 0, y: 0 };
+                host.show_dev_tools(
+                    Some(&window_info),
+                    None,
+                    Some(&settings),
+                    Some(&inspect_at),
+                );
                 return Ok(());
             }
         }
