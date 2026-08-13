@@ -8,6 +8,9 @@
 //! - `WELD_CLICK_AT=x,y` clicks once, in physical pixels.
 //! - `WELD_WHEEL=dy` scrolls by `dy` after the click.
 //! - `WELD_KEY=c` types one character after that.
+//! - `WELD_CRASH_AFTER_SECS=n` navigates to `chrome://crash` to kill the
+//!   render process on purpose, so crash recovery can be exercised.
+//! - `WELD_RECOVER=1` recovers from that crash; see `recover_if_crashed`.
 //!
 //! Point them at a page that reports what it received (writing to
 //! `document.title` surfaces in the navigation events) and each one becomes a
@@ -17,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use welding::{
     CefSurfaceProducer, EventModifiers, FocusDirection, KeyEvent, KeyEventKind, MouseAction,
-    MouseButton, MouseEvent,
+    MouseButton, MouseEvent, NavigationEvent, ProcessTerminationStatus,
 };
 
 /// Wait after the page is ready before acting: the first paint can land before
@@ -31,11 +34,13 @@ pub struct ScriptedInput {
     click_at: Option<(i32, i32)>,
     wheel: Option<i32>,
     key: Option<char>,
+    crash_after: Option<Duration>,
     /// When the page first became ready. Elapsed time, not a tick count: how
     /// often a host redraws is its own business, and an accelerated producer
     /// paints only on change, so ticks are not a clock.
     ready_at: Option<Instant>,
     stage: u32,
+    crashed: bool,
 }
 
 impl ScriptedInput {
@@ -50,12 +55,19 @@ impl ScriptedInput {
         let key = std::env::var("WELD_KEY")
             .ok()
             .and_then(|v| v.chars().next());
-        Self { click_at, wheel, key, ready_at: None, stage: 0 }
+        let crash_after = std::env::var("WELD_CRASH_AFTER_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .map(Duration::from_secs);
+        Self { click_at, wheel, key, crash_after, ready_at: None, stage: 0, crashed: false }
     }
 
     /// True when anything is scripted at all.
     pub fn armed(&self) -> bool {
-        self.click_at.is_some() || self.wheel.is_some() || self.key.is_some()
+        self.click_at.is_some()
+            || self.wheel.is_some()
+            || self.key.is_some()
+            || self.crash_after.is_some()
     }
 
     /// Call once per tick, with `ready` set once the page has painted. Fires at
@@ -65,6 +77,15 @@ impl ScriptedInput {
             return;
         }
         let started = *self.ready_at.get_or_insert_with(Instant::now);
+        // The crash keeps its own schedule, measured from ready rather than
+        // queued behind the gestures, so it can be asked for on its own.
+        if let Some(after) = self.crash_after {
+            if started.elapsed() >= after && !self.crashed {
+                self.crashed = true;
+                eprintln!("weld demo: navigating to chrome://crash on purpose");
+                let _ = producer.navigate_to_url("chrome://crash");
+            }
+        }
         if started.elapsed() < SETTLE + GAP * self.stage {
             return;
         }
@@ -122,5 +143,38 @@ impl ScriptedInput {
                 modifiers: EventModifiers::default(),
             });
         }
+    }
+}
+
+/// `WELD_RECOVER` sends the browser back to its starting page when the render
+/// process dies, which is the whole crash-recovery story in one place.
+///
+/// Back to the original URL rather than a reload, because the page that killed
+/// the renderer would just kill its replacement. And navigating is not enough
+/// on its own: painting is change-driven and the fresh renderer has nothing
+/// queued for this surface, so without `request_repaint` the host would
+/// present its pre-crash frame forever.
+pub fn recover_if_crashed<P: CefSurfaceProducer + ?Sized>(
+    producer: &mut P,
+    url: &str,
+    event: &NavigationEvent,
+) {
+    let NavigationEvent::ContentProcessTerminated { status, .. } = event else {
+        return;
+    };
+    if std::env::var("WELD_RECOVER").is_err() {
+        return;
+    }
+    // Not for OutOfMemory: retrying that only reaches it again, slower.
+    if *status == ProcessTerminationStatus::OutOfMemory {
+        eprintln!("weld demo: renderer died out of memory; not retrying");
+        return;
+    }
+    eprintln!("weld demo: recovering from {status:?}");
+    if let Err(e) = producer.navigate_to_url(url) {
+        eprintln!("weld demo: recovery navigation failed: {e}");
+    }
+    if let Err(e) = producer.request_repaint() {
+        eprintln!("weld demo: repaint request failed: {e}");
     }
 }

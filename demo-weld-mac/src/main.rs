@@ -82,6 +82,8 @@ struct DemoState {
     /// repaints it on change, and dropped when `popup_rect` goes to `None`.
     popup: Option<PopupSurface>,
     frames_imported: u32,
+    /// Where a crashed renderer is sent back to.
+    recover_url: String,
     battery_started: bool,
     ticks: u32,
     popups_imported: u32,
@@ -166,7 +168,7 @@ impl ApplicationHandler for DemoApp {
             &cef_runtime,
             MacosCefConfig {
                 surface: CefSurfaceConfig {
-                    initial_url: url,
+                    initial_url: url.clone(),
                     initial_size: win_size,
                     // Physical size plus the display scale: CEF lays out at
                     // size/scale CSS pixels and paints the full physical size.
@@ -190,6 +192,7 @@ impl ApplicationHandler for DemoApp {
             frame: None,
             popup: None,
             frames_imported: 0,
+            recover_url: url,
             battery_started: false,
             ticks: 0,
             popups_imported: 0,
@@ -403,6 +406,7 @@ impl DemoApp {
 
         while let Some(event) = s.producer.poll_navigation_event() {
             log::info!("nav: {event:?}");
+            scripted::recover_if_crashed(&mut s.producer, &s.recover_url, &event);
         }
 
             // Parity battery: one run reports frames, script results,
@@ -617,6 +621,7 @@ fn env_background() -> Option<[u8; 3]> {
         Err(_) => Some([255, 255, 255]),
     }
 }
+
 
 fn log_scale_err(err: welding::WeldError) {
     log::error!("set_scale_factor failed: {err}");

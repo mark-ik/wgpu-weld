@@ -44,6 +44,9 @@ struct DemoState {
     surface_config: wgpu::SurfaceConfiguration,
     host_ctx: HostWgpuContext,
     producer: WindowsCefProducer,
+    /// Where a crashed renderer is sent back to; see the recovery path below.
+    recover_url: String,
+    frames_imported: u32,
     _cef_runtime: CefRuntime,
     pipeline: wgpu::RenderPipeline,
     bg_layout: wgpu::BindGroupLayout,
@@ -164,6 +167,8 @@ impl ApplicationHandler for DemoApp {
             host_ctx,
             _cef_runtime: cef_runtime,
             producer,
+            recover_url: initial_url,
+            frames_imported: 0,
             pipeline,
             bg_layout,
             sampler,
@@ -339,6 +344,14 @@ impl ApplicationHandler for DemoApp {
             WindowEvent::RedrawRequested => {
                 match s.producer.acquire_frame(&s.host_ctx) {
                     Ok(Some(new_frame)) => {
+                        s.frames_imported += 1;
+                        eprintln!(
+                            "weld demo: imported frame #{} ({}x{} {:?})",
+                            s.frames_imported,
+                            new_frame.size.width,
+                            new_frame.size.height,
+                            new_frame.format
+                        );
                         s.frame = Some(new_frame);
                     }
                     Ok(None) => {}
@@ -426,6 +439,11 @@ impl ApplicationHandler for DemoApp {
 
                 while let Some(event) = s.producer.poll_navigation_event() {
                     eprintln!("weld demo: navigation event: {event:?}");
+                    scripted::recover_if_crashed(
+                        &mut s.producer,
+                        &s.recover_url,
+                        &event,
+                    );
                 }
 
                 // The scripted gestures, for a machine nobody is sitting at:
@@ -630,6 +648,7 @@ fn winit_cursor(shape: &welding::CursorShape) -> winit::window::Cursor {
 /// WELD_SCALE pins the scale factor for testing HiDPI on a 1x display. When it
 /// is set it has to survive winit's ScaleFactorChanged, which reports the real
 /// display density.
+
 fn forced_scale() -> Option<f64> {
     std::env::var("WELD_SCALE")
         .ok()

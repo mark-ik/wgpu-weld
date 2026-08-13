@@ -469,6 +469,20 @@ impl CefSurfaceProducer for MacosCefProducer {
         Err(pending("cef_frame_t::load_string"))
     }
 
+    fn request_repaint(&mut self) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            if let Some(mut host) = self.browser.host() {
+                // The same pair `resize` uses: was_resized makes CEF re-query
+                // the view rect, invalidate asks for the paint itself.
+                host.was_resized();
+                host.invalidate(cef::PaintElementType::default());
+                return Ok(());
+            }
+        }
+        Err(pending("cef_browser_host_t::invalidate"))
+    }
+
     fn reload(&mut self) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         { self.browser.reload(); return Ok(()); }

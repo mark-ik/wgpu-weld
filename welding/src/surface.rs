@@ -320,6 +320,11 @@ impl CefSurfaceConfig {
     /// [`Self::background_color`] as CEF's ARGB `cef_color_t`: opaque for
     /// `Some`, all-zero (which is what enables transparent windowless
     /// painting) for `None`.
+    ///
+    /// Only the producers consume this and they only exist under the feature,
+    /// but the unit tests below cover it in every configuration, so this is an
+    /// allow rather than a cfg gate.
+    #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
     pub(crate) fn cef_background_color(&self) -> u32 {
         match self.background_color {
             Some([r, g, b]) => {
@@ -441,6 +446,19 @@ pub trait CefSurfaceProducer: Send {
     fn navigate_to_url(&mut self, url: &str) -> Result<(), WeldError>;
     fn navigate_to_string(&mut self, content: &str, mime_type: &str) -> Result<(), WeldError>;
     fn reload(&mut self) -> Result<(), WeldError>;
+
+    /// Ask CEF to repaint the whole view now.
+    ///
+    /// Painting is change-driven, so a view nothing has changed does not paint
+    /// on its own. That matters after a render process dies: the host can
+    /// navigate again and the page will load, but the replacement renderer has
+    /// nothing queued for the surface, so the host keeps presenting its last
+    /// pre-crash frame. This is the nudge that gets a first frame out of it.
+    fn request_repaint(&mut self) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "repaint is not wired for this producer",
+        ))
+    }
     fn stop(&mut self) -> Result<(), WeldError>;
     fn go_back(&mut self) -> Result<(), WeldError>;
     fn go_forward(&mut self) -> Result<(), WeldError>;
@@ -571,6 +589,52 @@ pub struct EventModifiers {
     pub meta: bool,
 }
 
+/// Map CEF's termination status onto the platform-neutral one.
+///
+/// Compared against the associated constants rather than matched: the status
+/// is a newtype over a C enum whose repr differs by platform, so `==` is the
+/// portable read. An unrecognised value is carried through rather than
+/// flattened into `Abnormal`, so a newer CEF cannot silently look ordinary.
+#[cfg(feature = "cef-runtime")]
+pub(crate) fn termination_status(status: cef::TerminationStatus) -> ProcessTerminationStatus {
+    use cef::TerminationStatus as Ts;
+    if status == Ts::PROCESS_WAS_KILLED {
+        ProcessTerminationStatus::Killed
+    } else if status == Ts::PROCESS_CRASHED {
+        ProcessTerminationStatus::Crashed
+    } else if status == Ts::PROCESS_OOM {
+        ProcessTerminationStatus::OutOfMemory
+    } else if status == Ts::LAUNCH_FAILED {
+        ProcessTerminationStatus::LaunchFailed
+    } else if status == Ts::INTEGRITY_FAILURE {
+        ProcessTerminationStatus::IntegrityFailure
+    } else if status == Ts::ABNORMAL_TERMINATION {
+        ProcessTerminationStatus::Abnormal
+    } else {
+        ProcessTerminationStatus::Unknown(*status.as_ref() as i32)
+    }
+}
+
+/// Why a render process died, as CEF reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcessTerminationStatus {
+    /// Ended abnormally, with no more specific reason.
+    Abnormal,
+    /// Killed from outside, e.g. by a task manager or a signal.
+    Killed,
+    /// Crashed.
+    Crashed,
+    /// Ran out of memory. Reloading on a loop will only repeat this.
+    OutOfMemory,
+    /// The process never started.
+    LaunchFailed,
+    /// Failed an integrity check.
+    IntegrityFailure,
+    /// A status this build of `welding` does not recognise; the raw value is
+    /// carried so a host can still log something useful.
+    Unknown(i32),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FocusDirection {
     Forward,
@@ -600,8 +664,18 @@ pub enum NavigationEvent {
     AddressChanged {
         url: String,
     },
-    /// CEF browser process terminated unexpectedly.
-    ContentProcessTerminated,
+    /// The render process backing this browser died. The browser object
+    /// itself survives, and `reload()` brings the page back: Chromium spawns a
+    /// fresh renderer for the next navigation. `status` says which kind of
+    /// death it was, which is what decides whether reloading is sensible --
+    /// retrying an `OutOfMemory` in a loop just kills the machine slower.
+    ContentProcessTerminated {
+        status: ProcessTerminationStatus,
+        /// CEF's error code, 0 when it supplies none.
+        error_code: i32,
+        /// CEF's description, empty when it supplies none.
+        error_string: String,
+    },
     NewWindowRequested {
         url: String,
         user_gesture: bool,

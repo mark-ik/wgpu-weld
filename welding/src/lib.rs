@@ -58,5 +58,5 @@ pub use surface::{
     BrowserFeatureStatus, CefSurfaceCapabilities, CefSurfaceConfig, CefSurfaceMode,
     CefSurfaceProducer, Cookie, EventModifiers, FocusDirection, KeyEvent, KeyEventKind,
     CursorShape, ImeComposition, MouseAction, MouseButton, MouseEvent, NavigationEvent, PopupRect,
-    PopupSurface, SameSite,
+    PopupSurface, ProcessTerminationStatus, SameSite,
 };

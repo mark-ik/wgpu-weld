@@ -311,12 +311,17 @@ cef::wrap_request_handler! {
             error_code: ::std::os::raw::c_int,
             error_string: Option<&cef::CefString>,
         ) {
+            let status = crate::surface::termination_status(_status);
+            let error_string = error_string.map(|s| s.to_string()).unwrap_or_default();
             log::error!(
-                "weld: CEF render process terminated (code {error_code}, {})",
-                error_string.map(|s| s.to_string()).unwrap_or_default()
+                "weld: CEF render process terminated ({status:?}, code {error_code}, {error_string})"
             );
             self.events.lock().unwrap().nav.push_back(
-                crate::surface::NavigationEvent::ContentProcessTerminated
+                crate::surface::NavigationEvent::ContentProcessTerminated {
+                    status,
+                    error_code,
+                    error_string,
+                }
             );
         }
     }

@@ -55,6 +55,8 @@ struct DemoState {
     sampler: wgpu::Sampler,
     frame: Option<ImportedTexture>,
     frames_imported: u32,
+    /// Where a crashed renderer is sent back to.
+    recover_url: String,
     battery_started: bool,
     ticks: u32,
     scripted: scripted::ScriptedInput,
@@ -149,12 +151,12 @@ impl ApplicationHandler for DemoApp {
         // how the HiDPI path gets exercised on a 1x screen.
         let scale = forced_scale().unwrap_or_else(|| window.scale_factor());
         log::info!("creating CEF browser ({}x{})", win_size.width, win_size.height);
+        let url = std::env::var("WELD_URL").unwrap_or_else(|_| "https://example.com".into());
         let mut producer = LinuxCefProducer::new(
             &cef_runtime,
             LinuxCefConfig {
                 surface: CefSurfaceConfig {
-                    initial_url: std::env::var("WELD_URL")
-                        .unwrap_or_else(|_| "https://example.com".into()),
+                    initial_url: url.clone(),
                     initial_size: win_size,
                     // Physical size plus the display scale: CEF lays out at
                     // size/scale CSS pixels and paints the full physical size.
@@ -186,6 +188,7 @@ impl ApplicationHandler for DemoApp {
             host_ctx,
             cef_runtime,
             producer,
+            recover_url: url,
             pipeline,
             bg_layout,
             sampler,
@@ -387,6 +390,7 @@ impl ApplicationHandler for DemoApp {
 
                 while let Some(event) = s.producer.poll_navigation_event() {
                     log::info!("nav: {event:?}");
+                    scripted::recover_if_crashed(&mut s.producer, &s.recover_url, &event);
                 }
 
                 // Parity battery: one run reports frames, script results,
@@ -662,6 +666,7 @@ fn env_background() -> Option<[u8; 3]> {
         Err(_) => Some([255, 255, 255]),
     }
 }
+
 
 fn log_scale_err(err: welding::WeldError) {
     log::error!("set_scale_factor failed: {err}");
