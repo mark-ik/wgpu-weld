@@ -83,9 +83,10 @@ call before any CEF code runs.
   distribution; producer constructors return a pending-wiring error.
 
 Current plan (`design_docs/`, 2026-08-10 parity plan): W1 through W6 have
-landed, and W7 is under way: downloads are done and verified on all three
-platforms, with auth challenges, permission requests and context menus to
-follow. What remains is W7, the host-decision surfaces (downloads, auth
+landed, and W7 is done bar one row: downloads, permission requests and context
+menus are verified on all three platforms; `GetAuthCredentials` is wired and
+answerable but CEF has never been observed to call it. What remains is W8, the
+long tail, and W9, the Chrome DevTools Protocol. What remains is W7, the host-decision surfaces (downloads, auth
 challenges, permission requests, context menus); W8, the long tail (drag,
 touch, find-in-page, PDF, zoom and UA settings, per-producer profiles); and
 W9, the Chrome DevTools Protocol, which is this lane's distinguishing feature

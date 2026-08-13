@@ -677,7 +677,28 @@ now (first, then every 500th).
   (permission denied). `Notification.requestPermission()` is the better probe,
   because it resolves with the decision itself.
 
-  Still open in W7: context-menu events. Done when: those capability rows read Y with the same event/decision
+  **W7d, context menus: done 2026-08-13**, verified on all three. Probed first
+  again, and CEF does call both `on_before_context_menu` and `run_context_menu`.
+  Its own menu has nowhere to draw itself under windowless rendering, so it is
+  emptied and claimed, and the host gets `ContextMenuRequested` with the
+  hit-test details to draw its own; a host that ignores the event gets what it
+  got before, which is nothing.
+
+  Coordinates are converted on the way out. CEF reports DIP and this API is
+  physical throughout, so a right-click sent to physical (223,210) returns
+  (224,210) — an odd physical coordinate loses half a DIP through the
+  round-trip. macOS reports one extra target, `Selection`, because a right-click
+  there selects the word under the cursor first.
+
+  Aiming the click by hand wasted a round and briefly looked like a bug: the
+  first attempt guessed at where the link was, missed, and picked up *stray real
+  right-clicks* on the demo window (six events from one scripted click, at
+  coordinates never sent). Asking the page for its own link rect, as the IME and
+  cursor tests already did, gave one event and an exact answer.
+
+  **W7 is done**, with auth the honest exception: three of the four rows are
+  verified on all three platforms, and `GetAuthCredentials` is wired but never
+  called by CEF. Done when: those capability rows read Y with the same event/decision
   shapes scrying uses.
 - **W8, long tail.** Drag/drop, touch, find-in-page, PDF, zoom/UA/settings,
   per-producer `RequestContext` profiles, `can_go_back`/`can_go_forward`,
