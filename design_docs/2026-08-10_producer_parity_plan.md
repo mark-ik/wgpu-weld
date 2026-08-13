@@ -102,7 +102,7 @@ demos.
 | DevTools window | Y | Y | o |
 | DevTools protocol (CDP) | N (CEF has ExecuteDevToolsMethod; unique leverage) | N (WebView2 could; not exposed) | o |
 | Multi-producer per process | Y | Y (except WPE) | Y |
-| Honest capability probe | Y (W1; a test pins every Supported to a live handler) | Y (matrix + footnotes) | o |
+| Honest capability probe | P (W1's test pinned `devtools: Supported` while `open_devtools` was a stub on all three; corrected 2026-08-12) | Y (matrix + footnotes) | o |
 
 ### The capability probe lies in both directions (fixed in W1)
 
@@ -299,6 +299,45 @@ because on Linux the renderers are forked from the zygote and keep its cmdline
 rather than re-execing the host binary. Recovery there is untestable until the
 event arrives; the AMD test machine also imports no frames at all, so even the
 metric used above is unavailable on it.
+
+## The last three rows, 2026-08-12 (late)
+
+`set_visible`, IME and the DevTools window had been "wired" since W4 and had
+never been run anywhere. Taking them one at a time turned two of the three into
+defects, and one of those was a lie the test suite was holding in place.
+
+**`set_visible`: verified, Windows and macOS.** It needs an animating page to
+mean anything -- a static page paints once, so "painting stopped" is
+unfalsifiable on it. Against `testing/weld_anim_probe.html`: Windows 647 frames
+visible, 0 hidden, 883 after showing; M4 329 / 0 / 501. Exactly zero while
+hidden, both machines.
+
+**DevTools: was never implemented at all.** `open_devtools` returned a
+pending-wiring error on all three producers, while
+`CefSurfaceCapabilities::probe` reported `devtools: Supported` and the W1
+truth-pass test *asserted* that claim. The test pinned the lie rather than
+catching it, which is worth remembering about tests written from the same
+belief as the code. Now implemented, and it took two rounds of platform
+divergence to get right:
+
+- NULL `CefWindowInfo`: Windows opens the window, macOS crashes inside CEF
+  (`EXC_BAD_ACCESS` at null+0x150, host thread).
+- bounds-only `CefWindowInfo`: macOS still crashes, and Windows now *silently*
+  fails -- the call returns success and a zero-style child window never
+  appears. Caught only because the check was "is there a window with this
+  title", not "did the call return Ok".
+- Top-level style flags on Windows: window back. macOS crashes either way, so
+  that producer refuses the call and `probe()` reports it unsupported there.
+  A library must not segfault its embedder to report a missing feature.
+
+**IME: wired, returns `Ok`, delivers nothing.** Windows and macOS both. The
+page listens for `compositionstart`, `compositionupdate`, `compositionend`,
+`textInput` and `input`; none fires. Ruled out: focus (`document.hasFocus()`
+true, `activeElement` is the input) and input routing generally (an ordinary
+keypress into the same field on the same run lands, `value:K`). One
+hypothesis was tried and disproved -- CEF's sample client always passes a
+composition underline span and `welding` passed none -- and the change was
+reverted rather than shipped unproven. Cause still unknown.
 
 ## Plan
 

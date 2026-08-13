@@ -11,7 +11,7 @@ the shared `grafting` interop core).
 
 ## Status (2026-08-12)
 
-Prototype. `welding` 0.5.0 in this repo, 0.4.1 published on crates.io
+Prototype. `welding` 0.5.1 in this repo, 0.5.0 published on crates.io
 (MPL-2.0). Per-platform detail, and
 the difference between "verified on that hardware" and "implemented but not
 yet run there", is the table in [`welding/README.md`](welding/README.md).
@@ -19,9 +19,16 @@ yet run there", is the table in [`welding/README.md`](welding/README.md).
 A parity battery was run on all three platforms on 2026-08-12 (Windows 11,
 macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac, Fedora
 on an AMD ThinkPad). Input, cursor, HiDPI, navigation, console, cookies,
-script results and command-line switches are now verified on every one. What
-is still untested everywhere is IME composition, `set_visible`, and the
-DevTools window.
+script results and command-line switches are now verified on every one.
+
+The last three untested rows were then taken the same evening, and two of them
+turned out not to work. `set_visible` is verified on Windows and macOS, with
+painting stopping exactly while hidden. DevTools was not implemented at all
+despite the capability probe claiming otherwise; it opens a real window on
+Windows now and crashes CEF on macOS, where the producer refuses the call
+rather than segfault its host. IME composition returns success and delivers
+nothing to the DOM on either platform. `welding/README.md` carries the
+evidence for each.
 
 - All three platform import lanes are hardware-verified: Windows (D3D11
   copy, D3D12 shared handle via the `grafting` crate, into wgpu), Linux

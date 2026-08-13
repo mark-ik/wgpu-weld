@@ -14,7 +14,7 @@ of them import through.
 
 ## State, 2026-08-12
 
-Version 0.5.0. Every "verified" below was checked by running it on that
+Version 0.5.1. Every "verified" below was checked by running it on that
 platform's hardware, in one battery per machine: Windows 11 (this laptop),
 macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac (the
 first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
@@ -34,9 +34,9 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | Chromium command-line switches | verified | verified | verified |
 | Popup widgets (`<select>`) | verified | **differs by macOS** [^macpopup] | opens, import blocked [^linux] |
 | Renderer crash recovery | verified | verified | event not delivered [^linuxcrash] |
-| IME composition | wired | wired | wired |
-| Visibility (`set_visible`) | wired | wired | wired |
-| DevTools window | wired | wired | wired |
+| Visibility (`set_visible`) | verified | verified | wired |
+| DevTools window | verified | **crashes CEF** [^macdevtools] | no crash, no window seen |
+| IME composition | **not delivered** [^ime] | **not delivered** [^ime] | wired |
 
 "verified" means observed working on that platform's hardware. "wired" means
 implemented and compiling there, but not yet exercised on any machine — the
@@ -57,6 +57,22 @@ rather than producing a broken texture. This is why the popup row reads
 "opens": on the AMD test machine CEF offers the dropdown and reports its
 geometry (`on_popup_show`, then `on_popup_size 320x197 at 0,80`), and only the
 texture import is refused, by the same modifier limitation.
+
+[^ime]: The IME calls return `Ok` and nothing arrives. Checked on Windows and
+macOS against a page listening for `compositionstart`, `compositionupdate`,
+`compositionend`, `textInput` and `input`: not one of them fires. It is not
+focus, and it is not the click: an ordinary `WELD_KEY` keypress into the same
+field on the same run lands in the DOM (`value:K`), and the page reports
+`activeElement` as the input with `document.hasFocus()` true. So the IME path
+specifically does not deliver. Do not rely on this row.
+
+[^macdevtools]: Opening DevTools for a windowless browser crashes CEF 148 on
+macOS from inside the framework (`EXC_BAD_ACCESS` at null+0x150, on the host
+thread), with a NULL `CefWindowInfo` and with a bounds-only one alike. Rather
+than segfault its embedder, the macOS producer refuses the call and `probe()`
+reports it unsupported there, so a host can grey the button out. Windows opens
+a real DevTools window; the window needs top-level style flags, because a
+zero-style `CefWindowInfo` yields an invisible child and a success return.
 
 [^linuxcrash]: A renderer crash on Linux does not reach the host. Chromium logs
 `Intentionally crashing` and then `Failed to send GetTerminationStatus request

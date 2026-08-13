@@ -566,26 +566,16 @@ impl CefSurfaceProducer for MacosCefProducer {
     }
 
     fn open_devtools(&self) -> Result<(), WeldError> {
-        #[cfg(feature = "cef-runtime")]
-        {
-            if let Some(host) = self.browser.host() {
-                // A real WindowInfo, not None. CEF dereferences it on macOS:
-                // passing None crashed the host inside the framework with
-                // EXC_BAD_ACCESS at null+0x150, while Windows tolerated it and
-                // opened the window -- exactly the kind of difference that
-                // ships if only one platform is tried. Windowless is left off
-                // so CEF opens DevTools in its own native window; a windowless
-                // DevTools would need a producer of its own.
-                let window_info = cef::WindowInfo {
-                    bounds: cef::Rect { x: 0, y: 0, width: 1024, height: 768 },
-                    ..Default::default()
-                };
-                let settings = cef::BrowserSettings::default();
-                host.show_dev_tools(Some(&window_info), None, Some(&settings), None);
-                return Ok(());
-            }
-        }
-        Err(pending("cef_browser_host_t::show_dev_tools"))
+        // Deliberately not calling show_dev_tools on macOS. CEF 148 crashes
+        // the host process from inside the framework when a windowless browser
+        // opens DevTools (EXC_BAD_ACCESS at null+0x150, on the host thread),
+        // both with a NULL CefWindowInfo and with a bounds-only one. A library
+        // segfaulting its embedder is worse than a missing feature, so this
+        // reports the situation instead. `probe()` says the same, so a host can
+        // grey out its inspector button rather than discover this the hard way.
+        Err(WeldError::PlatformUnsupported(
+            "DevTools crashes CEF 148 for windowless browsers on macOS",
+        ))
     }
 
     fn browser_id(&self) -> i32 {

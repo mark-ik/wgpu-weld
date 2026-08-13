@@ -80,7 +80,15 @@ impl CefSurfaceCapabilities {
             ),
             script_execution: BrowserFeatureStatus::Supported,
             script_result: BrowserFeatureStatus::Supported,
+            // Windows opens a real DevTools window; Linux takes the call
+            // without crashing but has not been seen to open one; macOS
+            // crashes CEF outright, so the producer refuses there.
+            #[cfg(not(target_os = "macos"))]
             devtools: BrowserFeatureStatus::Supported,
+            #[cfg(target_os = "macos")]
+            devtools: BrowserFeatureStatus::Unsupported(
+                "DevTools crashes CEF 148 for windowless browsers on macOS",
+            ),
             downloads: BrowserFeatureStatus::Unsupported(
                 "no CefDownloadHandler is registered; downloads are silently dropped",
             ),
@@ -129,7 +137,10 @@ mod capability_tests {
         // than catching it. It calls `show_dev_tools` now, checked by opening
         // a real DevTools window on Windows, 2026-08-12.
         assert_eq!(caps.script_execution, BrowserFeatureStatus::Supported);
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(caps.devtools, BrowserFeatureStatus::Supported);
+        #[cfg(target_os = "macos")]
+        assert!(matches!(caps.devtools, BrowserFeatureStatus::Unsupported(_)));
         assert_eq!(caps.console_messages, BrowserFeatureStatus::Supported);
         // Cookies went from a trait default that errored to real producer
         // implementations over CEF's global cookie manager.
