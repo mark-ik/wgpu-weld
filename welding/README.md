@@ -14,7 +14,7 @@ of them import through.
 
 ## State, 2026-08-12
 
-Version 0.8.0. Every "verified" below was checked by running it on that
+Version 0.9.0. Every "verified" below was checked by running it on that
 platform's hardware, in one battery per machine: Windows 11 (this laptop),
 macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac (the
 first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
@@ -45,14 +45,16 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | Find in page | verified | wired | verified |
 | Zoom | verified | wired | verified [^zoomlevel] |
 | History state (`can_go_back`) | verified | wired | verified |
+| Print to PDF | verified | wired | verified |
+| User agent override | verified | wired | verified |
 
 "verified" means observed working on that platform's hardware. "wired" means
 implemented and compiling there, but not yet exercised on any machine — the
 last three rows are untested everywhere, not gaps in one platform.
 
 Not implemented yet, and `CefSurfaceCapabilities::probe` will tell you so at
-runtime rather than failing quietly: PDF and print, drag and drop, touch,
-pointer/pen, user-agent settings, and per-producer profile isolation.
+runtime rather than failing quietly: printing to a printer, drag and drop,
+touch, pointer/pen, and per-producer profile isolation.
 
 [^linux]: Linux needs the DMABUF buffer to carry an **explicit** DRM format
 modifier. Intel/Mesa supplies one, and the frame import is verified there;
@@ -166,6 +168,19 @@ let config = CefSurfaceConfig {
 };
 // and when the window moves to another display:
 producer.set_scale_factor(new_scale)?;
+```
+
+Rendering the page to a PDF, and being someone else on the wire:
+
+```rust,ignore
+producer.print_to_pdf(Path::new("/tmp/page.pdf"))?;
+// Completion arrives later, since Chromium answers asynchronously:
+// NavigationEvent::PdfPrintFinished { path, ok }
+
+// The user agent is process-wide, not per producer -- CEF takes it in
+// CefSettings, so every producer under one runtime shares it.
+let mut runtime = CefRuntimeConfig::new(&cef_path);
+runtime.user_agent_product = Some("MyApp/1.0".into());  // or user_agent for all of it
 ```
 
 The Chrome DevTools Protocol goes through unwrapped — the thing a system

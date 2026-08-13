@@ -715,7 +715,17 @@ now (first, then every 500th).
   session: 546 unzoomed against 390 zoomed. Third time this week a UI-thread-only
   getter has produced a plausible wrong number.
 
-  Still open in W8: drag/drop, touch, PDF and print, user-agent settings,
+  **Print to PDF and the user agent landed too**, verified on Windows and
+  Linux: `PdfPrintFinished { ok: true }` with a real file on disk (19162 bytes
+  beginning `%PDF-1.4` on Windows, 8784 on Linux), and `WeldProbe/1.0` showing
+  up in `navigator.userAgent` where Chrome's product token would be.
+
+  The user agent went on `CefRuntimeConfig`, not `CefSurfaceConfig`, because
+  CEF takes it in `CefSettings`: it is process-wide and every producer under one
+  runtime shares it. Putting it on the surface config would have implied a
+  per-browser knob that does not exist.
+
+  Still open in W8: drag/drop, touch, printing to an actual printer,
   per-producer `RequestContext` profiles, snapshot helper. (`WasHidden`-backed
   visibility landed early, during W4.)
 - **W9, CDP. DONE 2026-08-13**, verified on all three (Windows, M4, ThinkPad):
