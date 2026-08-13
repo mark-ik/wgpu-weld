@@ -462,9 +462,23 @@ impl CefSurfaceProducer for WindowsCefProducer {
         if let Some(host) = self.browser().and_then(|browser| browser.host()) {
             let text: cef::CefString = text.into();
             let selection = cef::Range { from: selection.0, to: selection.1 };
+            // `replacement_range` must be a real pointer, never None. CEF's own
+            // C++ wrapper takes it by reference and so always passes one, which
+            // makes non-null the C API's contract; libcef's generated entry
+            // point verifies it and returns early on NULL. That return is
+            // silent in a release build, so passing None here did not fail --
+            // it dropped every composition before CEF saw it. UINT32_MAX twice
+            // is the invalid range that means "replace nothing", which is what
+            // cefclient passes.
+            let no_replacement = cef::Range { from: u32::MAX, to: u32::MAX };
             // No underlines: CEF renders the composition inside the page, and
             // the default styling is what a page author expects.
-            host.ime_set_composition(Some(&text), None, None, Some(&selection));
+            host.ime_set_composition(
+                Some(&text),
+                None,
+                Some(&no_replacement),
+                Some(&selection),
+            );
             return Ok(());
         }
         Err(WeldError::PlatformUnsupported("IME requires the cef-runtime feature"))
@@ -474,7 +488,10 @@ impl CefSurfaceProducer for WindowsCefProducer {
         #[cfg(feature = "cef-runtime")]
         if let Some(host) = self.browser().and_then(|browser| browser.host()) {
             let text: cef::CefString = text.into();
-            host.ime_commit_text(Some(&text), None, 0);
+            // Same contract as ime_set_composition: a NULL replacement_range is
+            // dropped silently by libcef's entry point.
+            let no_replacement = cef::Range { from: u32::MAX, to: u32::MAX };
+            host.ime_commit_text(Some(&text), Some(&no_replacement), 0);
             return Ok(());
         }
         Err(WeldError::PlatformUnsupported("IME requires the cef-runtime feature"))
