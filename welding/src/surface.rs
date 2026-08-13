@@ -122,6 +122,12 @@ mod capability_tests {
         // Wired: script execution, devtools, console messages (the display
         // handler's on_console_message), and the accelerated paint path on all
         // three verified platforms.
+        //
+        // `devtools` was the one claim here that was not true when this test
+        // was written: `open_devtools` returned a pending-wiring error on all
+        // three producers, and this assertion pinned the lie in place rather
+        // than catching it. It calls `show_dev_tools` now, checked by opening
+        // a real DevTools window on Windows, 2026-08-12.
         assert_eq!(caps.script_execution, BrowserFeatureStatus::Supported);
         assert_eq!(caps.devtools, BrowserFeatureStatus::Supported);
         assert_eq!(caps.console_messages, BrowserFeatureStatus::Supported);

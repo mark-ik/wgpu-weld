@@ -667,6 +667,16 @@ impl CefSurfaceProducer for WindowsCefProducer {
     }
 
     fn open_devtools(&self) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+                // All-default: CEF opens DevTools in its own native window,
+                // which is what a host without its own inspector surface
+                // wants. A windowless DevTools would need its own producer.
+                host.show_dev_tools(None, None, None, None);
+                return Ok(());
+            }
+        }
         Err(pending("cef_browser_host_t::show_dev_tools"))
     }
 

@@ -11,6 +11,10 @@
 //! - `WELD_CRASH_AFTER_SECS=n` navigates to `chrome://crash` to kill the
 //!   render process on purpose, so crash recovery can be exercised.
 //! - `WELD_RECOVER=1` recovers from that crash; see `recover_if_crashed`.
+//! - `WELD_IME=text` composes `text` through the IME path, then commits it.
+//! - `WELD_HIDE_CYCLE=1` hides the browser, then shows it again, which is how
+//!   `set_visible` gets checked: painting should stop while hidden.
+//! - `WELD_DEVTOOLS=1` opens the DevTools window.
 //!
 //! Point them at a page that reports what it received (writing to
 //! `document.title` surfaces in the navigation events) and each one becomes a
@@ -35,6 +39,9 @@ pub struct ScriptedInput {
     wheel: Option<i32>,
     key: Option<char>,
     crash_after: Option<Duration>,
+    ime: Option<String>,
+    hide_cycle: bool,
+    devtools: bool,
     /// When the page first became ready. Elapsed time, not a tick count: how
     /// often a host redraws is its own business, and an accelerated producer
     /// paints only on change, so ticks are not a clock.
@@ -59,7 +66,21 @@ impl ScriptedInput {
             .ok()
             .and_then(|v| v.trim().parse::<u64>().ok())
             .map(Duration::from_secs);
-        Self { click_at, wheel, key, crash_after, ready_at: None, stage: 0, crashed: false }
+        let ime = std::env::var("WELD_IME").ok().filter(|v| !v.is_empty());
+        let hide_cycle = std::env::var("WELD_HIDE_CYCLE").is_ok();
+        let devtools = std::env::var("WELD_DEVTOOLS").is_ok();
+        Self {
+            click_at,
+            wheel,
+            key,
+            crash_after,
+            ime,
+            hide_cycle,
+            devtools,
+            ready_at: None,
+            stage: 0,
+            crashed: false,
+        }
     }
 
     /// True when anything is scripted at all.
@@ -68,6 +89,9 @@ impl ScriptedInput {
             || self.wheel.is_some()
             || self.key.is_some()
             || self.crash_after.is_some()
+            || self.ime.is_some()
+            || self.hide_cycle
+            || self.devtools
     }
 
     /// Call once per tick, with `ready` set once the page has painted. Fires at
@@ -93,6 +117,10 @@ impl ScriptedInput {
             0 => self.click(producer),
             1 => self.scroll(producer),
             2 => self.press(producer),
+            3 => self.compose(producer),
+            4 => self.hide(producer),
+            5 => self.show(producer),
+            6 => self.devtools(producer),
             _ => {}
         }
         self.stage += 1;
@@ -142,6 +170,51 @@ impl ScriptedInput {
                 character: Some(ch),
                 modifiers: EventModifiers::default(),
             });
+        }
+    }
+
+    fn compose<P: CefSurfaceProducer + ?Sized>(&self, producer: &mut P) {
+        let Some(text) = self.ime.as_deref() else { return };
+        eprintln!("weld demo: IME composing {text:?}");
+        let end = text.chars().count() as u32;
+        if let Err(e) = producer.ime_set_composition(text, (end, end)) {
+            eprintln!("weld demo: ime_set_composition failed: {e}");
+            return;
+        }
+        // Commit separately, so a page that reports composition and a page that
+        // reports only the committed value both show something.
+        if let Err(e) = producer.ime_commit_text(text) {
+            eprintln!("weld demo: ime_commit_text failed: {e}");
+        }
+    }
+
+    fn hide<P: CefSurfaceProducer + ?Sized>(&self, producer: &mut P) {
+        if !self.hide_cycle {
+            return;
+        }
+        eprintln!("weld demo: set_visible(false) -- painting should stop here");
+        if let Err(e) = producer.set_visible(false) {
+            eprintln!("weld demo: set_visible(false) failed: {e}");
+        }
+    }
+
+    fn show<P: CefSurfaceProducer + ?Sized>(&self, producer: &mut P) {
+        if !self.hide_cycle {
+            return;
+        }
+        eprintln!("weld demo: set_visible(true) -- painting should resume here");
+        if let Err(e) = producer.set_visible(true) {
+            eprintln!("weld demo: set_visible(true) failed: {e}");
+        }
+    }
+
+    fn devtools<P: CefSurfaceProducer + ?Sized>(&self, producer: &mut P) {
+        if !self.devtools {
+            return;
+        }
+        match producer.open_devtools() {
+            Ok(()) => eprintln!("weld demo: open_devtools() ok"),
+            Err(e) => eprintln!("weld demo: open_devtools() failed: {e}"),
         }
     }
 }

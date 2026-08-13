@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>ime-probe</title>
+<body style="margin:0;background:#fff;font:28px sans-serif">
+<input id="i" style="width:600px;font-size:28px" autofocus>
+<script>
+// Every stage of the IME path, so a failure says which stage never happened.
+// document.title surfaces as a TitleChanged navigation event.
+const i = document.getElementById("i");
+const say = t => { document.title = t; };
+i.addEventListener("compositionstart", e => say("cstart:" + e.data));
+i.addEventListener("compositionupdate", e => say("cupdate:" + e.data));
+i.addEventListener("compositionend", e => say("cend:" + e.data));
+i.addEventListener("textInput", e => say("textinput:" + e.data));
+i.addEventListener("input", () => say("value:" + i.value));
+i.focus();
+</script>

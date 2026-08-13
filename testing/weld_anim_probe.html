@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>anim-probe</title>
+<body style="margin:0;background:#fff;font:20px sans-serif">
+<div id="box" style="width:80px;height:80px;background:#c33"></div>
+<script>
+// A page that never stops changing, so "painting stopped" is measurable.
+// Accelerated OSR paints on change; a static page paints once and proves
+// nothing about set_visible.
+let n = 0;
+function step() {
+  n = (n + 3) % 400;
+  document.getElementById("box").style.transform = "translateX(" + n + "px)";
+  requestAnimationFrame(step);
+}
+requestAnimationFrame(step);
+</script>
