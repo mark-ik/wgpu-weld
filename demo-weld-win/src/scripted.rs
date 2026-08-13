@@ -265,13 +265,15 @@ pub fn answer_permission_if_asked<P: CefSurfaceProducer + ?Sized>(
     };
     eprintln!("weld demo: permission #{id} from {origin} wants {permissions:?} ({raw:#x})");
     let Ok(answer) = std::env::var("WELD_PERMISSIONS") else { return };
-    let result = if answer == "grant" {
+    let grant = answer == "grant";
+    let result = if grant {
         producer.grant_permission(*id)
     } else {
         producer.deny_permission(*id)
     };
+    let verb = if grant { "granted" } else { "denied" };
     match result {
-        Ok(()) => eprintln!("weld demo: {answer}ed permission #{id}"),
+        Ok(()) => eprintln!("weld demo: {verb} permission #{id}"),
         Err(e) => eprintln!("weld demo: answering permission #{id} failed: {e}"),
     }
 }
