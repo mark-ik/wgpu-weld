@@ -40,13 +40,14 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | Downloads | verified | verified | verified |
 | Auth challenges | **never fires** [^auth] | wired | wired |
 | Permission requests | verified | verified | verified |
+| Context menus | verified | verified [^macmenu] | verified |
 
 "verified" means observed working on that platform's hardware. "wired" means
 implemented and compiling there, but not yet exercised on any machine — the
 last three rows are untested everywhere, not gaps in one platform.
 
 Not implemented yet, and `CefSurfaceCapabilities::probe` will tell you so at
-runtime rather than failing quietly: context menus, find-in-page, PDF and print, drag and drop, touch,
+runtime rather than failing quietly: find-in-page, PDF and print, drag and drop, touch,
 pointer/pen, zoom and user-agent settings, per-producer profile isolation, and
 the DevTools protocol.
 
@@ -59,6 +60,10 @@ rather than producing a broken texture. This is why the popup row reads
 "opens": on the AMD test machine CEF offers the dropdown and reports its
 geometry (`on_popup_show`, then `on_popup_size 320x197 at 0,80`), and only the
 texture import is refused, by the same modifier limitation.
+
+[^macmenu]: macOS reports an extra `Selection` target, because a right-click
+there selects the word under the cursor first. The event is otherwise identical
+on all three.
 
 [^auth]: `GetAuthCredentials` is registered on all three producers and the
 answer path is implemented — `NavigationEvent::AuthChallenged` plus
@@ -153,6 +158,18 @@ let config = CefSurfaceConfig {
 };
 // and when the window moves to another display:
 producer.set_scale_factor(new_scale)?;
+```
+
+A right-click gets no menu from CEF — it has nowhere to draw one under
+windowless rendering — so `welding` suppresses it and hands the host what it
+needs to draw its own:
+
+```rust,ignore
+if let NavigationEvent::ContextMenuRequested { x, y, targets, link_url, .. } = event {
+    // x, y are physical pixels, like every other coordinate here.
+    // targets is e.g. [Page, Frame, Link]; several apply at once.
+    my_menu.open_at(x, y, &targets, &link_url);
+}
 ```
 
 Permission requests — camera, microphone, location, notifications — are
