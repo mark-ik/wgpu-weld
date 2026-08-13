@@ -156,6 +156,9 @@ impl ApplicationHandler for DemoApp {
                     // WELD_DOWNLOAD_DIR=path accepts downloads into that
                     // directory; unset refuses them, which is the default.
                     download_dir: std::env::var("WELD_DOWNLOAD_DIR").ok().map(Into::into),
+                    // WELD_AUTH=user:pass answers auth challenges; unset
+                    // declines them, which is the default.
+                    handle_auth_challenges: std::env::var("WELD_AUTH").is_ok(),
                     ..Default::default()
                 },
             },
@@ -447,6 +450,7 @@ impl ApplicationHandler for DemoApp {
                         &s.recover_url,
                         &event,
                     );
+                    scripted::answer_auth_if_challenged(&mut s.producer, &event);
                 }
 
                 // The scripted gestures, for a machine nobody is sitting at:

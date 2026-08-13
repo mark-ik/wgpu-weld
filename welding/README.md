@@ -38,14 +38,14 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | DevTools window | verified | **crashes CEF** [^macdevtools] | no crash, no window seen |
 | IME composition | verified | verified | verified |
 | Downloads | verified | verified | verified |
+| Auth challenges | **never fires** [^auth] | wired | wired |
 
 "verified" means observed working on that platform's hardware. "wired" means
 implemented and compiling there, but not yet exercised on any machine — the
 last three rows are untested everywhere, not gaps in one platform.
 
 Not implemented yet, and `CefSurfaceCapabilities::probe` will tell you so at
-runtime rather than failing quietly: auth challenges, permission requests,
-context menus, find-in-page, PDF and print, drag and drop, touch,
+runtime rather than failing quietly: permission requests, context menus, find-in-page, PDF and print, drag and drop, touch,
 pointer/pen, zoom and user-agent settings, per-producer profile isolation, and
 the DevTools protocol.
 
@@ -58,6 +58,19 @@ rather than producing a broken texture. This is why the popup row reads
 "opens": on the AMD test machine CEF offers the dropdown and reports its
 geometry (`on_popup_show`, then `on_popup_size 320x197 at 0,80`), and only the
 texture import is refused, by the same modifier limitation.
+
+[^auth]: `GetAuthCredentials` is registered on all three producers and the
+answer path is implemented — `NavigationEvent::AuthChallenged` plus
+`answer_auth` / `cancel_auth`, held open only when
+`CefSurfaceConfig::handle_auth_challenges` is set, and declined immediately
+otherwise so an unwired host fails requests instead of hanging them. CEF has
+simply never been seen to call it. A probe inside the handler counted **zero**
+invocations against a top-level 401 that Chromium itself then failed with
+`ERR_INVALID_AUTH_CREDENTIALS`, with and without `CEF_RUNTIME_STYLE_ALLOY`,
+while other methods on that same handler fire normally. This looks like the
+Chrome-bootstrap pattern seen elsewhere here: Chrome owns the login prompt and
+a windowless browser has none. Proxy authentication is untested — CEF reports
+`is_proxy` separately, and that path may well work. Do not rely on this row.
 
 [^macdevtools]: Opening DevTools for a windowless browser crashes CEF 148 on
 macOS from inside the framework (`EXC_BAD_ACCESS` at null+0x150, on the host

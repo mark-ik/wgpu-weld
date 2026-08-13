@@ -1,6 +1,7 @@
 use dpi::PhysicalSize;
 
 use crate::{
+    auth::AuthId,
     downloads::DownloadId,
     error::WeldError,
     native_frame::{HostWgpuContext, ImportedTexture},
@@ -34,6 +35,7 @@ pub struct CefSurfaceCapabilities {
     pub script_result: BrowserFeatureStatus,
     pub devtools: BrowserFeatureStatus,
     pub downloads: BrowserFeatureStatus,
+    pub auth_challenges: BrowserFeatureStatus,
     pub popups: BrowserFeatureStatus,
     pub context_menus: BrowserFeatureStatus,
     pub console_messages: BrowserFeatureStatus,
@@ -95,6 +97,16 @@ impl CefSurfaceCapabilities {
             // `download_dir` decides that -- so this reports the wiring, and
             // `cancel_download` says so plainly when the directory is unset.
             downloads: BrowserFeatureStatus::Supported,
+            // The handler is registered and the answer path is implemented,
+            // but CEF has never been seen to call it. A probe inside
+            // GetAuthCredentials counted zero invocations against a top-level
+            // 401 that Chromium itself failed with ERR_INVALID_AUTH_CREDENTIALS,
+            // with and without CEF_RUNTIME_STYLE_ALLOY, while other methods on
+            // that same handler fire normally. Proxy authentication is
+            // untested.
+            auth_challenges: BrowserFeatureStatus::Partial(
+                "GetAuthCredentials is wired and answerable, but CEF 147 was not                  observed to call it for server auth; proxy auth untested",
+            ),
             // Two unrelated things share this name. Widget surfaces (select
             // dropdowns, autocomplete) are rendered: see `acquire_popup`.
             // Popup *browsers* (window.open) are denied and reported as
@@ -166,6 +178,10 @@ mod capability_tests {
                 "expected an explained Unsupported, got {status:?}"
             );
         }
+
+        // Auth is the other split case: implemented and registered, never
+        // seen to fire.
+        assert!(matches!(caps.auth_challenges, BrowserFeatureStatus::Partial(_)));
 
         // Popups are the split case: creation is handled, rendering is not.
         assert!(matches!(caps.popups, BrowserFeatureStatus::Partial(_)));
@@ -310,6 +326,15 @@ pub struct CefSurfaceConfig {
     /// Persistent user-data directory for cookies, storage, etc.
     /// `None` = in-memory / incognito.
     pub user_data_dir: Option<std::path::PathBuf>,
+    /// Whether the host answers HTTP auth challenges itself.
+    ///
+    /// Off by default, and deliberately: CEF's auth callback can be answered
+    /// later, but an unanswered one holds its request open forever. A host
+    /// that has not wired [`NavigationEvent::AuthChallenged`] up would hang
+    /// every authenticated request rather than fail it. Left off, `welding`
+    /// reports the challenge and immediately declines it, which the page sees
+    /// as an ordinary authentication failure.
+    pub handle_auth_challenges: bool,
     /// Where downloads are written. `None`, the default, refuses them.
     ///
     /// This is policy rather than a per-download question because CEF asks
@@ -342,6 +367,7 @@ impl Default for CefSurfaceConfig {
             background_color: Some([255, 255, 255]),
             prefer_accelerated: true,
             user_data_dir: None,
+            handle_auth_challenges: false,
             download_dir: None,
             scale_factor: 1.0,
         }
@@ -478,6 +504,29 @@ pub trait CefSurfaceProducer: Send {
     fn navigate_to_url(&mut self, url: &str) -> Result<(), WeldError>;
     fn navigate_to_string(&mut self, content: &str, mime_type: &str) -> Result<(), WeldError>;
     fn reload(&mut self) -> Result<(), WeldError>;
+
+    /// Answer an auth challenge.
+    ///
+    /// Neither the username nor the password is logged or kept; both go
+    /// straight to CEF. Answering an id twice, or one that was already
+    /// declined, is an error rather than a silent no-op.
+    fn answer_auth(
+        &mut self,
+        _id: AuthId,
+        _username: &str,
+        _password: &str,
+    ) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "auth challenges are not wired for this producer",
+        ))
+    }
+
+    /// Decline an auth challenge. The request fails as if the user cancelled.
+    fn cancel_auth(&mut self, _id: AuthId) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "auth challenges are not wired for this producer",
+        ))
+    }
 
     /// Ask CEF to cancel, pause or resume a download.
     ///
@@ -736,6 +785,31 @@ pub enum NavigationEvent {
     NewWindowRequested {
         url: String,
         user_gesture: bool,
+    },
+    /// A server or proxy demanded credentials.
+    ///
+    /// Carries no credentials, only the challenge. Answer with
+    /// [`CefSurfaceProducer::answer_auth`] or decline with
+    /// [`CefSurfaceProducer::cancel_auth`], quoting `id`. If
+    /// `CefSurfaceConfig::handle_auth_challenges` is left off, `welding` has
+    /// already declined it by the time this arrives and the id is spent — the
+    /// event is then a notification, not a question.
+    ///
+    /// CEF has one challenge channel and reports whether it came from a proxy;
+    /// it does not say whether a page load or a download provoked it, so
+    /// unlike `scrying` there is no page/download split to report.
+    AuthChallenged {
+        id: AuthId,
+        /// The URL whose load triggered the challenge.
+        origin_url: String,
+        /// Host the credentials are for.
+        host: String,
+        port: u16,
+        realm: String,
+        /// e.g. `basic`, `digest`, `negotiate`.
+        scheme: String,
+        /// True when a proxy is asking rather than the origin server.
+        is_proxy: bool,
     },
     /// A download began. `welding` has already chosen `destination_path`
     /// under the configured download directory and accepted the transfer; the

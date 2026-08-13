@@ -232,6 +232,29 @@ impl ScriptedInput {
     }
 }
 
+/// `WELD_AUTH=user:pass` answers an auth challenge as it arrives.
+///
+/// Credentials come from the environment only because a machine nobody is
+/// sitting at cannot be asked; they are passed straight to the producer and
+/// never logged.
+pub fn answer_auth_if_challenged<P: CefSurfaceProducer + ?Sized>(
+    producer: &mut P,
+    event: &NavigationEvent,
+) {
+    let NavigationEvent::AuthChallenged { id, host, realm, scheme, is_proxy, .. } = event else {
+        return;
+    };
+    eprintln!(
+        "weld demo: auth challenge #{id} host={host} realm={realm:?} scheme={scheme} proxy={is_proxy}"
+    );
+    let Ok(spec) = std::env::var("WELD_AUTH") else { return };
+    let (user, pass) = spec.split_once(':').unwrap_or((spec.as_str(), ""));
+    match producer.answer_auth(*id, user, pass) {
+        Ok(()) => eprintln!("weld demo: answered auth #{id}"),
+        Err(e) => eprintln!("weld demo: answer_auth failed: {e}"),
+    }
+}
+
 /// `WELD_RECOVER` sends the browser back to its starting page when the render
 /// process dies, which is the whole crash-recovery story in one place.
 ///

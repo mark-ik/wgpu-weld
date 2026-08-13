@@ -166,6 +166,9 @@ impl ApplicationHandler for DemoApp {
                     // WELD_DOWNLOAD_DIR=path accepts downloads into that
                     // directory; unset refuses them, which is the default.
                     download_dir: std::env::var("WELD_DOWNLOAD_DIR").ok().map(Into::into),
+                    // WELD_AUTH=user:pass answers auth challenges; unset
+                    // declines them, which is the default.
+                    handle_auth_challenges: std::env::var("WELD_AUTH").is_ok(),
                     ..Default::default()
                 },
             },
@@ -403,6 +406,7 @@ impl ApplicationHandler for DemoApp {
                 while let Some(event) = s.producer.poll_navigation_event() {
                     log::info!("nav: {event:?}");
                     scripted::recover_if_crashed(&mut s.producer, &s.recover_url, &event);
+                    scripted::answer_auth_if_challenged(&mut s.producer, &event);
                 }
 
                 // Parity battery: one run reports frames, script results,

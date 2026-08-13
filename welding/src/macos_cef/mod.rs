@@ -25,7 +25,9 @@ use crate::{
 
 
 #[cfg(feature = "cef-runtime")]
-use cef::{ImplBrowser, ImplBrowserHost, ImplFrame, ImplListValue, ImplProcessMessage};
+use cef::{
+    ImplAuthCallback, ImplBrowser, ImplBrowserHost, ImplFrame, ImplListValue, ImplProcessMessage,
+};
 
 // ── Public config ─────────────────────────────────────────────────────────────
 
@@ -83,6 +85,7 @@ pub struct MacosCefProducer {
     #[cfg(feature = "cef-runtime")]
     cookies: Arc<crate::cookies::CookieJar>,
     downloads: Arc<crate::downloads::Downloads>,
+    auth: Arc<crate::auth::AuthChallenges>,
     #[cfg(feature = "cef-runtime")]
     scripts: Arc<crate::app::ScriptResults>,
     #[cfg(feature = "cef-runtime")]
@@ -114,6 +117,8 @@ impl MacosCefProducer {
             let ime = Arc::new(crate::ime::LatestComposition::default());
             let cookies = Arc::new(crate::cookies::CookieJar::default());
             let downloads = Arc::new(crate::downloads::Downloads::default());
+            let auth = Arc::new(crate::auth::AuthChallenges::default());
+            auth.set_enabled(config.surface.handle_auth_challenges);
             let scripts = Arc::new(crate::app::ScriptResults::default());
 
             let inner = WeldRenderHandlerInner {
@@ -129,7 +134,7 @@ impl MacosCefProducer {
             let load_handler = cef_backed::WeldLoadHandler::build(inner.clone());
             let display_handler = cef_backed::WeldDisplayHandler::build(inner);
             let life_span_handler = cef_backed::WeldLifeSpanHandler::build(events.clone());
-            let request_handler = cef_backed::WeldRequestHandler::build(events.clone());
+            let request_handler = cef_backed::WeldRequestHandler::build(events.clone(), auth.clone());
             downloads.set_dir(config.surface.download_dir.clone());
             let download_handler =
                 cef_backed::WeldDownloadHandler::build(events.clone(), downloads.clone());
@@ -183,6 +188,7 @@ impl MacosCefProducer {
                 ime,
                 cookies,
                 downloads,
+                auth,
                 scripts,
                 next_script_id: 0,
                 events,
@@ -531,6 +537,50 @@ impl CefSurfaceProducer for MacosCefProducer {
             }
         }
         Err(pending("cef_browser_host_t::invalidate"))
+    }
+
+    fn answer_auth(
+        &mut self,
+        id: crate::AuthId,
+        username: &str,
+        password: &str,
+    ) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            // Deliberately not logged, here or anywhere.
+            let Some(callback) = self.auth.take(id) else {
+                return Err(WeldError::PlatformUnsupported(
+                    "no auth challenge is waiting on that id",
+                ));
+            };
+            let user: cef::CefString = username.into();
+            let pass: cef::CefString = password.into();
+            callback.cont(Some(&user), Some(&pass));
+            return Ok(());
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            let _ = (id, username, password);
+            Err(pending("cef_auth_callback_t::cont"))
+        }
+    }
+
+    fn cancel_auth(&mut self, id: crate::AuthId) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            let Some(callback) = self.auth.take(id) else {
+                return Err(WeldError::PlatformUnsupported(
+                    "no auth challenge is waiting on that id",
+                ));
+            };
+            callback.cancel();
+            return Ok(());
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            let _ = id;
+            Err(pending("cef_auth_callback_t::cancel"))
+        }
     }
 
     fn cancel_download(&mut self, id: crate::DownloadId) -> Result<(), WeldError> {

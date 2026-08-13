@@ -274,9 +274,47 @@ impl WeldLifeSpanHandler {
 cef::wrap_request_handler! {
     pub(super) struct WeldRequestHandler {
         events: Arc<Mutex<EventQueues>>,
+        auth: Arc<crate::auth::AuthChallenges>,
     }
 
     impl RequestHandler {
+        fn auth_credentials(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            origin_url: Option<&cef::CefString>,
+            is_proxy: ::std::os::raw::c_int,
+            host: Option<&cef::CefString>,
+            port: ::std::os::raw::c_int,
+            realm: Option<&cef::CefString>,
+            scheme: Option<&cef::CefString>,
+            callback: Option<&mut cef::AuthCallback>,
+        ) -> ::std::os::raw::c_int {
+            let id = self.auth.next_id();
+            let event = crate::surface::NavigationEvent::AuthChallenged {
+                id,
+                origin_url: origin_url.map(|s| s.to_string()).unwrap_or_default(),
+                host: host.map(|s| s.to_string()).unwrap_or_default(),
+                port: port.clamp(0, u16::MAX as _) as u16,
+                realm: realm.map(|s| s.to_string()).unwrap_or_default(),
+                scheme: scheme.map(|s| s.to_string()).unwrap_or_default(),
+                is_proxy: is_proxy != 0,
+            };
+            self.events.lock().unwrap().nav.push_back(event);
+
+            let Some(callback) = callback else { return 0 };
+            if self.auth.is_enabled() {
+                // Held for the host to answer. CEF's auth callback is
+                // reference-counted and may be answered later, unlike the
+                // download destination.
+                self.auth.hold(id, callback.clone());
+            } else {
+                // Declined now rather than held: a host that never answers
+                // would otherwise keep this request open forever.
+                callback.cancel();
+            }
+            1
+        }
+
         fn on_render_process_terminated(
             &self,
             _browser: Option<&mut cef::Browser>,
@@ -301,8 +339,11 @@ cef::wrap_request_handler! {
 }
 
 impl WeldRequestHandler {
-    pub fn build(events: Arc<Mutex<EventQueues>>) -> cef::RequestHandler {
-        Self::new(events)
+    pub fn build(
+        events: Arc<Mutex<EventQueues>>,
+        auth: Arc<crate::auth::AuthChallenges>,
+    ) -> cef::RequestHandler {
+        Self::new(events, auth)
     }
 }
 
