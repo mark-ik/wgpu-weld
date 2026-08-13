@@ -583,31 +583,20 @@ impl CefSurfaceProducer for MacosCefProducer {
     }
 
     fn open_devtools(&self) -> Result<(), WeldError> {
-        #[cfg(feature = "cef-runtime")]
-        {
-            if let Some(host) = self.browser.host() {
-                // Every by-ref argument gets a real pointer. CEF's generated
-                // entry point lists window_info, settings and
-                // inspect_element_at as "unverified", meaning libcef
-                // dereferences them with no null check: passing None for
-                // inspect_element_at is what crashed this call on macOS from
-                // inside the framework.
-                let window_info = cef::WindowInfo {
-                    bounds: cef::Rect { x: 0, y: 0, width: 1024, height: 768 },
-                    ..Default::default()
-                };
-                let settings = cef::BrowserSettings::default();
-                let inspect_at = cef::Point { x: 0, y: 0 };
-                host.show_dev_tools(
-                    Some(&window_info),
-                    None,
-                    Some(&settings),
-                    Some(&inspect_at),
-                );
-                return Ok(());
-            }
-        }
-        Err(pending("cef_browser_host_t::show_dev_tools"))
+        // Deliberately not calling show_dev_tools on macOS. CEF 148 crashes the
+        // host process from inside the framework when a windowless browser
+        // opens DevTools (EXC_BAD_ACCESS at null+0x150, on the host thread).
+        // Tried and ruled out: a NULL CefWindowInfo, a bounds-only one, and a
+        // non-null `inspect_element_at` -- the last because CEF dereferences
+        // its by-ref arguments without a null check, which is what made the
+        // same mistake fatal here and merely silent for the IME calls. It
+        // crashes with all three supplied. A library segfaulting its embedder
+        // is worse than a missing feature, so this reports the situation
+        // instead, and `probe()` says the same so a host can grey the button
+        // out.
+        Err(WeldError::PlatformUnsupported(
+            "DevTools crashes CEF 148 for windowless browsers on macOS",
+        ))
     }
 
     fn browser_id(&self) -> i32 {

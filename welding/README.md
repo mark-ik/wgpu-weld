@@ -60,7 +60,8 @@ texture import is refused, by the same modifier limitation.
 
 [^macdevtools]: Opening DevTools for a windowless browser crashes CEF 148 on
 macOS from inside the framework (`EXC_BAD_ACCESS` at null+0x150, on the host
-thread), with a NULL `CefWindowInfo` and with a bounds-only one alike. Rather
+thread), with a NULL `CefWindowInfo`, with a bounds-only one, and with every
+by-ref argument supplied non-null including `inspect_element_at`. Rather
 than segfault its embedder, the macOS producer refuses the call and `probe()`
 reports it unsupported there, so a host can grey the button out. Windows opens
 a real DevTools window; the window needs top-level style flags, because a
