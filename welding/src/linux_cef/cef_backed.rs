@@ -850,3 +850,37 @@ impl WeldContextMenuHandler {
         Self::new(events, metrics)
     }
 }
+
+// ── DevTools protocol observer ────────────────────────────────────────────
+
+cef::wrap_dev_tools_message_observer! {
+    pub(super) struct WeldDevToolsObserver {
+        channel: Arc<crate::devtools::DevToolsChannel>,
+    }
+
+    impl DevToolsMessageObserver {
+        fn on_dev_tools_message(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            message: Option<&[u8]>,
+        ) -> ::std::os::raw::c_int {
+            // The raw wire format, results and events alike. Taking it here
+            // rather than from the parsed callbacks keeps what a host sees
+            // identical to what the protocol documents.
+            if let Some(bytes) = message {
+                self.channel.push(String::from_utf8_lossy(bytes).into_owned());
+            }
+            // 0: not consumed, so CEF still runs its own parsed callbacks for
+            // anything else that wants them.
+            0
+        }
+    }
+}
+
+impl WeldDevToolsObserver {
+    pub fn build(
+        channel: Arc<crate::devtools::DevToolsChannel>,
+    ) -> cef::DevToolsMessageObserver {
+        Self::new(channel)
+    }
+}

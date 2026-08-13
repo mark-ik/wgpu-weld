@@ -86,6 +86,7 @@ struct DemoState {
     recover_url: String,
     battery_started: bool,
     ticks: u32,
+    cdp_ticks: u32,
     popups_imported: u32,
     cursor: (f32, f32),
     mods: EventModifiers,
@@ -177,6 +178,7 @@ impl ApplicationHandler for DemoApp {
                     // WELD_DOWNLOAD_DIR=path accepts downloads into that
                     // directory; unset refuses them, which is the default.
                     download_dir: std::env::var("WELD_DOWNLOAD_DIR").ok().map(Into::into),
+                    devtools_protocol: std::env::var("WELD_CDP").is_ok(),
                     // WELD_AUTH=user:pass answers auth challenges; unset
                     // declines them, which is the default.
                     handle_auth_challenges: std::env::var("WELD_AUTH").is_ok(),
@@ -204,6 +206,7 @@ impl ApplicationHandler for DemoApp {
             recover_url: url,
             battery_started: false,
             ticks: 0,
+            cdp_ticks: 0,
             popups_imported: 0,
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
@@ -424,6 +427,21 @@ impl DemoApp {
             // HiDPI layout and cookies, so the same evidence exists on
             // every platform.
             s.ticks += 1;
+        // WELD_CDP=<method> sends one CDP call, then prints every
+        // reply and event as it arrives.
+        if let Ok(method) = std::env::var("WELD_CDP") {
+            s.cdp_ticks += 1;
+            if s.cdp_ticks == 200 {
+                let json = format!(r#"{{"id":1,"method":"{method}"}}"#);
+                match s.producer.send_devtools_message(&json) {
+                    Ok(()) => eprintln!("weld demo: CDP sent {json}"),
+                    Err(e) => eprintln!("weld demo: CDP send failed: {e}"),
+                }
+            }
+            while let Some(msg) = s.producer.poll_devtools_message() {
+                eprintln!("weld demo: CDP <- {}", &msg[..msg.len().min(110)]);
+            }
+        }
         // Ticks, not imported frames: accelerated OSR only paints on change,
         // so a static page yields one frame and the battery would never fire.
         if !s.battery_started && s.ticks > 60 {

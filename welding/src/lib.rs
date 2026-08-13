@@ -18,6 +18,7 @@ mod ime;
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
 mod auth;
 mod cookies;
+mod devtools;
 mod downloads;
 mod permissions;
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]

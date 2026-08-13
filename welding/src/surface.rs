@@ -38,6 +38,7 @@ pub struct CefSurfaceCapabilities {
     pub downloads: BrowserFeatureStatus,
     pub auth_challenges: BrowserFeatureStatus,
     pub permission_requests: BrowserFeatureStatus,
+    pub devtools_protocol: BrowserFeatureStatus,
     pub popups: BrowserFeatureStatus,
     pub context_menus: BrowserFeatureStatus,
     pub console_messages: BrowserFeatureStatus,
@@ -110,6 +111,10 @@ impl CefSurfaceCapabilities {
             // a page's own geolocation success callback has been seen to fire
             // after grant_permission on Windows.
             permission_requests: BrowserFeatureStatus::Supported,
+            // CDP passes through in both directions, opt-in via
+            // CefSurfaceConfig::devtools_protocol. Browser.getVersion returns a
+            // real protocol result and Page.enable subscribes.
+            devtools_protocol: BrowserFeatureStatus::Supported,
             auth_challenges: BrowserFeatureStatus::Partial(
                 "GetAuthCredentials is wired and answerable, but CEF 147 was not                  observed to call it for server auth; proxy auth untested",
             ),
@@ -190,6 +195,7 @@ mod capability_tests {
         }
 
         assert_eq!(caps.permission_requests, BrowserFeatureStatus::Supported);
+        assert_eq!(caps.devtools_protocol, BrowserFeatureStatus::Supported);
 
         // Auth is the other split case: implemented and registered, never
         // seen to fire.
@@ -338,6 +344,12 @@ pub struct CefSurfaceConfig {
     /// Persistent user-data directory for cookies, storage, etc.
     /// `None` = in-memory / incognito.
     pub user_data_dir: Option<std::path::PathBuf>,
+    /// Subscribe to the Chrome DevTools Protocol.
+    ///
+    /// Off by default because CDP is chatty and the subscription is not free:
+    /// a single `Page.enable` produces a steady stream of events whether or not
+    /// anything reads them.
+    pub devtools_protocol: bool,
     /// Whether the host answers permission requests itself.
     ///
     /// Off by default, and for the same reason as `handle_auth_challenges`: an
@@ -386,6 +398,7 @@ impl Default for CefSurfaceConfig {
             background_color: Some([255, 255, 255]),
             prefer_accelerated: true,
             user_data_dir: None,
+            devtools_protocol: false,
             handle_permission_requests: false,
             handle_auth_challenges: false,
             download_dir: None,
@@ -524,6 +537,31 @@ pub trait CefSurfaceProducer: Send {
     fn navigate_to_url(&mut self, url: &str) -> Result<(), WeldError>;
     fn navigate_to_string(&mut self, content: &str, mime_type: &str) -> Result<(), WeldError>;
     fn reload(&mut self) -> Result<(), WeldError>;
+
+    /// Send one Chrome DevTools Protocol message, as JSON.
+    ///
+    /// The wire format, unwrapped: `{"id":1,"method":"Page.enable"}`. Replies
+    /// and events come back from [`Self::poll_devtools_message`] in the same
+    /// form, so an existing CDP client can drive this directly.
+    ///
+    /// Requires `CefSurfaceConfig::devtools_protocol`.
+    fn send_devtools_message(&mut self, _json: &str) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "the DevTools protocol is not wired for this producer",
+        ))
+    }
+
+    /// Take the next protocol message, if any. Poll every tick: the queue is
+    /// bounded, and a host that falls behind loses the oldest messages.
+    fn poll_devtools_message(&mut self) -> Option<String> {
+        None
+    }
+
+    /// How many protocol messages were dropped because the host was not
+    /// polling. Non-zero means its view of the protocol has gaps.
+    fn devtools_dropped(&self) -> u64 {
+        0
+    }
 
     /// Grant a permission request. Media requests are granted exactly what
     /// they asked for; anything else is accepted.

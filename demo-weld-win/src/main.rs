@@ -156,6 +156,7 @@ impl ApplicationHandler for DemoApp {
                     // WELD_DOWNLOAD_DIR=path accepts downloads into that
                     // directory; unset refuses them, which is the default.
                     download_dir: std::env::var("WELD_DOWNLOAD_DIR").ok().map(Into::into),
+                    devtools_protocol: std::env::var("WELD_CDP").is_ok(),
                     // WELD_AUTH=user:pass answers auth challenges; unset
                     // declines them, which is the default.
                     handle_auth_challenges: std::env::var("WELD_AUTH").is_ok(),
@@ -461,6 +462,20 @@ impl ApplicationHandler for DemoApp {
                 // a <select> dropdown needs a real click, and a key never
                 // reaches the DOM without a real key event.
                 s.frames_drawn += 1;
+                // WELD_CDP=<method> sends one CDP call once the page is up,
+                // then every reply and event is printed as it arrives.
+                if let Ok(method) = std::env::var("WELD_CDP") {
+                    if s.frames_drawn == 200 {
+                        let json = format!(r#"{{"id":1,"method":"{method}"}}"#);
+                        match s.producer.send_devtools_message(&json) {
+                            Ok(()) => eprintln!("weld demo: CDP sent {json}"),
+                            Err(e) => eprintln!("weld demo: CDP send failed: {e}"),
+                        }
+                    }
+                    while let Some(msg) = s.producer.poll_devtools_message() {
+                        eprintln!("weld demo: CDP <- {}", &msg[..msg.len().min(110)]);
+                    }
+                }
                 s.scripted.tick(&mut s.producer, true);
 
                 let output = match s.surface.get_current_texture() {

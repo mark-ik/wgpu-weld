@@ -119,6 +119,11 @@ pub struct WindowsCefProducer {
     downloads: Arc<crate::downloads::Downloads>,
     auth: Arc<crate::auth::AuthChallenges>,
     permissions: Arc<crate::permissions::Permissions>,
+    devtools: Arc<crate::devtools::DevToolsChannel>,
+    /// Keeps the CDP subscription alive: dropping the registration
+    /// unsubscribes, so the observer must outlive the producer's interest.
+    #[cfg(feature = "cef-runtime")]
+    _devtools_registration: Option<cef::Registration>,
     #[cfg(feature = "cef-runtime")]
     cookies: Arc<crate::cookies::CookieJar>,
     #[cfg(feature = "cef-runtime")]
@@ -205,6 +210,8 @@ impl WindowsCefProducer {
             downloads.set_dir(config.surface.download_dir.clone());
             let download_handler =
                 cef_backed::WeldDownloadHandler::build(events.clone(), downloads.clone());
+            let devtools = Arc::new(crate::devtools::DevToolsChannel::default());
+            devtools.set_enabled(config.surface.devtools_protocol);
             let permissions = Arc::new(crate::permissions::Permissions::default());
             permissions.set_enabled(config.surface.handle_permission_requests);
             let permission_handler =
@@ -268,6 +275,8 @@ impl WindowsCefProducer {
                 downloads,
                 auth,
                 permissions,
+                devtools: devtools.clone(),
+                _devtools_registration: None,
                 scripts,
                 next_script_id: 0,
                 events,
@@ -340,6 +349,31 @@ impl WindowsCefProducer {
             let _ = (id, granted);
             Err(pending("cef_permission_prompt_callback_t"))
         }
+    }
+
+    /// Subscribe to CDP if asked and not already subscribed.
+    ///
+    /// Lazy on purpose: the browser is created asynchronously, so there is no
+    /// host to register against until it exists. Dropping the registration
+    /// unsubscribes, so it is kept on the producer.
+    #[cfg(feature = "cef-runtime")]
+    fn ensure_devtools(&mut self) -> Result<(), WeldError> {
+        if !self.devtools.is_enabled() {
+            return Err(WeldError::PlatformUnsupported(
+                "set CefSurfaceConfig::devtools_protocol to use the DevTools protocol",
+            ));
+        }
+        if self._devtools_registration.is_some() {
+            return Ok(());
+        }
+        let Some(host) = self.browser().and_then(|browser| browser.host()) else {
+            return Err(WeldError::PlatformUnsupported(
+                "the browser is not ready yet",
+            ));
+        };
+        let mut observer = cef_backed::WeldDevToolsObserver::build(self.devtools.clone());
+        self._devtools_registration = host.add_dev_tools_message_observer(Some(&mut observer));
+        Ok(())
     }
 
     /// Record a download request. It is applied on that download's next
@@ -663,6 +697,44 @@ impl CefSurfaceProducer for WindowsCefProducer {
             }
         }
         Err(pending("cef_browser_host_t::invalidate"))
+    }
+
+    fn send_devtools_message(&mut self, json: &str) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            self.ensure_devtools()?;
+            let Some(host) = self.browser().and_then(|browser| browser.host()) else {
+                return Err(WeldError::PlatformUnsupported("the browser is not ready yet"));
+            };
+            // The wire format goes straight through, unparsed.
+            host.send_dev_tools_message(Some(json.as_bytes()));
+            return Ok(());
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            let _ = json;
+            Err(pending("cef_browser_host_t::send_dev_tools_message"))
+        }
+    }
+
+    fn poll_devtools_message(&mut self) -> Option<String> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            // Subscribing here too, so a host that only listens still receives.
+            let _ = self.ensure_devtools();
+            return self.devtools.pop();
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        None
+    }
+
+    fn devtools_dropped(&self) -> u64 {
+        #[cfg(feature = "cef-runtime")]
+        {
+            return self.devtools.dropped();
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        0
     }
 
     fn grant_permission(&mut self, id: crate::PermissionId) -> Result<(), WeldError> {
