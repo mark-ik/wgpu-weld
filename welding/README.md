@@ -14,7 +14,7 @@ of them import through.
 
 ## State, 2026-08-12
 
-Version 0.5.2. Every "verified" below was checked by running it on that
+Version 0.6.0. Every "verified" below was checked by running it on that
 platform's hardware, in one battery per machine: Windows 11 (this laptop),
 macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac (the
 first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
@@ -37,14 +37,15 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | Visibility (`set_visible`) | verified | verified | wired |
 | DevTools window | verified | **crashes CEF** [^macdevtools] | no crash, no window seen |
 | IME composition | verified | verified | verified |
+| Downloads | verified | verified | verified |
 
 "verified" means observed working on that platform's hardware. "wired" means
 implemented and compiling there, but not yet exercised on any machine — the
 last three rows are untested everywhere, not gaps in one platform.
 
 Not implemented yet, and `CefSurfaceCapabilities::probe` will tell you so at
-runtime rather than failing quietly: downloads, auth challenges, permission
-requests, context menus, find-in-page, PDF and print, drag and drop, touch,
+runtime rather than failing quietly: auth challenges, permission requests,
+context menus, find-in-page, PDF and print, drag and drop, touch,
 pointer/pen, zoom and user-agent settings, per-producer profile isolation, and
 the DevTools protocol.
 
@@ -139,6 +140,32 @@ let config = CefSurfaceConfig {
 // and when the window moves to another display:
 producer.set_scale_factor(new_scale)?;
 ```
+
+Downloads are refused unless the host says where they may land. CEF asks for a
+destination inside a callback it cancels the download without an answer to, and
+on Linux and macOS that callback runs on the thread a host reply would have to
+come back on — so the directory is policy, and the steering happens afterwards:
+
+```rust,ignore
+let config = CefSurfaceConfig {
+    download_dir: Some("/home/me/Downloads".into()),  // None refuses downloads
+    ..Default::default()
+};
+
+// Then, on ordinary ticks:
+match event {
+    NavigationEvent::DownloadStarted { id, destination_path, .. } => { /* show it */ }
+    NavigationEvent::DownloadProgress { id, bytes_received, .. } => { /* at most 10/s */ }
+    NavigationEvent::DownloadFinished { id, error, .. } => { /* error is Some on failure */ }
+    NavigationEvent::DownloadCancelled { id, .. } => {}
+    _ => {}
+}
+producer.pause_download(id)?;   // applied on that download's next update
+producer.cancel_download(id)?;
+```
+
+The server's suggested filename only contributes its final component, so it
+cannot place a file outside `download_dir`.
 
 IME composition goes in as text, and the page sees a real composition:
 

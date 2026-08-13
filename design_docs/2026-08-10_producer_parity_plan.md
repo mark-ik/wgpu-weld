@@ -617,10 +617,35 @@ now (first, then every 500th).
   above. Script results, Chromium command-line switches, and W1's
   `NewWindowRequested` residual, all of which were waiting on the same missing
   render-process handler.
-- **W7, host-decision surfaces.** Downloads (lifecycle events + decision API,
-  matching scrying's pause/resume/cancel shape), `GetAuthCredentials`,
-  permission requests, context-menu events. Done when: the capability rows
-  read Y with the same event/decision shapes scrying uses.
+- **W7, host-decision surfaces. IN PROGRESS.** Downloads **done 2026-08-13**,
+  verified on all three (Windows, M4, ThinkPad): the same 28-byte probe file
+  lands on disk with the right bytes, and with no `download_dir` configured
+  zero download events fire at all.
+
+  The shape follows scrying's, with one deliberate difference. scrying can ask
+  a host handler per download; `welding` cannot, because CEF asks for the
+  destination inside a callback that cancels the download without an answer,
+  and on Linux and macOS that callback runs on the thread a host reply would
+  travel back on — the same reason cookies are request-then-poll. So the
+  directory is policy (`CefSurfaceConfig::download_dir`, `None` refuses) and
+  the steering is afterwards, via `cancel_download` / `pause_download` /
+  `resume_download`. Those are recorded and applied on the download's next
+  update, because `CefDownloadItemCallback` is callback-scoped like the paint
+  handles.
+
+  No resume blob, unlike scrying on macOS: CEF offers live pause and resume on
+  a running download and nothing that outlives the process, so
+  `DownloadCancelled` carries no resume data and says so.
+
+  Two things worth keeping: the server's suggested filename is
+  attacker-influenced and only its final component is used, with a test pinning
+  that `../../.bashrc` stays inside the download directory; and CEF updates an
+  item *before* it asks where to put it, so the first run reported progress on
+  a download the host had not been told existed.
+
+  Still open in W7: `GetAuthCredentials`, permission requests, context-menu
+  events. Done when: those capability rows read Y with the same event/decision
+  shapes scrying uses.
 - **W8, long tail.** Drag/drop, touch, find-in-page, PDF, zoom/UA/settings,
   per-producer `RequestContext` profiles, `can_go_back`/`can_go_forward`,
   snapshot helper. (`WasHidden`-backed visibility landed early, during W4.)

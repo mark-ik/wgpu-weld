@@ -11,7 +11,7 @@ the shared `grafting` interop core).
 
 ## Status (2026-08-12)
 
-Prototype. `welding` 0.5.2 in this repo, 0.5.1 published on crates.io
+Prototype. `welding` 0.6.0 in this repo, 0.5.2 published on crates.io
 (MPL-2.0). Per-platform detail, and
 the difference between "verified on that hardware" and "implemented but not
 yet run there", is the table in [`welding/README.md`](welding/README.md).
@@ -83,7 +83,9 @@ call before any CEF code runs.
   distribution; producer constructors return a pending-wiring error.
 
 Current plan (`design_docs/`, 2026-08-10 parity plan): W1 through W6 have
-landed. What remains is W7, the host-decision surfaces (downloads, auth
+landed, and W7 is under way: downloads are done and verified on all three
+platforms, with auth challenges, permission requests and context menus to
+follow. What remains is W7, the host-decision surfaces (downloads, auth
 challenges, permission requests, context menus); W8, the long tail (drag,
 touch, find-in-page, PDF, zoom and UA settings, per-producer profiles); and
 W9, the Chrome DevTools Protocol, which is this lane's distinguishing feature
