@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><title>zoom-probe</title>
+<body style="margin:0;background:#fff;font:20px sans-serif">
+<p>zoom probe</p>
+<script>
+// Zooming changes the CSS viewport, which fires resize. The title carries the
+// new width, so a zoom that took effect is visible from outside.
+const report = () => { document.title = "w:" + window.innerWidth; };
+window.addEventListener("resize", report);
+report();
+</script>

@@ -462,6 +462,26 @@ impl ApplicationHandler for DemoApp {
                 // a <select> dropdown needs a real click, and a key never
                 // reaches the DOM without a real key event.
                 s.frames_drawn += 1;
+                // WELD_FIND=<text> searches once the page is up; WELD_ZOOM
+                // steps the zoom and reports where it landed.
+                if s.frames_drawn == 200 {
+                    if let Ok(text) = std::env::var("WELD_FIND") {
+                        match s.producer.find(&text, true, false, false) {
+                            Ok(()) => eprintln!("weld demo: find {text:?}"),
+                            Err(e) => eprintln!("weld demo: find failed: {e}"),
+                        }
+                    }
+                    if std::env::var("WELD_ZOOM").is_ok() {
+                        let _ = s.producer.zoom(welding::ZoomCommand::In);
+                        let _ = s.producer.zoom(welding::ZoomCommand::In);
+                        eprintln!("weld demo: zoom level now {}", s.producer.zoom_level());
+                    }
+                    eprintln!(
+                        "weld demo: can_go_back={} can_go_forward={}",
+                        s.producer.can_go_back(),
+                        s.producer.can_go_forward()
+                    );
+                }
                 // WELD_CDP=<method> sends one CDP call once the page is up,
                 // then every reply and event is printed as it arrives.
                 if let Ok(method) = std::env::var("WELD_CDP") {

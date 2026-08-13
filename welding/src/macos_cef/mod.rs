@@ -153,6 +153,7 @@ impl MacosCefProducer {
                 cef_backed::WeldPermissionHandler::build(events.clone(), permissions.clone());
             let context_menu_handler =
                 cef_backed::WeldContextMenuHandler::build(events.clone(), metrics.clone());
+            let find_handler = cef_backed::WeldFindHandler::build(events.clone());
             let mut client = cef_backed::WeldClient::build(
                 render_handler,
                 load_handler,
@@ -162,6 +163,7 @@ impl MacosCefProducer {
                 download_handler,
                 permission_handler,
                 context_menu_handler,
+                find_handler,
                 scripts.clone(),
                 events.clone(),
             );
@@ -731,6 +733,73 @@ impl CefSurfaceProducer for MacosCefProducer {
         #[cfg(feature = "cef-runtime")]
         { self.browser.stop_load(); return Ok(()); }
         Err(pending("cef_browser_t::stop_load"))
+    }
+
+    fn can_go_back(&self) -> bool {
+        #[cfg(feature = "cef-runtime")]
+        {
+            return Some(&self.browser).map(|b| b.can_go_back() != 0).unwrap_or(false);
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        false
+    }
+
+    fn can_go_forward(&self) -> bool {
+        #[cfg(feature = "cef-runtime")]
+        {
+            return Some(&self.browser).map(|b| b.can_go_forward() != 0).unwrap_or(false);
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        false
+    }
+
+    fn zoom(&mut self, command: crate::ZoomCommand) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser.host() {
+            host.zoom(match command {
+                crate::ZoomCommand::In => cef::ZoomCommand::IN,
+                crate::ZoomCommand::Out => cef::ZoomCommand::OUT,
+                crate::ZoomCommand::Reset => cef::ZoomCommand::RESET,
+            });
+            return Ok(());
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        let _ = command;
+        Err(pending("cef_browser_host_t::zoom"))
+    }
+
+    fn zoom_level(&self) -> f64 {
+        #[cfg(feature = "cef-runtime")]
+        {
+            return self.browser.host().map(|h| h.zoom_level()).unwrap_or(0.0);
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        0.0
+    }
+
+    fn find(&mut self, text: &str, forward: bool, match_case: bool, find_next: bool)
+        -> Result<(), WeldError>
+    {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser.host() {
+            let text: cef::CefString = text.into();
+            host.find(Some(&text), forward as _, match_case as _, find_next as _);
+            return Ok(());
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        let _ = (text, forward, match_case, find_next);
+        Err(pending("cef_browser_host_t::find"))
+    }
+
+    fn stop_finding(&mut self, clear_selection: bool) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser.host() {
+            host.stop_finding(clear_selection as _);
+            return Ok(());
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        let _ = clear_selection;
+        Err(pending("cef_browser_host_t::stop_finding"))
     }
 
     fn go_back(&mut self) -> Result<(), WeldError> {

@@ -357,6 +357,7 @@ cef::wrap_client! {
         download_handler: cef::DownloadHandler,
         permission_handler: cef::PermissionHandler,
         context_menu_handler: cef::ContextMenuHandler,
+        find_handler: cef::FindHandler,
         scripts: Arc<crate::app::ScriptResults>,
         events: Arc<Mutex<EventQueues>>,
     }
@@ -384,6 +385,10 @@ cef::wrap_client! {
 
         fn context_menu_handler(&self) -> Option<cef::ContextMenuHandler> {
             Some(self.context_menu_handler.clone())
+        }
+
+        fn find_handler(&self) -> Option<cef::FindHandler> {
+            Some(self.find_handler.clone())
         }
 
         fn load_handler(&self) -> Option<cef::LoadHandler> {
@@ -437,6 +442,7 @@ impl WeldClient {
         download_handler: cef::DownloadHandler,
         permission_handler: cef::PermissionHandler,
         context_menu_handler: cef::ContextMenuHandler,
+        find_handler: cef::FindHandler,
         scripts: Arc<crate::app::ScriptResults>,
         events: Arc<Mutex<EventQueues>>,
     ) -> cef::Client {
@@ -449,6 +455,7 @@ impl WeldClient {
             download_handler,
             permission_handler,
             context_menu_handler,
+            find_handler,
             scripts,
             events,
         )
@@ -913,5 +920,39 @@ impl WeldDevToolsObserver {
         channel: Arc<crate::devtools::DevToolsChannel>,
     ) -> cef::DevToolsMessageObserver {
         Self::new(channel)
+    }
+}
+
+// ── Find handler ──────────────────────────────────────────────────────────
+
+cef::wrap_find_handler! {
+    pub(super) struct WeldFindHandler {
+        events: Arc<Mutex<EventQueues>>,
+    }
+
+    impl FindHandler {
+        fn on_find_result(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _identifier: ::std::os::raw::c_int,
+            count: ::std::os::raw::c_int,
+            _selection_rect: Option<&cef::Rect>,
+            active_match_ordinal: ::std::os::raw::c_int,
+            final_update: ::std::os::raw::c_int,
+        ) {
+            self.events.lock().unwrap().nav.push_back(
+                crate::surface::NavigationEvent::FindResult {
+                    count,
+                    active_match: active_match_ordinal,
+                    final_update: final_update != 0,
+                }
+            );
+        }
+    }
+}
+
+impl WeldFindHandler {
+    pub fn build(events: Arc<Mutex<EventQueues>>) -> cef::FindHandler {
+        Self::new(events)
     }
 }

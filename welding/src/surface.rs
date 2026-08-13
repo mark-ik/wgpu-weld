@@ -639,6 +639,55 @@ pub trait CefSurfaceProducer: Send {
         ))
     }
     fn stop(&mut self) -> Result<(), WeldError>;
+    /// Whether there is anything to go back to. A host with a back button
+    /// needs this to know when to grey it out; `go_back` on an empty history
+    /// is simply ignored, which tells the host nothing.
+    fn can_go_back(&self) -> bool {
+        false
+    }
+
+    fn can_go_forward(&self) -> bool {
+        false
+    }
+
+    /// Step the zoom one notch, or return it to the default.
+    fn zoom(&mut self, _command: ZoomCommand) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "zoom is not wired for this producer",
+        ))
+    }
+
+    /// The current zoom level. 0.0 is the default and each notch steps
+    /// Chromium's ladder — two steps in is 125%, not 120%.
+    ///
+    /// **Only meaningful where the host thread is CEF's UI thread**, which is
+    /// Linux and macOS here. CEF documents `GetZoomLevel` as UI-thread-only,
+    /// and Windows runs CEF's UI thread separately, so this reads 0.0 there
+    /// however the page is actually zoomed. [`Self::zoom`] itself works
+    /// everywhere; CEF applies it asynchronously when called off-thread.
+    fn zoom_level(&self) -> f64 {
+        0.0
+    }
+
+    /// Search the page. Results arrive as [`NavigationEvent::FindResult`].
+    ///
+    /// `find_next` steps through matches for the same text; passing `false`
+    /// starts a new search. Stop with [`Self::stop_finding`], which also clears
+    /// the highlight.
+    fn find(&mut self, _text: &str, _forward: bool, _match_case: bool, _find_next: bool)
+        -> Result<(), WeldError>
+    {
+        Err(WeldError::PlatformUnsupported(
+            "find is not wired for this producer",
+        ))
+    }
+
+    fn stop_finding(&mut self, _clear_selection: bool) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "find is not wired for this producer",
+        ))
+    }
+
     fn go_back(&mut self) -> Result<(), WeldError>;
     fn go_forward(&mut self) -> Result<(), WeldError>;
 
@@ -794,6 +843,15 @@ pub(crate) fn termination_status(status: cef::TerminationStatus) -> ProcessTermi
     }
 }
 
+/// A zoom step. Chromium zooms in notches rather than by percentage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ZoomCommand {
+    In,
+    Out,
+    /// Back to the default level.
+    Reset,
+}
+
 /// What a right-click landed on. Several apply at once: a right-click on a
 /// link inside a page reports both.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -899,6 +957,17 @@ pub enum NavigationEvent {
     NewWindowRequested {
         url: String,
         user_gesture: bool,
+    },
+    /// How a page search is going. Chromium reports progressively: several of
+    /// these arrive for one search as more of the page is scanned, and
+    /// `final_update` marks the last.
+    FindResult {
+        /// How many matches so far.
+        count: i32,
+        /// Which match is highlighted, 1-based. 0 when there is none.
+        active_match: i32,
+        /// The last update for this search.
+        final_update: bool,
     },
     /// The user right-clicked, and the host should draw its own menu.
     ///
