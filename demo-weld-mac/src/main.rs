@@ -434,6 +434,12 @@ impl DemoApp {
                     Err(e) => eprintln!("weld demo: find failed: {e}"),
                 }
             }
+            if let Ok(pdf) = std::env::var("WELD_PDF") {
+                match s.producer.print_to_pdf(std::path::Path::new(&pdf)) {
+                    Ok(()) => eprintln!("weld demo: print_to_pdf {pdf}"),
+                    Err(e) => eprintln!("weld demo: print_to_pdf failed: {e}"),
+                }
+            }
             if std::env::var("WELD_ZOOM").is_ok() {
                 let _ = s.producer.zoom(welding::ZoomCommand::In);
                 let _ = s.producer.zoom(welding::ZoomCommand::In);
@@ -560,6 +566,8 @@ fn main() {
 
     let mut config = CefRuntimeConfig::new(&frameworks);
     config.cache_path = Some(std::env::temp_dir().join("welding-demo-mac-cache"));
+    config.user_agent = std::env::var("WELD_UA").ok();
+    config.user_agent_product = std::env::var("WELD_UA_PRODUCT").ok();
     // Never touch the login keychain: without this, Chromium's Safe Storage
     // asks for the user's password on launch — a modal prompt that blocks
     // CefInitialize for as long as nobody answers it, and crashes the network

@@ -427,6 +427,12 @@ impl ApplicationHandler for DemoApp {
                             Err(e) => eprintln!("weld demo: find failed: {e}"),
                         }
                     }
+                    if let Ok(pdf) = std::env::var("WELD_PDF") {
+                        match s.producer.print_to_pdf(std::path::Path::new(&pdf)) {
+                            Ok(()) => eprintln!("weld demo: print_to_pdf {pdf}"),
+                            Err(e) => eprintln!("weld demo: print_to_pdf failed: {e}"),
+                        }
+                    }
                     if std::env::var("WELD_ZOOM").is_ok() {
                         let _ = s.producer.zoom(welding::ZoomCommand::In);
                         let _ = s.producer.zoom(welding::ZoomCommand::In);
@@ -626,6 +632,8 @@ fn main() {
     // Avoid sharing the default CEF cache directory across processes — pick a
     // per-binary subdir under the system temp dir.
     config.cache_path = Some(std::env::temp_dir().join("welding-demo-linux-cache"));
+    config.user_agent = std::env::var("WELD_UA").ok();
+    config.user_agent_product = std::env::var("WELD_UA_PRODUCT").ok();
     // WELD_SWITCHES=disable-popup-blocking,lang=en-GB
     if let Ok(list) = std::env::var("WELD_SWITCHES") {
         config.command_line_switches = list
