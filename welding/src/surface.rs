@@ -1,6 +1,7 @@
 use dpi::PhysicalSize;
 
 use crate::{
+    downloads::DownloadId,
     error::WeldError,
     native_frame::{HostWgpuContext, ImportedTexture},
 };
@@ -89,9 +90,11 @@ impl CefSurfaceCapabilities {
             devtools: BrowserFeatureStatus::Unsupported(
                 "DevTools crashes CEF 148 for windowless browsers on macOS",
             ),
-            downloads: BrowserFeatureStatus::Unsupported(
-                "no CefDownloadHandler is registered; downloads are silently dropped",
-            ),
+            // A CefDownloadHandler is registered on every producer. Whether a
+            // download can actually land is a per-producer question --
+            // `download_dir` decides that -- so this reports the wiring, and
+            // `cancel_download` says so plainly when the directory is unset.
+            downloads: BrowserFeatureStatus::Supported,
             // Two unrelated things share this name. Widget surfaces (select
             // dropdowns, autocomplete) are rendered: see `acquire_popup`.
             // Popup *browsers* (window.open) are denied and reported as
@@ -149,16 +152,15 @@ mod capability_tests {
         // CefApp with a render-process handler: evaluation happens in the
         // renderer, so nothing in the browser process could ever answer it.
         assert_eq!(caps.script_result, BrowserFeatureStatus::Supported);
+        // A CefDownloadHandler is registered on every producer as of W7a, with
+        // the destination decided by `CefSurfaceConfig::download_dir`.
+        assert_eq!(caps.downloads, BrowserFeatureStatus::Supported);
         assert!(caps.accelerated_paint_available);
         assert_eq!(caps.preferred_mode, CefSurfaceMode::AcceleratedPaint);
 
         // Not wired. These carry a reason string rather than a bare status so
         // a host can report *why* to its own user.
-        for status in [
-            caps.cookie_change_events,
-            caps.downloads,
-            caps.context_menus,
-        ] {
+        for status in [caps.cookie_change_events, caps.context_menus] {
             assert!(
                 matches!(status, BrowserFeatureStatus::Unsupported(reason) if !reason.is_empty()),
                 "expected an explained Unsupported, got {status:?}"
@@ -308,6 +310,18 @@ pub struct CefSurfaceConfig {
     /// Persistent user-data directory for cookies, storage, etc.
     /// `None` = in-memory / incognito.
     pub user_data_dir: Option<std::path::PathBuf>,
+    /// Where downloads are written. `None`, the default, refuses them.
+    ///
+    /// This is policy rather than a per-download question because CEF asks
+    /// where to put the file inside a callback it will cancel the download
+    /// without an answer to, and on Linux and macOS the thread it asks on is
+    /// the one that would have to carry the host's reply. The host still
+    /// steers each transfer afterwards with
+    /// [`CefSurfaceProducer::cancel_download`] and friends.
+    ///
+    /// The server's suggested filename is reduced to its final component, so
+    /// it cannot place a file outside this directory.
+    pub download_dir: Option<std::path::PathBuf>,
     /// Display scale factor, e.g. `2.0` for a 2x HiDPI screen.
     ///
     /// `initial_size` and every other size and coordinate in this API stay in
@@ -328,6 +342,7 @@ impl Default for CefSurfaceConfig {
             background_color: Some([255, 255, 255]),
             prefer_accelerated: true,
             user_data_dir: None,
+            download_dir: None,
             scale_factor: 1.0,
         }
     }
@@ -463,6 +478,31 @@ pub trait CefSurfaceProducer: Send {
     fn navigate_to_url(&mut self, url: &str) -> Result<(), WeldError>;
     fn navigate_to_string(&mut self, content: &str, mime_type: &str) -> Result<(), WeldError>;
     fn reload(&mut self) -> Result<(), WeldError>;
+
+    /// Ask CEF to cancel, pause or resume a download.
+    ///
+    /// The request is recorded and applied on that download's next update,
+    /// because CEF's download callback is callback-scoped like the paint
+    /// handles and does not exist between updates. Updates arrive promptly
+    /// while a transfer is running; a request for a download that has already
+    /// finished is simply never applied.
+    fn cancel_download(&mut self, _id: DownloadId) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "downloads are not wired for this producer",
+        ))
+    }
+
+    fn pause_download(&mut self, _id: DownloadId) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "downloads are not wired for this producer",
+        ))
+    }
+
+    fn resume_download(&mut self, _id: DownloadId) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "downloads are not wired for this producer",
+        ))
+    }
 
     /// Ask CEF to repaint the whole view now.
     ///
@@ -696,6 +736,41 @@ pub enum NavigationEvent {
     NewWindowRequested {
         url: String,
         user_gesture: bool,
+    },
+    /// A download began. `welding` has already chosen `destination_path`
+    /// under the configured download directory and accepted the transfer; the
+    /// host owns any UI. The `id` ties the later events to this one.
+    DownloadStarted {
+        id: DownloadId,
+        url: String,
+        suggested_filename: String,
+        destination_path: std::path::PathBuf,
+        /// What the server announced, when it announced anything.
+        total_bytes_expected: Option<u64>,
+    },
+    /// Throttled progress, at most ten a second per download, plus a final one
+    /// when it finishes. `bytes_received` is cumulative.
+    DownloadProgress {
+        id: DownloadId,
+        bytes_received: u64,
+        total_bytes_expected: Option<u64>,
+    },
+    /// A download ended. `error` is `Some` when it failed, in which case the
+    /// file may be partial or absent. Host-driven cancellation arrives as
+    /// `DownloadCancelled` instead.
+    DownloadFinished {
+        id: DownloadId,
+        destination_path: std::path::PathBuf,
+        error: Option<String>,
+    },
+    /// A download was cancelled, either by `cancel_download` or by CEF.
+    ///
+    /// There is no resume blob: CEF exposes live pause and resume on a running
+    /// download but nothing that survives the process, so a cancelled download
+    /// starts over.
+    DownloadCancelled {
+        id: DownloadId,
+        destination_path: std::path::PathBuf,
     },
     ConsoleMessage {
         level: i32,

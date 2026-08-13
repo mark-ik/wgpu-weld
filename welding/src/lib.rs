@@ -17,6 +17,7 @@ mod cursor;
 mod ime;
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
 mod cookies;
+mod downloads;
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
 pub mod app;
 
@@ -60,3 +61,4 @@ pub use surface::{
     CursorShape, ImeComposition, MouseAction, MouseButton, MouseEvent, NavigationEvent, PopupRect,
     PopupSurface, ProcessTerminationStatus, SameSite,
 };
+pub use downloads::DownloadId;

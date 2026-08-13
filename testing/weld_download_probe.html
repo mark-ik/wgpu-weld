@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>download-probe</title>
+<body style="margin:0;background:#fff;font:24px sans-serif">
+<p>download probe</p>
+<script>
+// A data: URL download needs no network and has known content, so the file on
+// disk can be compared byte for byte with what was asked for.
+const blob = new Blob(["weld-download-probe-payload\n"], {type: "text/plain"});
+const a = document.createElement("a");
+a.href = URL.createObjectURL(blob);
+a.download = "weld-probe.txt";
+document.body.appendChild(a);
+setTimeout(() => a.click(), 1500);
+</script>

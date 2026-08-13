@@ -153,6 +153,9 @@ impl ApplicationHandler for DemoApp {
                     // size/scale CSS pixels and paints the full physical size.
                     scale_factor: scale as f32,
                     background_color: env_background(),
+                    // WELD_DOWNLOAD_DIR=path accepts downloads into that
+                    // directory; unset refuses them, which is the default.
+                    download_dir: std::env::var("WELD_DOWNLOAD_DIR").ok().map(Into::into),
                     ..Default::default()
                 },
             },
