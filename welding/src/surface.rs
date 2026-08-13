@@ -669,6 +669,18 @@ pub trait CefSurfaceProducer: Send {
         0.0
     }
 
+    /// Render the page to a PDF at `path`.
+    ///
+    /// Asynchronous: completion arrives as
+    /// [`NavigationEvent::PdfPrintFinished`]. Chromium prints what the page
+    /// looks like to a printer, not a screenshot — a page that styles itself
+    /// for `@media print` gets that.
+    fn print_to_pdf(&mut self, _path: &std::path::Path) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "print to PDF is not wired for this producer",
+        ))
+    }
+
     /// Search the page. Results arrive as [`NavigationEvent::FindResult`].
     ///
     /// `find_next` steps through matches for the same text; passing `false`
@@ -957,6 +969,12 @@ pub enum NavigationEvent {
     NewWindowRequested {
         url: String,
         user_gesture: bool,
+    },
+    /// A `print_to_pdf` finished. `ok` is false when Chromium could not write
+    /// the file; the path is the one that was asked for either way.
+    PdfPrintFinished {
+        path: std::path::PathBuf,
+        ok: bool,
     },
     /// How a page search is going. Chromium reports progressively: several of
     /// these arrive for one search as more of the page is scanned, and

@@ -777,6 +777,22 @@ impl CefSurfaceProducer for MacosCefProducer {
         0.0
     }
 
+    fn print_to_pdf(&mut self, path: &std::path::Path) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser.host() {
+            let path_str: cef::CefString = path.to_string_lossy().as_ref().into();
+            let mut callback = cef_backed::WeldPdfCallback::build(self.events.clone());
+            // Default settings: Chromium's own page size and margins, which is
+            // what a host that did not ask for anything else expects.
+            let settings = cef::PdfPrintSettings::default();
+            host.print_to_pdf(Some(&path_str), Some(&settings), Some(&mut callback));
+            return Ok(());
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        let _ = path;
+        Err(pending("cef_browser_host_t::print_to_pdf"))
+    }
+
     fn find(&mut self, text: &str, forward: bool, match_case: bool, find_next: bool)
         -> Result<(), WeldError>
     {

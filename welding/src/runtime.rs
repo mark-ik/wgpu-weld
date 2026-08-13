@@ -34,6 +34,16 @@ pub struct CefRuntimeConfig {
     ///   Under `cef-runtime` this is passed to `cef::load_library`.
     /// - Linux: folder with `libcef.so`, `icudtl.dat`, locale files, etc.
     pub cef_path: PathBuf,
+    /// Override the whole `User-Agent` string.
+    ///
+    /// Process-wide, not per browser: CEF takes it in `CefSettings`, so every
+    /// producer under this runtime shares it. For a smaller change, see
+    /// [`Self::user_agent_product`], which alters only the product token and
+    /// leaves the rest of Chromium's string intact.
+    pub user_agent: Option<String>,
+    /// Override only the product token, e.g. `MyApp/1.0`, keeping the rest of
+    /// the `User-Agent` Chromium would have sent.
+    pub user_agent_product: Option<String>,
     /// Chromium command-line switches, applied before CEF processes its own.
     ///
     /// `("disable-popup-blocking", None)` for a bare flag,
@@ -58,6 +68,8 @@ impl CefRuntimeConfig {
     pub fn new(cef_path: impl Into<PathBuf>) -> Self {
         CefRuntimeConfig {
             cef_path: cef_path.into(),
+            user_agent: None,
+            user_agent_product: None,
             command_line_switches: Vec::new(),
             browser_subprocess_path: None,
             cache_path: None,
@@ -234,6 +246,12 @@ mod cef_backed {
         if let Some(subprocess_path) = config.browser_subprocess_path.as_ref() {
             let path_str = subprocess_path.to_string_lossy();
             s.browser_subprocess_path = (&*path_str).into();
+        }
+        if let Some(ua) = config.user_agent.as_deref() {
+            s.user_agent = ua.into();
+        }
+        if let Some(product) = config.user_agent_product.as_deref() {
+            s.user_agent_product = product.into();
         }
         s
     }

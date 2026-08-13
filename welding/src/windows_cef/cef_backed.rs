@@ -956,3 +956,32 @@ impl WeldFindHandler {
         Self::new(events)
     }
 }
+
+// ── PDF print callback ────────────────────────────────────────────────────
+
+cef::wrap_pdf_print_callback! {
+    pub(super) struct WeldPdfCallback {
+        events: Arc<Mutex<EventQueues>>,
+    }
+
+    impl PdfPrintCallback {
+        fn on_pdf_print_finished(
+            &self,
+            path: Option<&cef::CefString>,
+            ok: ::std::os::raw::c_int,
+        ) {
+            self.events.lock().unwrap().nav.push_back(
+                crate::surface::NavigationEvent::PdfPrintFinished {
+                    path: path.map(|p| p.to_string()).unwrap_or_default().into(),
+                    ok: ok != 0,
+                }
+            );
+        }
+    }
+}
+
+impl WeldPdfCallback {
+    pub fn build(events: Arc<Mutex<EventQueues>>) -> cef::PdfPrintCallback {
+        Self::new(events)
+    }
+}

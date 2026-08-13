@@ -471,6 +471,12 @@ impl ApplicationHandler for DemoApp {
                             Err(e) => eprintln!("weld demo: find failed: {e}"),
                         }
                     }
+                    if let Ok(pdf) = std::env::var("WELD_PDF") {
+                        match s.producer.print_to_pdf(std::path::Path::new(&pdf)) {
+                            Ok(()) => eprintln!("weld demo: print_to_pdf {pdf}"),
+                            Err(e) => eprintln!("weld demo: print_to_pdf failed: {e}"),
+                        }
+                    }
                     if std::env::var("WELD_ZOOM").is_ok() {
                         let _ = s.producer.zoom(welding::ZoomCommand::In);
                         let _ = s.producer.zoom(welding::ZoomCommand::In);
@@ -649,6 +655,9 @@ fn main() {
         eprintln!("weld demo: switches {:?}", runtime_config.command_line_switches);
     }
     runtime_config.cache_path = Some(std::env::temp_dir().join("wgpu-weld-demo-cache"));
+    // WELD_UA replaces the whole User-Agent; WELD_UA_PRODUCT only the token.
+    runtime_config.user_agent = std::env::var("WELD_UA").ok();
+    runtime_config.user_agent_product = std::env::var("WELD_UA_PRODUCT").ok();
     let runtime = CefRuntime::initialize(runtime_config)
         .expect("weld: CEF initialize failed");
 
