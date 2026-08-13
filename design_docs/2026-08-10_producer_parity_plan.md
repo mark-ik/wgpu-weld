@@ -703,9 +703,34 @@ now (first, then every 500th).
 - **W8, long tail.** Drag/drop, touch, find-in-page, PDF, zoom/UA/settings,
   per-producer `RequestContext` profiles, `can_go_back`/`can_go_forward`,
   snapshot helper. (`WasHidden`-backed visibility landed early, during W4.)
-- **W9, CDP.** Expose `ExecuteDevToolsMethod` + the devtools message stream.
-  Nothing else in the family can offer full CDP; this is the CEF lane's
-  distinguishing feature, worth doing once the table stakes above exist.
+- **W9, CDP. DONE 2026-08-13**, verified on all three (Windows, M4, ThinkPad):
+  `Browser.getVersion` returns a real protocol result
+  (`{"protocolVersion":"1.3","product":"Chrome/147.0.7727.138",...}`) and
+  `Page.enable` subscribes.
+
+  Deliberately **not** a typed API. CDP is revised every Chromium release, so a
+  wrapper would age badly and constrain hosts to whatever subset was modelled;
+  the wire format passes through instead — JSON in via `send_devtools_message`,
+  JSON out via `poll_devtools_message` — and any existing CDP client can drive
+  it. `SendDevToolsMessage` takes raw bytes, so nothing has to be converted
+  through `CefDictionaryValue` either.
+
+  Opt-in via `CefSurfaceConfig::devtools_protocol`, because one `Page.enable`
+  produces a steady stream whether or not anything reads it. The queue is
+  bounded at 512 and counts drops; `devtools_dropped()` makes gaps visible
+  rather than silent. Subscription is lazy because the browser is created
+  asynchronously, and the registration lives on the producer because dropping
+  it unsubscribes.
+
+  Two things worth recording. `ExecuteDevToolsMethod` returned **0** on
+  Windows, which reads like failure and is not: CEF documents the id as
+  returned only when called on the UI thread, and Windows runs CEF's UI thread
+  separately. And every run ends with an `Inspector.targetCrashed` event, which
+  is the test's own `timeout` — it arrives immediately after welding's
+  `ContentProcessTerminated { error_code: 143 }`, SIGTERM, and frames continued
+  66 before the call and 1541 after, so attaching CDP does not disturb the page.
+  The two independent views of the same shutdown agreeing is a decent check on
+  both.
 
 ### S: scrying items (both directions)
 

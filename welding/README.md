@@ -14,7 +14,7 @@ of them import through.
 
 ## State, 2026-08-12
 
-Version 0.6.0. Every "verified" below was checked by running it on that
+Version 0.7.0. Every "verified" below was checked by running it on that
 platform's hardware, in one battery per machine: Windows 11 (this laptop),
 macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac (the
 first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
@@ -41,15 +41,16 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | Auth challenges | **never fires** [^auth] | wired | wired |
 | Permission requests | verified | verified | verified |
 | Context menus | verified | verified [^macmenu] | verified |
+| DevTools protocol (CDP) | verified | verified | verified |
 
 "verified" means observed working on that platform's hardware. "wired" means
 implemented and compiling there, but not yet exercised on any machine — the
 last three rows are untested everywhere, not gaps in one platform.
 
 Not implemented yet, and `CefSurfaceCapabilities::probe` will tell you so at
-runtime rather than failing quietly: find-in-page, PDF and print, drag and drop, touch,
-pointer/pen, zoom and user-agent settings, per-producer profile isolation, and
-the DevTools protocol.
+runtime rather than failing quietly: find-in-page, PDF and print, drag and
+drop, touch, pointer/pen, zoom and user-agent settings, and per-producer
+profile isolation.
 
 [^linux]: Linux needs the DMABUF buffer to carry an **explicit** DRM format
 modifier. Intel/Mesa supplies one, and the frame import is verified there;
@@ -158,6 +159,25 @@ let config = CefSurfaceConfig {
 };
 // and when the window moves to another display:
 producer.set_scale_factor(new_scale)?;
+```
+
+The Chrome DevTools Protocol goes through unwrapped — the thing a system
+webview cannot offer. JSON in, JSON out, exactly as the protocol documents it,
+so an existing CDP client can drive it:
+
+```rust,ignore
+let config = CefSurfaceConfig {
+    devtools_protocol: true,   // off by default: CDP is chatty
+    ..Default::default()
+};
+
+producer.send_devtools_message(r#"{"id":1,"method":"Page.enable"}"#)?;
+
+// Every tick. The queue is bounded, so a host that stops polling loses the
+// oldest messages -- devtools_dropped() says how many, rather than hiding it.
+while let Some(json) = producer.poll_devtools_message() {
+    // {"id":1,"result":{...}} and {"method":"Page.loadEventFired",...}
+}
 ```
 
 A right-click gets no menu from CEF — it has nowhere to draw one under
