@@ -61,7 +61,7 @@ pub use surface::{
     BrowserFeatureStatus, CefSurfaceCapabilities, CefSurfaceConfig, CefSurfaceMode,
     CefSurfaceProducer, Cookie, EventModifiers, FocusDirection, KeyEvent, KeyEventKind,
     CursorShape, ImeComposition, MouseAction, MouseButton, MouseEvent, NavigationEvent, PopupRect,
-    PopupSurface, ProcessTerminationStatus, SameSite,
+    ContextMenuTarget, PopupSurface, ProcessTerminationStatus, SameSite,
 };
 pub use auth::AuthId;
 pub use downloads::DownloadId;

@@ -356,6 +356,7 @@ cef::wrap_client! {
         request_handler: cef::RequestHandler,
         download_handler: cef::DownloadHandler,
         permission_handler: cef::PermissionHandler,
+        context_menu_handler: cef::ContextMenuHandler,
         scripts: Arc<crate::app::ScriptResults>,
         events: Arc<Mutex<EventQueues>>,
     }
@@ -379,6 +380,10 @@ cef::wrap_client! {
 
         fn permission_handler(&self) -> Option<cef::PermissionHandler> {
             Some(self.permission_handler.clone())
+        }
+
+        fn context_menu_handler(&self) -> Option<cef::ContextMenuHandler> {
+            Some(self.context_menu_handler.clone())
         }
 
         fn load_handler(&self) -> Option<cef::LoadHandler> {
@@ -431,6 +436,7 @@ impl WeldClient {
         request_handler: cef::RequestHandler,
         download_handler: cef::DownloadHandler,
         permission_handler: cef::PermissionHandler,
+        context_menu_handler: cef::ContextMenuHandler,
         scripts: Arc<crate::app::ScriptResults>,
         events: Arc<Mutex<EventQueues>>,
     ) -> cef::Client {
@@ -442,6 +448,7 @@ impl WeldClient {
             request_handler,
             download_handler,
             permission_handler,
+            context_menu_handler,
             scripts,
             events,
         )
@@ -805,5 +812,72 @@ impl WeldPermissionHandler {
         permissions: Arc<crate::permissions::Permissions>,
     ) -> cef::PermissionHandler {
         Self::new(events, permissions)
+    }
+}
+
+// ── Context menu handler ──────────────────────────────────────────────────
+
+cef::wrap_context_menu_handler! {
+    pub(super) struct WeldContextMenuHandler {
+        events: Arc<Mutex<EventQueues>>,
+        metrics: Arc<Mutex<crate::view::ViewMetrics>>,
+    }
+
+    impl ContextMenuHandler {
+        fn on_before_context_menu(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _frame: Option<&mut cef::Frame>,
+            params: Option<&mut cef::ContextMenuParams>,
+            model: Option<&mut cef::MenuModel>,
+        ) {
+            if let Some(params) = params {
+                // CEF reports DIP; every coordinate this API hands out or takes
+                // is physical, so convert on the way out.
+                let scale = self.metrics.lock().unwrap().scale();
+                let flags = params.type_flags().as_ref().0 as u32;
+                self.events.lock().unwrap().nav.push_back(
+                    crate::surface::NavigationEvent::ContextMenuRequested {
+                        x: (params.xcoord() as f32 * scale).round() as i32,
+                        y: (params.ycoord() as f32 * scale).round() as i32,
+                        targets: crate::surface::context_menu_targets(flags),
+                        link_url: cef_string(params.link_url()),
+                        source_url: cef_string(params.source_url()),
+                        page_url: cef_string(params.page_url()),
+                        selection_text: cef_string(params.selection_text()),
+                    }
+                );
+            }
+            // Empty the menu. CEF's own has nowhere to draw itself under
+            // windowless rendering, so leaving it populated only invites CEF to
+            // try; the host draws its own from the event above.
+            if let Some(model) = model {
+                model.clear();
+            }
+        }
+
+        fn run_context_menu(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _frame: Option<&mut cef::Frame>,
+            _params: Option<&mut cef::ContextMenuParams>,
+            _model: Option<&mut cef::MenuModel>,
+            callback: Option<&mut cef::RunContextMenuCallback>,
+        ) -> ::std::os::raw::c_int {
+            // Claim it and dismiss immediately: the event has already gone out.
+            if let Some(callback) = callback {
+                callback.cancel();
+            }
+            1
+        }
+    }
+}
+
+impl WeldContextMenuHandler {
+    pub fn build(
+        events: Arc<Mutex<EventQueues>>,
+        metrics: Arc<Mutex<crate::view::ViewMetrics>>,
+    ) -> cef::ContextMenuHandler {
+        Self::new(events, metrics)
     }
 }

@@ -122,9 +122,11 @@ impl CefSurfaceCapabilities {
                 "widget surfaces are rendered via acquire_popup; popup browsers \
                  (window.open) are denied and surfaced as NewWindowRequested",
             ),
-            context_menus: BrowserFeatureStatus::Unsupported(
-                "no CefContextMenuHandler is registered; CEF's default menu is inert under OSR",
-            ),
+            // A CefContextMenuHandler is registered on every producer: CEF's
+            // own menu is suppressed (it has nowhere to draw itself under
+            // windowless rendering) and the host is handed the hit-test
+            // details to draw its own.
+            context_menus: BrowserFeatureStatus::Supported,
             console_messages: BrowserFeatureStatus::Supported,
         }
     }
@@ -178,7 +180,9 @@ mod capability_tests {
 
         // Not wired. These carry a reason string rather than a bare status so
         // a host can report *why* to its own user.
-        for status in [caps.cookie_change_events, caps.context_menus] {
+        assert_eq!(caps.context_menus, BrowserFeatureStatus::Supported);
+
+        for status in [caps.cookie_change_events] {
             assert!(
                 matches!(status, BrowserFeatureStatus::Unsupported(reason) if !reason.is_empty()),
                 "expected an explained Unsupported, got {status:?}"
@@ -752,6 +756,47 @@ pub(crate) fn termination_status(status: cef::TerminationStatus) -> ProcessTermi
     }
 }
 
+/// What a right-click landed on. Several apply at once: a right-click on a
+/// link inside a page reports both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ContextMenuTarget {
+    Page,
+    Frame,
+    Link,
+    Media,
+    Selection,
+    Editable,
+    /// A flag this build does not name, kept rather than dropped.
+    Other(u32),
+}
+
+/// Split CEF's `cef_context_menu_type_flags_t` into named targets.
+pub(crate) fn context_menu_targets(flags: u32) -> Vec<ContextMenuTarget> {
+    let mut out = Vec::new();
+    let mut seen = 0u32;
+    for (bit, target) in [
+        (1 << 0, ContextMenuTarget::Page),
+        (1 << 1, ContextMenuTarget::Frame),
+        (1 << 2, ContextMenuTarget::Link),
+        (1 << 3, ContextMenuTarget::Media),
+        (1 << 4, ContextMenuTarget::Selection),
+        (1 << 5, ContextMenuTarget::Editable),
+    ] {
+        if flags & bit != 0 {
+            out.push(target);
+            seen |= bit;
+        }
+    }
+    let mut rest = flags & !seen;
+    while rest != 0 {
+        let bit = rest & rest.wrapping_neg();
+        out.push(ContextMenuTarget::Other(bit));
+        rest &= !bit;
+    }
+    out
+}
+
 /// Why a render process died, as CEF reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcessTerminationStatus {
@@ -816,6 +861,30 @@ pub enum NavigationEvent {
     NewWindowRequested {
         url: String,
         user_gesture: bool,
+    },
+    /// The user right-clicked, and the host should draw its own menu.
+    ///
+    /// CEF's own menu is inert under windowless rendering — there is no window
+    /// to put it in — so `welding` suppresses it and reports this instead. A
+    /// host that ignores the event gets what it got before: nothing on
+    /// right-click.
+    ///
+    /// `x` and `y` are **physical** pixels, like every other coordinate in this
+    /// API. CEF reports them in DIP; they are converted on the way out.
+    ContextMenuRequested {
+        x: i32,
+        y: i32,
+        /// What was under the cursor: page, frame, link, media, selection,
+        /// editable. More than one at once is normal.
+        targets: Vec<ContextMenuTarget>,
+        /// The link's href, when the click was on a link.
+        link_url: String,
+        /// The media element's source, when the click was on one.
+        source_url: String,
+        /// The page's own URL.
+        page_url: String,
+        /// Any selected text under the cursor.
+        selection_text: String,
     },
     /// A page asked for something Chromium gates behind a prompt: the
     /// camera, the microphone, the user's location, notifications.
@@ -900,4 +969,36 @@ pub enum NavigationEvent {
         source: String,
         line: i32,
     },
+}
+
+#[cfg(test)]
+mod context_menu_tests {
+    use super::*;
+
+    #[test]
+    fn the_flags_seen_from_a_real_right_click_decode() {
+        // Observed: a right-click on plain page text reported 3.
+        assert_eq!(
+            context_menu_targets(3),
+            vec![ContextMenuTarget::Page, ContextMenuTarget::Frame]
+        );
+    }
+
+    #[test]
+    fn a_link_inside_a_page_reports_both() {
+        let got = context_menu_targets(1 | 1 << 2);
+        assert!(got.contains(&ContextMenuTarget::Page));
+        assert!(got.contains(&ContextMenuTarget::Link));
+    }
+
+    #[test]
+    fn an_unnamed_flag_is_reported_not_dropped() {
+        let odd = 1 << 20;
+        assert_eq!(context_menu_targets(odd), vec![ContextMenuTarget::Other(odd)]);
+    }
+
+    #[test]
+    fn nothing_under_the_cursor_decodes_to_nothing() {
+        assert!(context_menu_targets(0).is_empty());
+    }
 }

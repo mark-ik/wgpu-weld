@@ -146,6 +146,8 @@ impl LinuxCefProducer {
             permissions.set_enabled(config.surface.handle_permission_requests);
             let permission_handler =
                 cef_backed::WeldPermissionHandler::build(events.clone(), permissions.clone());
+            let context_menu_handler =
+                cef_backed::WeldContextMenuHandler::build(events.clone(), metrics.clone());
             let mut client = cef_backed::WeldClient::build(
                 render_handler,
                 load_handler,
@@ -154,6 +156,7 @@ impl LinuxCefProducer {
                 request_handler,
                 download_handler,
                 permission_handler,
+                context_menu_handler,
                 scripts.clone(),
                 events.clone(),
             );

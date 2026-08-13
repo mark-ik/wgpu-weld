@@ -15,6 +15,7 @@
 //! - `WELD_HIDE_CYCLE=1` hides the browser, then shows it again, which is how
 //!   `set_visible` gets checked: painting should stop while hidden.
 //! - `WELD_DEVTOOLS=1` opens the DevTools window.
+//! - `WELD_RIGHT_CLICK_AT=x,y` right-clicks, to provoke a context menu.
 //!
 //! Point them at a page that reports what it received (writing to
 //! `document.title` surfaces in the navigation events) and each one becomes a
@@ -42,6 +43,7 @@ pub struct ScriptedInput {
     ime: Option<String>,
     hide_cycle: bool,
     devtools: bool,
+    right_click_at: Option<(i32, i32)>,
     /// When the page first became ready. Elapsed time, not a tick count: how
     /// often a host redraws is its own business, and an accelerated producer
     /// paints only on change, so ticks are not a clock.
@@ -69,6 +71,10 @@ impl ScriptedInput {
         let ime = std::env::var("WELD_IME").ok().filter(|v| !v.is_empty());
         let hide_cycle = std::env::var("WELD_HIDE_CYCLE").is_ok();
         let devtools = std::env::var("WELD_DEVTOOLS").is_ok();
+        let right_click_at = std::env::var("WELD_RIGHT_CLICK_AT").ok().and_then(|v| {
+            let (x, y) = v.split_once(',')?;
+            Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+        });
         Self {
             click_at,
             wheel,
@@ -77,6 +83,7 @@ impl ScriptedInput {
             ime,
             hide_cycle,
             devtools,
+            right_click_at,
             ready_at: None,
             stage: 0,
             crashed: false,
@@ -92,6 +99,7 @@ impl ScriptedInput {
             || self.ime.is_some()
             || self.hide_cycle
             || self.devtools
+            || self.right_click_at.is_some()
     }
 
     /// Call once per tick, with `ready` set once the page has painted. Fires at
@@ -121,6 +129,7 @@ impl ScriptedInput {
             4 => self.hide(producer),
             5 => self.show(producer),
             6 => self.devtools(producer),
+            7 => self.right_click(producer),
             _ => {}
         }
         self.stage += 1;
@@ -218,6 +227,20 @@ impl ScriptedInput {
         eprintln!("weld demo: set_visible(true) -- painting should resume here");
         if let Err(e) = producer.set_visible(true) {
             eprintln!("weld demo: set_visible(true) failed: {e}");
+        }
+    }
+
+    fn right_click<P: CefSurfaceProducer + ?Sized>(&self, producer: &mut P) {
+        let Some((x, y)) = self.right_click_at else { return };
+        eprintln!("weld demo: scripted right-click at {x},{y}");
+        for action in [MouseAction::Moved, MouseAction::Pressed, MouseAction::Released] {
+            let _ = producer.send_mouse_input(MouseEvent {
+                x,
+                y,
+                button: MouseButton::Right,
+                action,
+                modifiers: EventModifiers::default(),
+            });
         }
     }
 
