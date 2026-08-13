@@ -170,6 +170,7 @@ cef::wrap_client! {
         display_handler: cef::DisplayHandler,
         life_span_handler: cef::LifeSpanHandler,
         request_handler: cef::RequestHandler,
+        download_handler: cef::DownloadHandler,
         scripts: Arc<crate::app::ScriptResults>,
         events: Arc<Mutex<EventQueues>>,
     }
@@ -189,6 +190,10 @@ cef::wrap_client! {
 
         fn request_handler(&self) -> Option<cef::RequestHandler> {
             Some(self.request_handler.clone())
+        }
+
+        fn download_handler(&self) -> Option<cef::DownloadHandler> {
+            Some(self.download_handler.clone())
         }
 
         fn display_handler(&self) -> Option<cef::DisplayHandler> {
@@ -235,6 +240,7 @@ impl WeldClient {
         display_handler: cef::DisplayHandler,
         life_span_handler: cef::LifeSpanHandler,
         request_handler: cef::RequestHandler,
+        download_handler: cef::DownloadHandler,
         scripts: Arc<crate::app::ScriptResults>,
         events: Arc<Mutex<EventQueues>>,
     ) -> cef::Client {
@@ -244,6 +250,7 @@ impl WeldClient {
             display_handler,
             life_span_handler,
             request_handler,
+            download_handler,
             scripts,
             events,
         )
@@ -476,5 +483,138 @@ cef::wrap_display_handler! {
 impl WeldDisplayHandler {
     pub fn build(inner: WeldRenderHandlerInner) -> cef::DisplayHandler {
         Self::new(inner)
+    }
+}
+
+// ── Download handler ──────────────────────────────────────────────────────
+
+cef::wrap_download_handler! {
+    pub(super) struct WeldDownloadHandler {
+        events: Arc<Mutex<EventQueues>>,
+        downloads: Arc<crate::downloads::Downloads>,
+    }
+
+    impl DownloadHandler {
+        fn can_download(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _url: Option<&cef::CefString>,
+            _request_method: Option<&cef::CefString>,
+        ) -> ::std::os::raw::c_int {
+            // Refuse before anything is created when there is nowhere to put it,
+            // rather than starting a transfer and cancelling it later.
+            self.downloads.is_enabled() as _
+        }
+
+        fn on_before_download(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            download_item: Option<&mut cef::DownloadItem>,
+            suggested_name: Option<&cef::CefString>,
+            callback: Option<&mut cef::BeforeDownloadCallback>,
+        ) -> ::std::os::raw::c_int {
+            let (Some(item), Some(callback)) = (download_item, callback) else {
+                return 0;
+            };
+            let suggested = suggested_name.map(|s| s.to_string()).unwrap_or_default();
+            let Some(destination) = self.downloads.destination_for(&suggested) else {
+                // Answering with nothing cancels it, which is what a host
+                // without a download directory asked for.
+                return 0;
+            };
+            let id = item.id();
+            let url = cef_string(item.url());
+            let total = item.total_bytes();
+            self.downloads.mark_started(id);
+            self.events.lock().unwrap().nav.push_back(
+                crate::surface::NavigationEvent::DownloadStarted {
+                    id,
+                    url,
+                    suggested_filename: suggested,
+                    destination_path: destination.clone(),
+                    total_bytes_expected: (total > 0).then_some(total as u64),
+                }
+            );
+            let path: cef::CefString = destination.to_string_lossy().as_ref().into();
+            // false: no system save dialog. The destination is already decided,
+            // and a machine nobody is sitting at cannot answer one.
+            callback.cont(Some(&path), 0);
+            1
+        }
+
+        fn on_download_updated(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            download_item: Option<&mut cef::DownloadItem>,
+            callback: Option<&mut cef::DownloadItemCallback>,
+        ) {
+            let Some(item) = download_item else { return };
+            let id = item.id();
+            // CEF updates an item before it asks where to put it. Staying quiet
+            // until the download has been accepted keeps DownloadStarted first.
+            if !self.downloads.has_started(id) {
+                return;
+            }
+            let path = std::path::PathBuf::from(cef_string(item.full_path()));
+
+            // The host's cancel/pause/resume lands here: this callback is the
+            // only place CEF offers one, and only for the length of this call.
+            if let (Some(callback), Some(op)) = (callback, self.downloads.take_pending(id)) {
+                match op {
+                    crate::downloads::DownloadOp::Cancel => callback.cancel(),
+                    crate::downloads::DownloadOp::Pause => callback.pause(),
+                    crate::downloads::DownloadOp::Resume => callback.resume(),
+                }
+            }
+
+            let total = item.total_bytes();
+            let total_bytes_expected = (total > 0).then_some(total as u64);
+            let received = item.received_bytes().max(0) as u64;
+            let complete = item.is_complete() != 0;
+            let canceled = item.is_canceled() != 0;
+
+            let mut events = self.events.lock().unwrap();
+            if complete || canceled || self.downloads.due_for_progress(id, std::time::Instant::now()) {
+                events.nav.push_back(crate::surface::NavigationEvent::DownloadProgress {
+                    id,
+                    bytes_received: received,
+                    total_bytes_expected,
+                });
+            }
+            if canceled {
+                events.nav.push_back(crate::surface::NavigationEvent::DownloadCancelled {
+                    id,
+                    destination_path: path,
+                });
+            } else if complete {
+                let interrupted = item.is_interrupted() != 0;
+                events.nav.push_back(crate::surface::NavigationEvent::DownloadFinished {
+                    id,
+                    destination_path: path,
+                    error: interrupted.then(|| {
+                        format!("interrupted: {:?}", *item.interrupt_reason().as_ref() as i32)
+                    }),
+                });
+            }
+            drop(events);
+            if complete || canceled {
+                self.downloads.forget(id);
+            }
+        }
+    }
+}
+
+/// CEF hands strings back as `CefStringUserfree`, which is empty when unset.
+fn cef_string(s: cef::CefStringUserfree) -> String {
+    let raw: Option<&cef::sys::_cef_string_utf16_t> = (&s).into();
+    raw.map(|r| cef::CefStringUtf16::from(*r).to_string()).unwrap_or_default()
+}
+
+impl WeldDownloadHandler {
+    pub fn build(
+        events: Arc<Mutex<EventQueues>>,
+        downloads: Arc<crate::downloads::Downloads>,
+    ) -> cef::DownloadHandler {
+        Self::new(events, downloads)
     }
 }

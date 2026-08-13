@@ -82,6 +82,7 @@ pub struct MacosCefProducer {
     ime: Arc<crate::ime::LatestComposition>,
     #[cfg(feature = "cef-runtime")]
     cookies: Arc<crate::cookies::CookieJar>,
+    downloads: Arc<crate::downloads::Downloads>,
     #[cfg(feature = "cef-runtime")]
     scripts: Arc<crate::app::ScriptResults>,
     #[cfg(feature = "cef-runtime")]
@@ -112,6 +113,7 @@ impl MacosCefProducer {
             let cursor = Arc::new(crate::cursor::LatestCursor::default());
             let ime = Arc::new(crate::ime::LatestComposition::default());
             let cookies = Arc::new(crate::cookies::CookieJar::default());
+            let downloads = Arc::new(crate::downloads::Downloads::default());
             let scripts = Arc::new(crate::app::ScriptResults::default());
 
             let inner = WeldRenderHandlerInner {
@@ -128,12 +130,16 @@ impl MacosCefProducer {
             let display_handler = cef_backed::WeldDisplayHandler::build(inner);
             let life_span_handler = cef_backed::WeldLifeSpanHandler::build(events.clone());
             let request_handler = cef_backed::WeldRequestHandler::build(events.clone());
+            downloads.set_dir(config.surface.download_dir.clone());
+            let download_handler =
+                cef_backed::WeldDownloadHandler::build(events.clone(), downloads.clone());
             let mut client = cef_backed::WeldClient::build(
                 render_handler,
                 load_handler,
                 display_handler,
                 life_span_handler,
                 request_handler,
+                download_handler,
                 scripts.clone(),
                 events.clone(),
             );
@@ -176,6 +182,7 @@ impl MacosCefProducer {
                 cursor,
                 ime,
                 cookies,
+                downloads,
                 scripts,
                 next_script_id: 0,
                 events,
@@ -196,6 +203,32 @@ impl MacosCefProducer {
 // ── CefSurfaceProducer impl ───────────────────────────────────────────────────
 
 #[allow(unreachable_code, unused_mut, unused_variables)]
+impl MacosCefProducer {
+    /// Record a download request. It is applied on that download's next
+    /// update, because CEF's download callback exists only inside one.
+    fn request_download(
+        &mut self,
+        id: crate::DownloadId,
+        op: crate::downloads::DownloadOp,
+    ) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            if !self.downloads.is_enabled() {
+                return Err(WeldError::PlatformUnsupported(
+                    "no download_dir is configured, so there are no downloads to steer",
+                ));
+            }
+            self.downloads.request(id, op);
+            return Ok(());
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            let _ = (id, op);
+            Err(pending("cef_download_item_callback_t"))
+        }
+    }
+}
+
 impl CefSurfaceProducer for MacosCefProducer {
     fn surface_mode(&self) -> CefSurfaceMode {
         CefSurfaceMode::AcceleratedPaint
@@ -498,6 +531,18 @@ impl CefSurfaceProducer for MacosCefProducer {
             }
         }
         Err(pending("cef_browser_host_t::invalidate"))
+    }
+
+    fn cancel_download(&mut self, id: crate::DownloadId) -> Result<(), WeldError> {
+        self.request_download(id, crate::downloads::DownloadOp::Cancel)
+    }
+
+    fn pause_download(&mut self, id: crate::DownloadId) -> Result<(), WeldError> {
+        self.request_download(id, crate::downloads::DownloadOp::Pause)
+    }
+
+    fn resume_download(&mut self, id: crate::DownloadId) -> Result<(), WeldError> {
+        self.request_download(id, crate::downloads::DownloadOp::Resume)
     }
 
     fn reload(&mut self) -> Result<(), WeldError> {
