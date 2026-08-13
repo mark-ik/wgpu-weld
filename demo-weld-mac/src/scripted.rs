@@ -175,16 +175,29 @@ impl ScriptedInput {
 
     fn compose<P: CefSurfaceProducer + ?Sized>(&self, producer: &mut P) {
         let Some(text) = self.ime.as_deref() else { return };
-        eprintln!("weld demo: IME composing {text:?}");
+        // WELD_IME_MODE picks which half of the IME path runs, so a failure can
+        // be pinned to the composition or to the commit rather than to "IME".
+        let mode = std::env::var("WELD_IME_MODE").unwrap_or_else(|_| "both".into());
+        eprintln!("weld demo: IME composing {text:?} (mode {mode})");
         let end = text.chars().count() as u32;
-        if let Err(e) = producer.ime_set_composition(text, (end, end)) {
-            eprintln!("weld demo: ime_set_composition failed: {e}");
-            return;
+        if mode != "commit" {
+            if let Err(e) = producer.ime_set_composition(text, (end, end)) {
+                eprintln!("weld demo: ime_set_composition failed: {e}");
+                return;
+            }
         }
-        // Commit separately, so a page that reports composition and a page that
-        // reports only the committed value both show something.
-        if let Err(e) = producer.ime_commit_text(text) {
-            eprintln!("weld demo: ime_commit_text failed: {e}");
+        match mode.as_str() {
+            "compose" => {}
+            "finish" => {
+                if let Err(e) = producer.ime_finish_composing(false) {
+                    eprintln!("weld demo: ime_finish_composing failed: {e}");
+                }
+            }
+            _ => {
+                if let Err(e) = producer.ime_commit_text(text) {
+                    eprintln!("weld demo: ime_commit_text failed: {e}");
+                }
+            }
         }
     }
 

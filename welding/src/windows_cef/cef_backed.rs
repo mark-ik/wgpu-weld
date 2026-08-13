@@ -155,6 +155,19 @@ cef::wrap_render_handler! {
             });
         }
 
+        fn on_virtual_keyboard_requested(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            input_mode: cef::TextInputMode,
+        ) {
+            // CEF calls this when the focused node's text-input state changes.
+            // It is the only outward sign that the *browser* side knows an
+            // editable field has focus, which is the state the IME methods act
+            // on -- SendKeyEvent needs no such thing, which is why typing can
+            // work while IME does nothing.
+            log::debug!("on_virtual_keyboard_requested({:?})", *input_mode.as_ref() as i32);
+        }
+
         fn on_popup_show(&self, _browser: Option<&mut cef::Browser>, show: ::std::os::raw::c_int) {
             let showing = show != 0;
             log::debug!("on_popup_show({showing})");

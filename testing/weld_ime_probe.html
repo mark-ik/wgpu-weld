@@ -1,9 +1,9 @@
 <!doctype html><meta charset="utf-8"><title>ime-probe</title>
 <body style="margin:0;background:#fff;font:28px sans-serif">
-<input id="i" style="width:600px;font-size:28px" autofocus>
+<input id="i" style="width:600px;font-size:28px">
 <script>
-// Every stage of the IME path, so a failure says which stage never happened.
-// document.title surfaces as a TitleChanged navigation event.
+// Every stage of the IME path, plus a heartbeat of the focus state, so a
+// failure says which stage never happened and whether focus held at the time.
 const i = document.getElementById("i");
 const say = t => { document.title = t; };
 i.addEventListener("compositionstart", e => say("cstart:" + e.data));
@@ -12,4 +12,7 @@ i.addEventListener("compositionend", e => say("cend:" + e.data));
 i.addEventListener("textInput", e => say("textinput:" + e.data));
 i.addEventListener("input", () => say("value:" + i.value));
 i.focus();
+setInterval(() => {
+  say("hb hasFocus=" + document.hasFocus() + " active=" + (document.activeElement.id || document.activeElement.tagName));
+}, 1000);
 </script>

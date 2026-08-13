@@ -330,14 +330,51 @@ divergence to get right:
   that producer refuses the call and `probe()` reports it unsupported there.
   A library must not segfault its embedder to report a missing feature.
 
-**IME: wired, returns `Ok`, delivers nothing.** Windows and macOS both. The
-page listens for `compositionstart`, `compositionupdate`, `compositionend`,
-`textInput` and `input`; none fires. Ruled out: focus (`document.hasFocus()`
-true, `activeElement` is the input) and input routing generally (an ordinary
-keypress into the same field on the same run lands, `value:K`). One
-hypothesis was tried and disproved -- CEF's sample client always passes a
-composition underline span and `welding` passed none -- and the change was
-reverted rather than shipped unproven. Cause still unknown.
+**IME: wired, returns `Ok`, delivers nothing.** Windows and macOS both.
+Dug into properly; every precondition holds and CEF still drops the input.
+
+What was ruled out, in order:
+
+1. *The page.* It listens for `compositionstart`, `compositionupdate`,
+   `compositionend`, `textInput` and `input`. None fires.
+2. *Which call.* `WELD_IME_MODE` runs `ImeSetComposition` alone,
+   `ImeCommitText` alone, `ImeFinishComposingText`, or the pair. All four are
+   equally silent, so this is not the composition machinery specifically.
+3. *Renderer focus, at the time of the call rather than at load.* A
+   once-a-second heartbeat in the page reports `hasFocus=true active=i` before
+   the IME call and for thirteen seconds after it.
+4. *Browser-side text-input state.* This is the one a working keypress does
+   **not** prove, and the distinction matters: `SendKeyEvent` injects into the
+   focused widget directly, while the IME methods go through the browser's
+   text-input machinery. So concluding "focus is fine, because typing works"
+   was wrong reasoning, even though the conclusion held. Implementing
+   `OnVirtualKeyboardRequested` settled it: CEF calls it with
+   `TEXT_INPUT_MODE_DEFAULT` immediately after the click, so the browser does
+   know an editable field has focus.
+5. *The host object.* The same `CefBrowserHost`, fetched by the same
+   expression in the same run, delivers key events into that very field
+   (`value:K`).
+6. *Chromium's own account.* Nothing logged under `--vmodule=*ime*=3`.
+
+Two hypotheses were tried and disproved, and both changes reverted rather than
+left in the tree on a hunch:
+
+- **No composition underline span.** CEF's sample client always passes one and
+  `welding` passed `None`. Supplying a span spanning the whole composition
+  changed nothing.
+- **No parent window handle.** CEF documents that a windowless browser without
+  a parent window may find "some functionality that requires a parent window
+  may not function correctly", and `welding` never sets `parent_window`.
+  Plumbing the host `HWND` through changed nothing for IME. Reverted because it
+  was unproven and would have left a Windows-only field on one of three
+  producers -- but it is still worth doing properly across all three for dialog
+  and context-menu parenting and monitor info, which is a separate job with its
+  own evidence.
+
+Next step is the comparison this cannot settle from inside: run `cefclient`'s
+OSR sample against the same CEF 148 build and see whether IME works there. If
+it does, the difference is in `welding`'s setup; if it does not, this is CEF
+148 and belongs upstream.
 
 ## Plan
 

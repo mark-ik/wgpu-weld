@@ -58,13 +58,32 @@ rather than producing a broken texture. This is why the popup row reads
 geometry (`on_popup_show`, then `on_popup_size 320x197 at 0,80`), and only the
 texture import is refused, by the same modifier limitation.
 
-[^ime]: The IME calls return `Ok` and nothing arrives. Checked on Windows and
-macOS against a page listening for `compositionstart`, `compositionupdate`,
-`compositionend`, `textInput` and `input`: not one of them fires. It is not
-focus, and it is not the click: an ordinary `WELD_KEY` keypress into the same
-field on the same run lands in the DOM (`value:K`), and the page reports
-`activeElement` as the input with `document.hasFocus()` true. So the IME path
-specifically does not deliver. Do not rely on this row.
+[^ime]: The IME calls return `Ok` and nothing arrives, on Windows and macOS
+alike. Do not rely on this row. Every precondition was checked and holds:
+
+* The page listens for `compositionstart`, `compositionupdate`,
+  `compositionend`, `textInput` and `input`. Not one fires.
+* Renderer-side focus holds throughout, not just at load: a once-a-second
+  heartbeat reports `hasFocus=true active=i` before the call and for thirteen
+  seconds after it.
+* The browser side knows an editable field is focused too --
+  `OnVirtualKeyboardRequested` fires with `TEXT_INPUT_MODE_DEFAULT` right after
+  the click. That is the state the IME methods act on, and it is the one thing
+  a working keypress does *not* prove: `SendKeyEvent` injects into the focused
+  widget directly, which is why typing can work while IME does nothing.
+* The same `CefBrowserHost`, fetched the same way in the same run, delivers key
+  events successfully (`value:K` into that very field).
+* All three entry points are equally silent, checked separately through
+  `WELD_IME_MODE`: `ImeSetComposition` alone, `ImeCommitText` alone,
+  `ImeFinishComposingText`, and the pair together.
+* Chromium logs nothing about it, even under `--vmodule=*ime*=3`.
+
+Two hypotheses were tried and disproved rather than left in the tree: a missing
+composition underline span (CEF's sample client always passes one, `welding`
+passed none) and a missing parent window handle, which CEF's own docs warn
+about for windowless browsers. Neither changed the outcome, and both were
+reverted. Cause still unknown; the next step is a `cefclient` comparison on the
+same CEF build.
 
 [^macdevtools]: Opening DevTools for a windowless browser crashes CEF 148 on
 macOS from inside the framework (`EXC_BAD_ACCESS` at null+0x150, on the host
