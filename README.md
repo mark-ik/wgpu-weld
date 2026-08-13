@@ -11,7 +11,8 @@ the shared `grafting` interop core).
 
 ## Status (2026-08-12)
 
-Prototype. `welding` 0.4.1 on crates.io (MPL-2.0). Per-platform detail, and
+Prototype. `welding` 0.5.0 in this repo, 0.4.1 published on crates.io
+(MPL-2.0). Per-platform detail, and
 the difference between "verified on that hardware" and "implemented but not
 yet run there", is the table in [`welding/README.md`](welding/README.md).
 

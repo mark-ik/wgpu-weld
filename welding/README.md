@@ -14,7 +14,7 @@ of them import through.
 
 ## State, 2026-08-12
 
-Version 0.4.1. Every "verified" below was checked by running it on that
+Version 0.5.0. Every "verified" below was checked by running it on that
 platform's hardware, in one battery per machine: Windows 11 (this laptop),
 macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac (the
 first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
