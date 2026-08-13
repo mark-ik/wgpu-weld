@@ -371,10 +371,75 @@ left in the tree on a hunch:
   and context-menu parenting and monitor info, which is a separate job with its
   own evidence.
 
-Next step is the comparison this cannot settle from inside: run `cefclient`'s
-OSR sample against the same CEF 148 build and see whether IME works there. If
-it does, the difference is in `welding`'s setup; if it does not, this is CEF
-148 and belongs upstream.
+**The comparison, 2026-08-12 (late).** `cefclient` turned out to be the wrong
+instrument and an expensive one: the `cef-dll-sys` distribution is the
+*minimal* archive, with no prebuilt sample and no `tests/` sources, so it would
+have meant a full standard distribution plus a CMake/MSVC build -- and
+`cefclient`'s OSR IME is driven by real `WM_IME_*` messages, which needs an
+installed IME and a human typing. Chromium's own tracing answers the same
+question directly, because CEF's OSR IME entry points carry `TRACE_EVENT0`.
+
+With `--trace-startup=cef --trace-startup-format=json`, a run that clicks the
+field and composes records:
+
+| trace event | count |
+| --- | --- |
+| `CefRenderWidgetHostViewOSR::SendMouseEvent` | 62 |
+| `CefRenderWidgetHostViewOSR::OnAcceleratedPaint` | 44 |
+| `CefRenderWidgetHostViewOSR::SendKeyEvent` | 6 |
+| `CefRenderWidgetHostViewOSR::Invalidate` | 2 |
+| `CefRenderWidgetHostViewOSR::ImeSetComposition` | **0** |
+| `CefRenderWidgetHostViewOSR::ImeCommitText` | **0** |
+
+**The IME calls never reach CEF's off-screen view, while mouse and key calls on
+the same `CefBrowserHost` do.** The first attempt at this measured nothing, for
+the usual reason: `--trace-startup-file=trace.json` writes *protobuf*, so the
+grep found no event names and the absence looked like a result. It needed
+`--trace-startup-format=json`, and the control (are there any `Cef*` events at
+all?) is what caught it.
+
+Reading CEF's source alongside that, every guard on the path is satisfied:
+`AlloyBrowserHostImpl::ImeSetComposition` returns early only when the browser
+is not windowless, when it is off the UI thread (it reposts), or when
+`platform_delegate_` is null; `CefBrowserPlatformDelegateOsr` only when
+`GetOSRHostView()` is null; `CefRenderWidgetHostViewOSR` only when
+`render_widget_host_` is null. Painting proves the delegate, the view and the
+widget host are all alive, and OSR proves windowless.
+
+Five hypotheses tried, all disproved, all reverted rather than left in:
+
+1. **No composition underline span.** CEF's sample client always passes one.
+2. **No parent window handle.** CEF warns windowless browsers without one may
+   find "some functionality that requires a parent window may not function
+   correctly". Plumbed through and *verified to arrive* as a real `HWND`
+   (`parent_window = Some(43322240)`) -- the first attempt at this test never
+   checked the handle was non-`None`, which would have made the negative
+   worthless.
+3. **The API version pin.** The bindings are generated at `CEF_API_VERSION`
+   999999 (experimental) while `pin_cef_api_version` pins `CEF_API_VERSION_LAST`
+   (14700). Pinning to the experimental value changed nothing, and the original
+   is kept because it fixed a real crash. Worth recording anyway: bindings and
+   DLL are the same build (`147.0.14+g76d2442+chromium-147.0.7727.138` on both
+   sides), so this is not a provenance mismatch.
+4. **The runtime style.** The IME members live on `AlloyBrowserHostImpl` and
+   CEF 147 defaults to the Chrome runtime, so `CEF_RUNTIME_STYLE_ALLOY` was
+   requested explicitly. No change, and OSR kept painting (53 frames), so the
+   control held.
+5. **The calling thread.** Windows uses `multi_threaded_message_loop`, so the
+   call is posted to CEF's UI thread -- but macOS runs CEF's UI thread *as* the
+   host thread, needs no post, and fails identically.
+
+One dead end is worth recording so it is not re-run: `GetWindowlessFrameRate()`
+returning 0 for a browser created at 60 looked like proof of a shifted struct
+layout, and a whole vtable-divergence theory was built on it. It is documented
+UI-thread-only, and on Windows CEF owns its own UI thread, so 0 is simply what
+it returns off-thread. The control that killed the theory was
+`is_window_rendering_disabled()`, which returned 1 correctly.
+
+So it is not the call site, not focus, not the thread, and not provenance. It
+sits between the C API entry point and `AlloyBrowserHostImpl::ImeSetComposition`
+and belongs upstream. What would settle it there is a debug libcef build, or a
+minimal C++ OSR client calling `ImeCommitText` on the same binary.
 
 ## Plan
 

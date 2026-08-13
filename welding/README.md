@@ -78,12 +78,28 @@ alike. Do not rely on this row. Every precondition was checked and holds:
   `ImeFinishComposingText`, and the pair together.
 * Chromium logs nothing about it, even under `--vmodule=*ime*=3`.
 
-Two hypotheses were tried and disproved rather than left in the tree: a missing
-composition underline span (CEF's sample client always passes one, `welding`
-passed none) and a missing parent window handle, which CEF's own docs warn
-about for windowless browsers. Neither changed the outcome, and both were
-reverted. Cause still unknown; the next step is a `cefclient` comparison on the
-same CEF build.
+The calls never reach CEF. Chromium's own tracing settles it: with
+`--trace-startup=cef --trace-startup-format=json`, a run that clicks the field
+and then composes records 62 `CefRenderWidgetHostViewOSR::SendMouseEvent`, 44
+`OnAcceleratedPaint`, 6 `SendKeyEvent` and 2 `Invalidate` -- and not one
+`ImeSetComposition` or `ImeCommitText`. Mouse and key calls on that same
+`CefBrowserHost` arrive; the IME calls vanish before CEF's off-screen view.
+Every guard on the way there is satisfied: the browser is windowless, its
+platform delegate is alive (it is what paints), and the OSR view exists.
+
+Five hypotheses were tried and disproved, and every one of the changes was
+reverted rather than left in the tree: a missing composition underline span; a
+missing parent window handle (confirmed to reach CEF as a real `HWND`, and to
+change nothing); pinning `cef_api_hash` to the experimental API version the
+bindings are generated at instead of the last stable one; requesting
+`CEF_RUNTIME_STYLE_ALLOY` explicitly, since the IME members live on
+`AlloyBrowserHostImpl` and CEF 147 defaults to the Chrome runtime; and the
+calling thread, which macOS rules out on its own by running CEF's UI thread as
+the host thread and failing identically.
+
+So this is not a `welding` call-site bug and not a focus problem. It sits
+between the C API entry point and `AlloyBrowserHostImpl::ImeSetComposition`,
+and it belongs upstream.
 
 [^macdevtools]: Opening DevTools for a windowless browser crashes CEF 148 on
 macOS from inside the framework (`EXC_BAD_ACCESS` at null+0x150, on the host
