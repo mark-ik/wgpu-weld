@@ -436,10 +436,45 @@ UI-thread-only, and on Windows CEF owns its own UI thread, so 0 is simply what
 it returns off-thread. The control that killed the theory was
 `is_window_rendering_disabled()`, which returned 1 correctly.
 
-So it is not the call site, not focus, not the thread, and not provenance. It
-sits between the C API entry point and `AlloyBrowserHostImpl::ImeSetComposition`
-and belongs upstream. What would settle it there is a debug libcef build, or a
-minimal C++ OSR client calling `ImeCommitText` on the same binary.
+**It was the call site after all, and it is fixed.** The trace narrowed the
+loss to "between the C API entry point and `AlloyBrowserHostImpl`", and the
+answer was sitting in the distribution the whole time: CEF ships its own
+`libcef_dll/ctocpp/browser_host_ctocpp.cc`, the wrapper a C++ client uses to
+call the same C API. Reading how *CEF itself* makes the call:
+
+```cpp
+_struct->ime_set_composition(_struct, text.GetStruct(), underlinesCount,
+                             underlinesList, &replacement_range,
+                             &selection_range);
+```
+
+The C++ API takes `replacement_range` as `const CefRange&`, so CEF's wrapper
+can only ever pass a real pointer. That makes non-null the **contract** of the
+C API, and libcef's generated entry point enforces it: it verifies the by-ref
+params and returns early on NULL. In a release build that check is silent.
+
+`welding` passed `None`. Every composition and every commit was dropped before
+a single line of CEF code ran -- which is exactly why the trace showed nothing,
+why all four call modes behaved identically, and why no guard anywhere looked
+unsatisfied. Passing CEF's invalid range `(UINT32_MAX, UINT32_MAX)`, the same
+"replace nothing" value `cefclient` uses, fixes it.
+
+Verified on all three platforms with the full lifecycle reaching the DOM --
+`compositionstart`, `compositionupdate`, `textInput`, `compositionend`, and the
+field holding the text: Windows 11, macOS 26.5 on the M4, and Fedora on the
+ThinkPad. All three call modes work separately (composition alone, commit
+alone, finish-composing).
+
+The lesson generalises beyond IME: **any CEF C API parameter that the C++ API
+takes by reference must be non-null**, and passing null buys a silent no-op
+rather than an error. Worth auditing the other `Option<&T>` arguments
+`welding` passes.
+
+One incident from the verification run, fixed rather than just noted: on a GPU
+that cannot import CEF's DMABUF, the Linux demo logged an error on *every*
+paint, and the animating IME probe page paints forever. That filled the
+ThinkPad's 7.5G tmpfs and took the run down with it. The error is rate-limited
+now (first, then every 500th).
 
 ## Plan
 

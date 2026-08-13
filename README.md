@@ -11,7 +11,7 @@ the shared `grafting` interop core).
 
 ## Status (2026-08-12)
 
-Prototype. `welding` 0.5.1 in this repo, 0.5.0 published on crates.io
+Prototype. `welding` 0.5.2 in this repo, 0.5.1 published on crates.io
 (MPL-2.0). Per-platform detail, and
 the difference between "verified on that hardware" and "implemented but not
 yet run there", is the table in [`welding/README.md`](welding/README.md).
@@ -26,9 +26,16 @@ turned out not to work. `set_visible` is verified on Windows and macOS, with
 painting stopping exactly while hidden. DevTools was not implemented at all
 despite the capability probe claiming otherwise; it opens a real window on
 Windows now and crashes CEF on macOS, where the producer refuses the call
-rather than segfault its host. IME composition returns success and delivers
-nothing to the DOM on either platform. `welding/README.md` carries the
-evidence for each.
+rather than segfault its host. IME composition was delivering nothing at all;
+it is fixed and verified on all three platforms. `welding/README.md` carries
+the evidence for each.
+
+The IME bug is worth knowing about if you call CEF's C API from anywhere:
+`replacement_range` must be a real pointer. CEF's own C++ wrapper takes it by
+reference and therefore always passes one, so non-null is the C API's contract,
+and libcef's generated entry point verifies it and returns early on NULL --
+silently, in a release build. Passing null does not fail, it just drops the
+call before any CEF code runs.
 
 - All three platform import lanes are hardware-verified: Windows (D3D11
   copy, D3D12 shared handle via the `grafting` crate, into wgpu), Linux

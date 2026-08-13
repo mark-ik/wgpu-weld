@@ -14,7 +14,7 @@ of them import through.
 
 ## State, 2026-08-12
 
-Version 0.5.1. Every "verified" below was checked by running it on that
+Version 0.5.2. Every "verified" below was checked by running it on that
 platform's hardware, in one battery per machine: Windows 11 (this laptop),
 macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac (the
 first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
@@ -36,7 +36,7 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | Renderer crash recovery | verified | verified | event not delivered [^linuxcrash] |
 | Visibility (`set_visible`) | verified | verified | wired |
 | DevTools window | verified | **crashes CEF** [^macdevtools] | no crash, no window seen |
-| IME composition | **not delivered** [^ime] | **not delivered** [^ime] | wired |
+| IME composition | verified | verified | verified |
 
 "verified" means observed working on that platform's hardware. "wired" means
 implemented and compiling there, but not yet exercised on any machine — the
@@ -57,49 +57,6 @@ rather than producing a broken texture. This is why the popup row reads
 "opens": on the AMD test machine CEF offers the dropdown and reports its
 geometry (`on_popup_show`, then `on_popup_size 320x197 at 0,80`), and only the
 texture import is refused, by the same modifier limitation.
-
-[^ime]: The IME calls return `Ok` and nothing arrives, on Windows and macOS
-alike. Do not rely on this row. Every precondition was checked and holds:
-
-* The page listens for `compositionstart`, `compositionupdate`,
-  `compositionend`, `textInput` and `input`. Not one fires.
-* Renderer-side focus holds throughout, not just at load: a once-a-second
-  heartbeat reports `hasFocus=true active=i` before the call and for thirteen
-  seconds after it.
-* The browser side knows an editable field is focused too --
-  `OnVirtualKeyboardRequested` fires with `TEXT_INPUT_MODE_DEFAULT` right after
-  the click. That is the state the IME methods act on, and it is the one thing
-  a working keypress does *not* prove: `SendKeyEvent` injects into the focused
-  widget directly, which is why typing can work while IME does nothing.
-* The same `CefBrowserHost`, fetched the same way in the same run, delivers key
-  events successfully (`value:K` into that very field).
-* All three entry points are equally silent, checked separately through
-  `WELD_IME_MODE`: `ImeSetComposition` alone, `ImeCommitText` alone,
-  `ImeFinishComposingText`, and the pair together.
-* Chromium logs nothing about it, even under `--vmodule=*ime*=3`.
-
-The calls never reach CEF. Chromium's own tracing settles it: with
-`--trace-startup=cef --trace-startup-format=json`, a run that clicks the field
-and then composes records 62 `CefRenderWidgetHostViewOSR::SendMouseEvent`, 44
-`OnAcceleratedPaint`, 6 `SendKeyEvent` and 2 `Invalidate` -- and not one
-`ImeSetComposition` or `ImeCommitText`. Mouse and key calls on that same
-`CefBrowserHost` arrive; the IME calls vanish before CEF's off-screen view.
-Every guard on the way there is satisfied: the browser is windowless, its
-platform delegate is alive (it is what paints), and the OSR view exists.
-
-Five hypotheses were tried and disproved, and every one of the changes was
-reverted rather than left in the tree: a missing composition underline span; a
-missing parent window handle (confirmed to reach CEF as a real `HWND`, and to
-change nothing); pinning `cef_api_hash` to the experimental API version the
-bindings are generated at instead of the last stable one; requesting
-`CEF_RUNTIME_STYLE_ALLOY` explicitly, since the IME members live on
-`AlloyBrowserHostImpl` and CEF 147 defaults to the Chrome runtime; and the
-calling thread, which macOS rules out on its own by running CEF's UI thread as
-the host thread and failing identically.
-
-So this is not a `welding` call-site bug and not a focus problem. It sits
-between the C API entry point and `AlloyBrowserHostImpl::ImeSetComposition`,
-and it belongs upstream.
 
 [^macdevtools]: Opening DevTools for a windowless browser crashes CEF 148 on
 macOS from inside the framework (`EXC_BAD_ACCESS` at null+0x150, on the host
@@ -180,6 +137,15 @@ let config = CefSurfaceConfig {
 };
 // and when the window moves to another display:
 producer.set_scale_factor(new_scale)?;
+```
+
+IME composition goes in as text, and the page sees a real composition:
+
+```rust,ignore
+producer.ime_set_composition("weldime", (7, 7))?;   // composing
+producer.ime_commit_text("weldime")?;               // committed
+// The page gets compositionstart, compositionupdate, textInput,
+// compositionend, and the field ends up holding the text.
 ```
 
 Cookies and script results are request-then-poll, because CEF answers both
