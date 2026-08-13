@@ -427,6 +427,23 @@ impl DemoApp {
             // HiDPI layout and cookies, so the same evidence exists on
             // every platform.
             s.ticks += 1;
+        if s.cdp_ticks == 200 || s.ticks == 200 {
+            if let Ok(text) = std::env::var("WELD_FIND") {
+                match s.producer.find(&text, true, false, false) {
+                    Ok(()) => eprintln!("weld demo: find {text:?}"),
+                    Err(e) => eprintln!("weld demo: find failed: {e}"),
+                }
+            }
+            if std::env::var("WELD_ZOOM").is_ok() {
+                let _ = s.producer.zoom(welding::ZoomCommand::In);
+                let _ = s.producer.zoom(welding::ZoomCommand::In);
+            }
+            eprintln!(
+                "weld demo: can_go_back={} can_go_forward={}",
+                s.producer.can_go_back(),
+                s.producer.can_go_forward()
+            );
+        }
         // WELD_CDP=<method> sends one CDP call, then prints every
         // reply and event as it arrives.
         if let Ok(method) = std::env::var("WELD_CDP") {
