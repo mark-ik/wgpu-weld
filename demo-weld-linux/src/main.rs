@@ -59,6 +59,7 @@ struct DemoState {
     recover_url: String,
     battery_started: bool,
     ticks: u32,
+    import_errors: u64,
     scripted: scripted::ScriptedInput,
     /// Cached popup widget surface, held across frames because CEF only
     /// repaints it on change and dropped when `popup_rect` goes to `None`.
@@ -196,6 +197,7 @@ impl ApplicationHandler for DemoApp {
             frames_imported: 0,
             battery_started: false,
             ticks: 0,
+            import_errors: 0,
             scripted: scripted::ScriptedInput::from_env(),
             popup: None,
             cursor: (0.0, 0.0),
@@ -356,7 +358,14 @@ impl ApplicationHandler for DemoApp {
                     }
                     Ok(None) => {}
                     Err(e) => {
-                        log::error!("acquire_frame error: {e}");
+                        // Rate-limited on purpose. A GPU that cannot import
+                        // CEF's buffer fails on *every* paint, and an animating
+                        // page paints forever: logging each one filled a 7.5G
+                        // tmpfs during an IME test and took the run with it.
+                        s.import_errors += 1;
+                        if s.import_errors == 1 || s.import_errors % 500 == 0 {
+                            log::error!("acquire_frame error (x{}): {e}", s.import_errors);
+                        }
                     }
                 }
 
