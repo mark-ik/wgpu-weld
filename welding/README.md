@@ -48,7 +48,7 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | History state (`can_go_back`) | verified | wired | verified |
 | Print to PDF | verified | wired | verified |
 | User agent override | verified | wired | verified |
-| System printer dialog | wired | wired | unavailable [^linuxprint] |
+| System printer dialog | verified | wired | unavailable [^linuxprint] |
 | Host/page drag-drop | verified | wired | wired |
 | Direct touch | verified | wired | wired |
 | PNG snapshot | verified | wired | wired |
@@ -96,7 +96,10 @@ Chrome-bootstrap pattern seen elsewhere here: Chrome owns the login prompt and
 a windowless browser has none. Proxy authentication is untested — CEF reports
 `is_proxy` separately, and that path may well work. Do not rely on this row.
 
-[^linuxprint]: Linux CEF provides no native printer dialog. It requires an
+[^linuxprint]: Windows' native dialog was observed on 2026-08-13 after a
+`print()` request and cancelled before submitting a job. This proves CEF reaches
+the platform printer chooser, not that a physical page was produced. Linux CEF
+provides no native printer dialog. It requires an
 embedder-owned `CefPrintHandler` to supply both the dialog and spooler, so
 `print()` returns an explained unsupported error there. `welding` does not
 silently select a default printer or invoke `lp`.

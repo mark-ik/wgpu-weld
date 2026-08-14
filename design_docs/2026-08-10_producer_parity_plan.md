@@ -743,9 +743,12 @@ now (first, then every 500th).
   native drag loop and `finish_drag_source` closes it. Touch preserves contact
   IDs and phases rather than translating touches into mouse input.
 
-  The system-printer boundary is split honestly. Windows and macOS call CEF's
-  native dialog; selecting a printer and creating physical output requires a
-  user decision and has not been automated. Linux CEF has no built-in dialog:
+  The system-printer boundary is split honestly. On Windows, `print()` opened
+  the native chooser and exposed the installed printer queues on 2026-08-13;
+  the dialog was cancelled before a job was submitted. macOS calls the same
+  CEF-owned native-dialog path but has no current hardware receipt. Selecting
+  a printer and creating physical output remains a user decision. Linux CEF
+  has no built-in dialog:
   it requires a complete embedder `CefPrintHandler` with printer UI and
   spooler, so welding returns an explicit unsupported error there rather than
   selecting a default printer or calling `lp`. Linux and macOS still need their

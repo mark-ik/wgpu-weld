@@ -92,10 +92,10 @@ menus are verified on all three platforms; `GetAuthCredentials` is wired and
 answerable but CEF has never been observed to call it. W8's code is complete:
 host/page drag-drop, direct touch, PNG snapshots, and one CEF `RequestContext`
 per producer have Windows receipts; macOS and Linux share the implementations
-but still need their hardware passes. System printing opens CEF's native dialog
-on Windows and macOS, while Linux explicitly reports it unavailable because CEF
-requires an embedder-owned printer UI and spooler. W9, the Chrome DevTools
-Protocol, is done and verified on all three: its unwrapped JSON wire format lets
+but still need their hardware passes. System printing reaches CEF's native
+dialog on Windows, is wired on macOS, and explicitly reports unavailable on
+Linux, where CEF requires an embedder-owned printer UI and spooler. W9, the
+Chrome DevTools Protocol, is done and verified on all three: its unwrapped JSON wire format lets
 an existing CDP client drive an off-screen browser.
 
 ## Use
