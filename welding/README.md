@@ -49,10 +49,10 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | Print to PDF | verified | wired | verified |
 | User agent override | verified | wired | verified |
 | System printer dialog | verified | wired | unavailable [^linuxprint] |
-| Host/page drag-drop | verified | wired | wired |
-| Direct touch | verified | wired | wired |
-| PNG snapshot | verified | wired | wired |
-| Per-producer profile | verified | wired | wired |
+| Host/page drag-drop | verified | wired | verified |
+| Direct touch | verified | wired | verified |
+| PNG snapshot | verified | wired | verified |
+| Per-producer profile | verified | wired | verified |
 
 "verified" means observed working on that platform's hardware. "wired" means
 implemented but not yet exercised on that platform's hardware.

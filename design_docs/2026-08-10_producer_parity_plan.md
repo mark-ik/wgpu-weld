@@ -725,15 +725,23 @@ now (first, then every 500th).
   runtime shares it. Putting it on the surface config would have implied a
   per-browser knob that does not exist.
 
-  **W8 tail implementation landed 2026-08-13.** Windows has the executable
-  receipts: a direct `TouchInput` produced `TOUCH:touchstart:1` then
-  `TOUCH:touchend:1`; a staged Enter, Over, Drop produced
+  **W8 tail implementation landed 2026-08-13.** Windows and the ThinkPad have
+  executable receipts: a direct `TouchInput` produced `TOUCH:touchstart:1`
+  then `TOUCH:touchend:1`; a staged Enter, Over, Drop produced
   `DROP:1:weld_drag_touch_probe.html`; a page source drag produced
   `PAGE_DRAG:started` then `DragStarted`; `Page.captureScreenshot` wrote a
-  31606-byte PNG with the eight-byte PNG signature; a persistent producer
-  created its own cache tree below the runtime root. The profile boundary also
+  PNG with the eight-byte PNG signature (31606 bytes on Windows; 12892 bytes
+  on ThinkPad); and a persistent producer created its own cache tree below the
+  runtime root, including `Cookies` on ThinkPad. The profile boundary also
   changed the cookie helpers from CEF's global manager to the browser's own
   request context, so the public cookie API cannot leak across profiles.
+
+  The ThinkPad exposed a setup ordering rule. A disk-backed child
+  `RequestContext` is initialized through CEF's host loop; creating its browser
+  immediately made `browser_host_create_browser_sync` return `None`, despite
+  CEF documenting child paths as valid. Pumping the host loop once after the
+  context is created and before creating the browser completes that setup. The
+  same persistent child-profile run then created, loaded, and wrote its profile.
 
   Snapshot capture is intentionally asynchronous and private to the producer:
   `request_snapshot_png` starts Chromium `Page.captureScreenshot`, and
@@ -751,8 +759,9 @@ now (first, then every 500th).
   has no built-in dialog:
   it requires a complete embedder `CefPrintHandler` with printer UI and
   spooler, so welding returns an explicit unsupported error there rather than
-  selecting a default printer or calling `lp`. Linux and macOS still need their
-  hardware receipts for the new drag, touch, snapshot, and profile paths.
+  selecting a default printer or calling `lp`. The new Linux drag, touch,
+  snapshot, and profile paths are hardware-verified; macOS still needs its
+  receipts for those operations.
   (`WasHidden`-backed visibility landed early, during W4.)
 - **W9, CDP. DONE 2026-08-13**, verified on all three (Windows, M4, ThinkPad):
   `Browser.getVersion` returns a real protocol result
