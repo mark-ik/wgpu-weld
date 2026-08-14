@@ -150,6 +150,7 @@ export WELD_SNAPSHOT=/tmp/page.png # private CDP screenshot helper
 export WELD_CACHE_ROOT=/tmp/weld-cache
 export WELD_PROFILE=/tmp/weld-cache/person-a
 export WELD_PRINT=1                 # opens the native dialog where supported
+export WELD_TIMEOUT_SECS=45          # gracefully end a scripted battery
 export WELD_SWITCHES=disable-popup-blocking,lang=en-GB
 export WELD_BACKGROUND=transparent # or rrggbb; unset = opaque white
 ```

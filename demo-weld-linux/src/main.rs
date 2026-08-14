@@ -11,7 +11,10 @@
 //! Validated against Intel/Mesa + Vulkan + X11. NVIDIA proprietary and Wayland
 //! are not currently supported by the CEF Linux DMABUF path.
 
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use winit::{
     application::ApplicationHandler,
@@ -41,6 +44,7 @@ use crate::{blit::build_blit_pipeline, keys::keycode_to_vk};
 struct DemoApp {
     cef_runtime: Option<CefRuntime>,
     state: Option<DemoState>,
+    timeout_at: Option<Instant>,
 }
 
 struct DemoState {
@@ -73,7 +77,11 @@ struct DemoState {
 
 impl DemoApp {
     fn new(cef_runtime: CefRuntime) -> Self {
-        Self { cef_runtime: Some(cef_runtime), state: None }
+        Self {
+            cef_runtime: Some(cef_runtime),
+            state: None,
+            timeout_at: exit_after_seconds().map(|timeout| Instant::now() + timeout),
+        }
     }
 }
 
@@ -365,6 +373,16 @@ impl ApplicationHandler for DemoApp {
 
             WindowEvent::RedrawRequested => {
                 s.cef_runtime.do_message_loop_work();
+
+                if self
+                    .timeout_at
+                    .is_some_and(|timeout_at| Instant::now() >= timeout_at)
+                {
+                    log::info!("gracefully closing after configured timeout");
+                    let _ = s.producer.close();
+                    el.exit();
+                    return;
+                }
 
                 match s.producer.acquire_frame(&s.host_ctx) {
                     Ok(Some(new_frame)) => {
@@ -730,6 +748,16 @@ fn winit_cursor(shape: &welding::CursorShape) -> winit::window::Cursor {
 /// `WELD_EXIT_AFTER_FRAMES=N`: probe frame N and exit.
 fn exit_after_frames() -> Option<u32> {
     std::env::var("WELD_EXIT_AFTER_FRAMES").ok().and_then(|v| v.parse().ok())
+}
+
+/// `WELD_TIMEOUT_SECS=N`: end a scripted run even if the GPU cannot import
+/// CEF's frame. This preserves input and browser receipts on AMD/RADV hosts
+/// whose DMABUF modifier is currently unsupported by wgpu.
+fn exit_after_seconds() -> Option<Duration> {
+    std::env::var("WELD_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_secs)
 }
 
 /// Read a corner of the imported texture back and report what landed there.

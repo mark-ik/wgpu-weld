@@ -7,7 +7,10 @@
 //! cargo run -p demo-weld-win
 //! ```
 
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use winit::{
     application::ApplicationHandler,
@@ -36,6 +39,8 @@ use crate::{blit::build_blit_pipeline, keys::keycode_to_vk};
 struct DemoApp {
     cef_runtime: Option<CefRuntime>,
     state: Option<DemoState>,
+    started_at: Instant,
+    timeout: Option<Duration>,
 }
 
 struct DemoState {
@@ -68,7 +73,12 @@ struct DemoState {
 
 impl DemoApp {
     fn new(cef_runtime: CefRuntime) -> Self {
-        Self { cef_runtime: Some(cef_runtime), state: None }
+        Self {
+            cef_runtime: Some(cef_runtime),
+            state: None,
+            started_at: Instant::now(),
+            timeout: exit_after_seconds(),
+        }
     }
 }
 
@@ -639,13 +649,19 @@ impl ApplicationHandler for DemoApp {
                 // WELD_EXIT_AFTER_FRAMES makes an unattended probe finite.
                 // This counts presentation ticks, not imported frames: a
                 // static accelerated browser may paint only once.
-                if !s.closing
-                    && std::env::var("WELD_EXIT_AFTER_FRAMES")
+                let frame_limit_reached = std::env::var("WELD_EXIT_AFTER_FRAMES")
                         .ok()
                         .and_then(|n| n.parse::<u32>().ok())
-                        .is_some_and(|n| s.frames_drawn >= n)
-                {
-                    eprintln!("weld demo: exit after {} frames", s.frames_drawn);
+                        .is_some_and(|n| s.frames_drawn >= n);
+                let timeout_reached = self
+                    .timeout
+                    .is_some_and(|timeout| self.started_at.elapsed() >= timeout);
+                if !s.closing && (frame_limit_reached || timeout_reached) {
+                    if timeout_reached {
+                        eprintln!("weld demo: exit after configured timeout");
+                    } else {
+                        eprintln!("weld demo: exit after {} frames", s.frames_drawn);
+                    }
                     s.closing = true;
                     if let Err(e) = s.producer.close() {
                         eprintln!("weld demo: close failed: {e}");
@@ -729,6 +745,16 @@ fn main() {
     event_loop
         .run_app(&mut DemoApp::new(runtime))
         .expect("event loop error");
+}
+
+/// `WELD_TIMEOUT_SECS=N`: gracefully close an unattended run after N seconds.
+/// Unlike the frame limit, this works when a real GPU rejects CEF's native
+/// frame import but the browser/input path is still being tested.
+fn exit_after_seconds() -> Option<Duration> {
+    std::env::var("WELD_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_secs)
 }
 
 /// Shared vocabulary to winit's icons.
