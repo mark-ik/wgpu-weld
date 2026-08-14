@@ -195,6 +195,9 @@ impl LinuxCefProducer {
             // Build one even for the in-memory case so every producer owns its
             // cookies, storage, and permission decisions.
             let mut request_context = crate::profile::create(_runtime, &config.surface)?;
+            // A disk-backed child context completes its initialization through
+            // the host loop before it can create a browser.
+            _runtime.do_message_loop_work();
 
             let browser = cef::browser_host_create_browser_sync(
                 Some(&window_info),
