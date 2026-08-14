@@ -10,6 +10,9 @@ use crate::surface::{EventModifiers, FocusDirection, KeyEvent, KeyEventKind, Mou
 const EVENTFLAG_SHIFT_DOWN:   u32 = 1 << 1;
 const EVENTFLAG_CONTROL_DOWN: u32 = 1 << 2;
 const EVENTFLAG_ALT_DOWN:     u32 = 1 << 3;
+const EVENTFLAG_LEFT_MOUSE_BUTTON: u32 = 1 << 4;
+const EVENTFLAG_MIDDLE_MOUSE_BUTTON: u32 = 1 << 5;
+const EVENTFLAG_RIGHT_MOUSE_BUTTON: u32 = 1 << 6;
 const EVENTFLAG_COMMAND_DOWN: u32 = 1 << 7; // macOS Cmd / Windows Meta
 
 fn modifiers(m: EventModifiers) -> u32 {
@@ -17,6 +20,9 @@ fn modifiers(m: EventModifiers) -> u32 {
     if m.shift { f |= EVENTFLAG_SHIFT_DOWN; }
     if m.ctrl  { f |= EVENTFLAG_CONTROL_DOWN; }
     if m.alt   { f |= EVENTFLAG_ALT_DOWN; }
+    if m.left_mouse_button { f |= EVENTFLAG_LEFT_MOUSE_BUTTON; }
+    if m.middle_mouse_button { f |= EVENTFLAG_MIDDLE_MOUSE_BUTTON; }
+    if m.right_mouse_button { f |= EVENTFLAG_RIGHT_MOUSE_BUTTON; }
     if m.meta  { f |= EVENTFLAG_COMMAND_DOWN; }
     f
 }

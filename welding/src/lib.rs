@@ -26,6 +26,12 @@ pub mod app;
 
 #[cfg(feature = "cef-runtime")]
 mod cef_input;
+#[cfg(feature = "cef-runtime")]
+mod drag;
+#[cfg(feature = "cef-runtime")]
+mod profile;
+#[cfg(feature = "cef-runtime")]
+mod snapshot;
 
 #[cfg(windows)]
 pub mod windows_cef;
@@ -62,7 +68,8 @@ pub use surface::{
     BrowserFeatureStatus, CefSurfaceCapabilities, CefSurfaceConfig, CefSurfaceMode,
     CefSurfaceProducer, Cookie, EventModifiers, FocusDirection, KeyEvent, KeyEventKind,
     CursorShape, ImeComposition, MouseAction, MouseButton, MouseEvent, NavigationEvent, PopupRect,
-    ContextMenuTarget, PopupSurface, ProcessTerminationStatus, SameSite, ZoomCommand,
+    ContextMenuTarget, PopupSurface, ProcessTerminationStatus, SameSite, ZoomCommand, DragEventKind,
+    DragFile, DragInput, DragOperations, DragPayload, TouchInput, TouchPhase,
 };
 pub use auth::AuthId;
 pub use downloads::DownloadId;

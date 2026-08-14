@@ -16,7 +16,7 @@ default = []
 # cef-dll-sys) and activates working implementations of CefRuntime and the
 # platform producers. Without this feature the crate still compiles but all
 # producer constructors return a pending-wiring error.
-cef-runtime = ["dep:cef"]
+cef-runtime = ["dep:base64", "dep:cef", "dep:serde_json"]
 # Enable the OnPaint CPU-bitmap fallback path. Always available regardless of
 # GPU support, but requires a texture upload per frame.
 cpu-paint-fallback = []
@@ -30,6 +30,8 @@ wgpu-hal = "29.0"
 # CEF ABI layer: generated bindings + wrap_* handler macros + typed
 # AcceleratedPaintInfo. Only active under the `cef-runtime` feature.
 cef = { version = "148", features = ["accelerated_osr"], optional = true }
+base64 = { version = "0.22", optional = true }
+serde_json = { version = "1", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Shared native-texture interop core. welding delegates its generic shared-texture

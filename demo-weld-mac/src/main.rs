@@ -87,6 +87,8 @@ struct DemoState {
     battery_started: bool,
     ticks: u32,
     cdp_ticks: u32,
+    snapshot_requested: bool,
+    snapshot_path: Option<std::path::PathBuf>,
     popups_imported: u32,
     cursor: (f32, f32),
     mods: EventModifiers,
@@ -178,6 +180,9 @@ impl ApplicationHandler for DemoApp {
                     // WELD_DOWNLOAD_DIR=path accepts downloads into that
                     // directory; unset refuses them, which is the default.
                     download_dir: std::env::var("WELD_DOWNLOAD_DIR").ok().map(Into::into),
+                    // WELD_PROFILE must be an absolute subdirectory of
+                    // WELD_CACHE_ROOT, which CEF uses as the root cache.
+                    user_data_dir: std::env::var_os("WELD_PROFILE").map(Into::into),
                     devtools_protocol: std::env::var("WELD_CDP").is_ok(),
                     // WELD_AUTH=user:pass answers auth challenges; unset
                     // declines them, which is the default.
@@ -207,6 +212,8 @@ impl ApplicationHandler for DemoApp {
             battery_started: false,
             ticks: 0,
             cdp_ticks: 0,
+            snapshot_requested: false,
+            snapshot_path: std::env::var_os("WELD_SNAPSHOT").map(Into::into),
             popups_imported: 0,
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
@@ -253,12 +260,10 @@ impl ApplicationHandler for DemoApp {
             }
 
             WindowEvent::ModifiersChanged(m) => {
-                s.mods = EventModifiers {
-                    shift: m.state().shift_key(),
-                    ctrl: m.state().control_key(),
-                    alt: m.state().alt_key(),
-                    meta: m.state().super_key(),
-                };
+                s.mods.shift = m.state().shift_key();
+                s.mods.ctrl = m.state().control_key();
+                s.mods.alt = m.state().alt_key();
+                s.mods.meta = m.state().super_key();
             }
 
             WindowEvent::KeyboardInput { event: ke, .. } => {
@@ -317,6 +322,11 @@ impl ApplicationHandler for DemoApp {
                 } else {
                     MouseAction::Released
                 };
+                match mb {
+                    MouseButton::Left => s.mods.left_mouse_button = state == ElementState::Pressed,
+                    MouseButton::Middle => s.mods.middle_mouse_button = state == ElementState::Pressed,
+                    MouseButton::Right => s.mods.right_mouse_button = state == ElementState::Pressed,
+                }
                 let _ = s.producer.send_mouse_input(MouseEvent {
                     x: s.cursor.0 as i32,
                     y: s.cursor.1 as i32,
@@ -421,6 +431,7 @@ impl DemoApp {
             scripted::recover_if_crashed(&mut s.producer, &s.recover_url, &event);
             scripted::answer_auth_if_challenged(&mut s.producer, &event);
             scripted::answer_permission_if_asked(&mut s.producer, &event);
+            scripted::finish_page_drag_if_started(&mut s.producer, &event);
         }
 
             // Parity battery: one run reports frames, script results,
@@ -440,6 +451,12 @@ impl DemoApp {
                     Err(e) => eprintln!("weld demo: print_to_pdf failed: {e}"),
                 }
             }
+            if std::env::var("WELD_PRINT").is_ok() {
+                match s.producer.print() {
+                    Ok(()) => eprintln!("weld demo: print dialog requested"),
+                    Err(e) => eprintln!("weld demo: print failed: {e}"),
+                }
+            }
             if std::env::var("WELD_ZOOM").is_ok() {
                 let _ = s.producer.zoom(welding::ZoomCommand::In);
                 let _ = s.producer.zoom(welding::ZoomCommand::In);
@@ -449,6 +466,13 @@ impl DemoApp {
                 s.producer.can_go_back(),
                 s.producer.can_go_forward()
             );
+        }
+        if !s.snapshot_requested && s.ticks > 90 && s.snapshot_path.is_some() {
+            s.snapshot_requested = true;
+            match s.producer.request_snapshot_png() {
+                Ok(()) => eprintln!("weld demo: PNG snapshot requested"),
+                Err(e) => eprintln!("weld demo: snapshot request failed: {e}"),
+            }
         }
         // WELD_CDP=<method> sends one CDP call, then prints every
         // reply and event as it arrives.
@@ -496,6 +520,22 @@ impl DemoApp {
                 match result.value {
                     Ok(json) => log::info!("SCRIPT #{} => {json}", result.id),
                     Err(err) => log::error!("SCRIPT #{} threw: {err}", result.id),
+                }
+            }
+            if let Some(result) = s.producer.poll_snapshot_png() {
+                match result {
+                    Ok(bytes) => {
+                        if let Some(path) = s.snapshot_path.as_ref() {
+                            match std::fs::write(path, &bytes) {
+                                Ok(()) if bytes.starts_with(b"\x89PNG\r\n\x1a\n") => {
+                                    eprintln!("weld demo: PNG snapshot {} bytes -> {}", bytes.len(), path.display());
+                                }
+                                Ok(()) => eprintln!("weld demo: snapshot was not a PNG"),
+                                Err(e) => eprintln!("weld demo: could not write snapshot: {e}"),
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("weld demo: snapshot failed: {e}"),
                 }
             }
             if let Some(cookies) = s.producer.poll_cookies() {
@@ -565,7 +605,11 @@ fn main() {
     log::info!("framework directory: {}", frameworks.display());
 
     let mut config = CefRuntimeConfig::new(&frameworks);
-    config.cache_path = Some(std::env::temp_dir().join("welding-demo-mac-cache"));
+    // WELD_CACHE_ROOT is the CEF root cache. A WELD_PROFILE directory must
+    // live inside it; this is CEF's process-wide RequestContext invariant.
+    config.cache_path = std::env::var_os("WELD_CACHE_ROOT")
+        .map(Into::into)
+        .or_else(|| Some(std::env::temp_dir().join("welding-demo-mac-cache")));
     config.user_agent = std::env::var("WELD_UA").ok();
     config.user_agent_product = std::env::var("WELD_UA_PRODUCT").ok();
     // Never touch the login keychain: without this, Chromium's Safe Storage

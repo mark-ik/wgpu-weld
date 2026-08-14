@@ -12,9 +12,10 @@ of them import through.
 
 **Made with AI**
 
-## State, 2026-08-12
+## State, 2026-08-13
 
-Version 0.9.0. Every "verified" below was checked by running it on that
+Version 0.9.0 is the published baseline; the W8-tail work below is not yet
+released. Every "verified" below was checked by running it on that
 platform's hardware, in one battery per machine: Windows 11 (this laptop),
 macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac (the
 first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
@@ -47,14 +48,21 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | History state (`can_go_back`) | verified | wired | verified |
 | Print to PDF | verified | wired | verified |
 | User agent override | verified | wired | verified |
+| System printer dialog | wired | wired | unavailable [^linuxprint] |
+| Host/page drag-drop | verified | wired | wired |
+| Direct touch | verified | wired | wired |
+| PNG snapshot | verified | wired | wired |
+| Per-producer profile | verified | wired | wired |
 
 "verified" means observed working on that platform's hardware. "wired" means
-implemented and compiling there, but not yet exercised on any machine — the
-last three rows are untested everywhere, not gaps in one platform.
+implemented but not yet exercised on that platform's hardware.
 
-Not implemented yet, and `CefSurfaceCapabilities::probe` will tell you so at
-runtime rather than failing quietly: printing to a printer, drag and drop,
-touch, pointer/pen, and per-producer profile isolation.
+The W8 tail now has concrete API shapes rather than prospective rows.
+`DragInput` drives an OS-originated drag into the page and `DragStarted` hands
+a page-originated payload to the host's toolkit drag loop; `TouchInput` keeps
+contact identifiers and phases intact; `request_snapshot_png` /
+`poll_snapshot_png` returns compositor PNG bytes asynchronously; every
+producer owns a CEF `RequestContext`. Pointer and pen remain unmodelled.
 
 [^linux]: Linux needs the DMABUF buffer to carry an **explicit** DRM format
 modifier. Intel/Mesa supplies one, and the frame import is verified there;
@@ -87,6 +95,11 @@ while other methods on that same handler fire normally. This looks like the
 Chrome-bootstrap pattern seen elsewhere here: Chrome owns the login prompt and
 a windowless browser has none. Proxy authentication is untested — CEF reports
 `is_proxy` separately, and that path may well work. Do not rely on this row.
+
+[^linuxprint]: Linux CEF provides no native printer dialog. It requires an
+embedder-owned `CefPrintHandler` to supply both the dialog and spooler, so
+`print()` returns an explained unsupported error there. `welding` does not
+silently select a default printer or invoke `lp`.
 
 [^macdevtools]: Opening DevTools for a windowless browser crashes CEF 148 on
 macOS from inside the framework (`EXC_BAD_ACCESS` at null+0x150, on the host
@@ -124,8 +137,16 @@ export WELD_SCALE=2                # force HiDPI on a 1x display
 export WELD_CLICK_AT=100,100       # physical pixels
 export WELD_WHEEL=-360             # scroll after the click
 export WELD_KEY=k                  # then type one character
+export WELD_TOUCH_AT=100,100       # direct touch contact in physical pixels
+export WELD_DROP_FILE=/tmp/example  # staged Enter, Over, Drop at that point
+export WELD_PAGE_DRAG=100,100,220,100 # source drag in physical pixels
+export WELD_FINISH_PAGE_DRAG=1      # finish that source drag as a copy
 export WELD_SCRIPT='({dpr: window.devicePixelRatio})'
 export WELD_COOKIE_URL=https://example.com/
+export WELD_SNAPSHOT=/tmp/page.png # private CDP screenshot helper
+export WELD_CACHE_ROOT=/tmp/weld-cache
+export WELD_PROFILE=/tmp/weld-cache/person-a
+export WELD_PRINT=1                 # opens the native dialog where supported
 export WELD_SWITCHES=disable-popup-blocking,lang=en-GB
 export WELD_BACKGROUND=transparent # or rrggbb; unset = opaque white
 ```
@@ -182,6 +203,45 @@ producer.print_to_pdf(Path::new("/tmp/page.pdf"))?;
 let mut runtime = CefRuntimeConfig::new(&cef_path);
 runtime.user_agent_product = Some("MyApp/1.0".into());  // or user_agent for all of it
 ```
+
+For the remaining W8 operations:
+
+```rust,ignore
+use welding::{
+    DragEventKind, DragInput, DragOperations, DragPayload, EventModifiers,
+    TouchInput, TouchPhase,
+};
+
+producer.send_touch_input(TouchInput {
+    id: 1,
+    x: 240.0,
+    y: 160.0,
+    radius_x: 8.0,
+    radius_y: 8.0,
+    rotation_angle: 0.0,
+    pressure: 1.0,
+    phase: TouchPhase::Started,
+    modifiers: EventModifiers::default(),
+})?;
+
+producer.send_drag_input(DragInput {
+    kind: DragEventKind::Enter,
+    payload: Some(DragPayload::default()),
+    x: 240,
+    y: 160,
+    modifiers: EventModifiers::default(),
+    allowed_operations: DragOperations::COPY,
+})?;
+
+producer.request_snapshot_png()?;
+if let Some(Ok(png)) = producer.poll_snapshot_png() {
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+}
+```
+
+`CefSurfaceConfig::user_data_dir` opts a producer into a persistent profile.
+It must be absolute and below the process-wide `CefRuntimeConfig::cache_path`;
+without it, each producer still receives a separate in-memory `RequestContext`.
 
 The Chrome DevTools Protocol goes through unwrapped — the thing a system
 webview cannot offer. JSON in, JSON out, exactly as the protocol documents it,

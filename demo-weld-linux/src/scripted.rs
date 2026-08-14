@@ -16,16 +16,22 @@
 //!   `set_visible` gets checked: painting should stop while hidden.
 //! - `WELD_DEVTOOLS=1` opens the DevTools window.
 //! - `WELD_RIGHT_CLICK_AT=x,y` right-clicks, to provoke a context menu.
+//! - `WELD_TOUCH_AT=x,y` sends one direct touch contact.
+//! - `WELD_DROP_FILE=absolute-path` drops a local file at `WELD_TOUCH_AT`
+//!   (or 10,10), proving the host-to-page drag route.
+//! - `WELD_PAGE_DRAG=x0,y0,x1,y1` starts a page-originated drag. Set
+//!   `WELD_FINISH_PAGE_DRAG=1` to finish it with a copy operation.
 //!
 //! Point them at a page that reports what it received (writing to
 //! `document.title` surfaces in the navigation events) and each one becomes a
 //! checkable claim rather than a hope.
 
-use std::time::{Duration, Instant};
+use std::{path::PathBuf, time::{Duration, Instant}};
 
 use welding::{
-    CefSurfaceProducer, EventModifiers, FocusDirection, KeyEvent, KeyEventKind, MouseAction,
-    MouseButton, MouseEvent, NavigationEvent, ProcessTerminationStatus,
+    CefSurfaceProducer, DragEventKind, DragFile, DragInput, DragOperations, DragPayload,
+    EventModifiers, FocusDirection, KeyEvent, KeyEventKind, MouseAction, MouseButton,
+    MouseEvent, NavigationEvent, ProcessTerminationStatus, TouchInput, TouchPhase,
 };
 
 /// Wait after the page is ready before acting: the first paint can land before
@@ -44,6 +50,9 @@ pub struct ScriptedInput {
     hide_cycle: bool,
     devtools: bool,
     right_click_at: Option<(i32, i32)>,
+    touch_at: Option<(i32, i32)>,
+    drop_file: Option<PathBuf>,
+    page_drag: Option<(i32, i32, i32, i32)>,
     /// When the page first became ready. Elapsed time, not a tick count: how
     /// often a host redraws is its own business, and an accelerated producer
     /// paints only on change, so ticks are not a clock.
@@ -75,6 +84,15 @@ impl ScriptedInput {
             let (x, y) = v.split_once(',')?;
             Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
         });
+        let touch_at = std::env::var("WELD_TOUCH_AT").ok().and_then(|v| {
+            let (x, y) = v.split_once(',')?;
+            Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+        });
+        let drop_file = std::env::var_os("WELD_DROP_FILE").map(PathBuf::from);
+        let page_drag = std::env::var("WELD_PAGE_DRAG").ok().and_then(|v| {
+            let mut parts = v.split(',').map(|part| part.trim().parse::<i32>().ok());
+            Some((parts.next()??, parts.next()??, parts.next()??, parts.next()??))
+        });
         Self {
             click_at,
             wheel,
@@ -84,6 +102,9 @@ impl ScriptedInput {
             hide_cycle,
             devtools,
             right_click_at,
+            touch_at,
+            drop_file,
+            page_drag,
             ready_at: None,
             stage: 0,
             crashed: false,
@@ -100,6 +121,9 @@ impl ScriptedInput {
             || self.hide_cycle
             || self.devtools
             || self.right_click_at.is_some()
+            || self.touch_at.is_some()
+            || self.drop_file.is_some()
+            || self.page_drag.is_some()
     }
 
     /// Call once per tick, with `ready` set once the page has painted. Fires at
@@ -122,14 +146,19 @@ impl ScriptedInput {
             return;
         }
         match self.stage {
-            0 => self.click(producer),
-            1 => self.scroll(producer),
-            2 => self.press(producer),
-            3 => self.compose(producer),
-            4 => self.hide(producer),
-            5 => self.show(producer),
-            6 => self.devtools(producer),
-            7 => self.right_click(producer),
+            0 => self.touch(producer),
+            1 => self.drop_file(producer, DragEventKind::Enter),
+            2 => self.drop_file(producer, DragEventKind::Over),
+            3 => self.drop_file(producer, DragEventKind::Drop),
+            4 => self.page_drag(producer),
+            5 => self.click(producer),
+            6 => self.scroll(producer),
+            7 => self.press(producer),
+            8 => self.compose(producer),
+            9 => self.hide(producer),
+            10 => self.show(producer),
+            11 => self.devtools(producer),
+            12 => self.right_click(producer),
             _ => {}
         }
         self.stage += 1;
@@ -149,6 +178,72 @@ impl ScriptedInput {
                 action,
                 modifiers: EventModifiers::default(),
             });
+        }
+    }
+
+    fn touch<P: CefSurfaceProducer + ?Sized>(&self, producer: &mut P) {
+        let Some((x, y)) = self.touch_at else { return };
+        eprintln!("weld demo: scripted touch at {x},{y}");
+        for (phase, pressure) in [(TouchPhase::Started, 1.0), (TouchPhase::Ended, 0.0)] {
+            if let Err(e) = producer.send_touch_input(TouchInput {
+                id: 1,
+                x: x as f32,
+                y: y as f32,
+                radius_x: 8.0,
+                radius_y: 8.0,
+                rotation_angle: 0.0,
+                pressure,
+                phase,
+                modifiers: EventModifiers::default(),
+            }) {
+                eprintln!("weld demo: touch failed: {e}");
+            }
+        }
+    }
+
+    fn drop_file<P: CefSurfaceProducer + ?Sized>(&self, producer: &mut P, kind: DragEventKind) {
+        let Some(path) = self.drop_file.as_ref() else { return };
+        let (x, y) = self.touch_at.unwrap_or((10, 10));
+        eprintln!("weld demo: scripted file {kind:?} {} at {x},{y}", path.display());
+        let payload = DragPayload {
+            files: vec![DragFile { path: path.clone(), display_name: None }],
+            ..Default::default()
+        };
+        let payload = (kind == DragEventKind::Enter).then_some(payload);
+        if let Err(e) = producer.send_drag_input(DragInput {
+            kind,
+            payload,
+            x,
+            y,
+            modifiers: EventModifiers::default(),
+            allowed_operations: DragOperations::COPY,
+        }) {
+            eprintln!("weld demo: file drag failed: {e}");
+        }
+    }
+
+    fn page_drag<P: CefSurfaceProducer + ?Sized>(&self, producer: &mut P) {
+        let Some((x0, y0, x1, y1)) = self.page_drag else { return };
+        eprintln!("weld demo: scripted page drag {x0},{y0} -> {x1},{y1}");
+        for (x, y, action) in [
+            (x0, y0, MouseAction::Moved),
+            (x0, y0, MouseAction::Pressed),
+            (x1, y1, MouseAction::Moved),
+        ] {
+            let modifiers = EventModifiers {
+                left_mouse_button: action != MouseAction::Moved || (x, y) == (x1, y1),
+                ..Default::default()
+            };
+            if let Err(e) = producer.send_mouse_input(MouseEvent {
+                x,
+                y,
+                button: MouseButton::Left,
+                action,
+                modifiers,
+            }) {
+                eprintln!("weld demo: page drag input failed: {e}");
+                return;
+            }
         }
     }
 
@@ -298,6 +393,24 @@ pub fn answer_permission_if_asked<P: CefSurfaceProducer + ?Sized>(
     match result {
         Ok(()) => eprintln!("weld demo: {verb} permission #{id}"),
         Err(e) => eprintln!("weld demo: answering permission #{id} failed: {e}"),
+    }
+}
+
+/// Reports a page-originated drag and optionally ends the system drag when an
+/// unattended probe cannot hand the payload to a real toolkit drag loop.
+pub fn finish_page_drag_if_started<P: CefSurfaceProducer + ?Sized>(
+    producer: &mut P,
+    event: &NavigationEvent,
+) {
+    let NavigationEvent::DragStarted { x, y, allowed_operations, .. } = event else {
+        return;
+    };
+    eprintln!("weld demo: page drag started at {x},{y}, allowed={allowed_operations:?}");
+    if std::env::var("WELD_FINISH_PAGE_DRAG").is_ok() {
+        match producer.finish_drag_source(*x, *y, DragOperations::COPY) {
+            Ok(()) => eprintln!("weld demo: page drag finished as copy"),
+            Err(e) => eprintln!("weld demo: page drag finish failed: {e}"),
+        }
     }
 }
 

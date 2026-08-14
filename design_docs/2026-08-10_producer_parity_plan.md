@@ -700,7 +700,7 @@ now (first, then every 500th).
   verified on all three platforms, and `GetAuthCredentials` is wired but never
   called by CEF. Done when: those capability rows read Y with the same event/decision
   shapes scrying uses.
-- **W8, long tail. PARTLY DONE 2026-08-13.** Find-in-page, zoom, and
+- **W8, long tail. CODE COMPLETE 2026-08-13.** Find-in-page, zoom, and
   `can_go_back`/`can_go_forward` are in and verified on Windows and Linux
   (macOS wired, same code). A page built with exactly seven matches reports
   `count: 7`, progressively, with `final_update` on the last.
@@ -725,9 +725,32 @@ now (first, then every 500th).
   runtime shares it. Putting it on the surface config would have implied a
   per-browser knob that does not exist.
 
-  Still open in W8: drag/drop, touch, printing to an actual printer,
-  per-producer `RequestContext` profiles, snapshot helper. (`WasHidden`-backed
-  visibility landed early, during W4.)
+  **W8 tail implementation landed 2026-08-13.** Windows has the executable
+  receipts: a direct `TouchInput` produced `TOUCH:touchstart:1` then
+  `TOUCH:touchend:1`; a staged Enter, Over, Drop produced
+  `DROP:1:weld_drag_touch_probe.html`; a page source drag produced
+  `PAGE_DRAG:started` then `DragStarted`; `Page.captureScreenshot` wrote a
+  31606-byte PNG with the eight-byte PNG signature; a persistent producer
+  created its own cache tree below the runtime root. The profile boundary also
+  changed the cookie helpers from CEF's global manager to the browser's own
+  request context, so the public cookie API cannot leak across profiles.
+
+  Snapshot capture is intentionally asynchronous and private to the producer:
+  `request_snapshot_png` starts Chromium `Page.captureScreenshot`, and
+  `poll_snapshot_png` supplies validated PNG bytes. Drag keeps the two system
+  ownership directions distinct: `DragInput` is host-to-page, while a
+  page-originated `DragStarted` event gives the host a copied payload for its
+  native drag loop and `finish_drag_source` closes it. Touch preserves contact
+  IDs and phases rather than translating touches into mouse input.
+
+  The system-printer boundary is split honestly. Windows and macOS call CEF's
+  native dialog; selecting a printer and creating physical output requires a
+  user decision and has not been automated. Linux CEF has no built-in dialog:
+  it requires a complete embedder `CefPrintHandler` with printer UI and
+  spooler, so welding returns an explicit unsupported error there rather than
+  selecting a default printer or calling `lp`. Linux and macOS still need their
+  hardware receipts for the new drag, touch, snapshot, and profile paths.
+  (`WasHidden`-backed visibility landed early, during W4.)
 - **W9, CDP. DONE 2026-08-13**, verified on all three (Windows, M4, ThinkPad):
   `Browser.getVersion` returns a real protocol result
   (`{"protocolVersion":"1.3","product":"Chrome/147.0.7727.138",...}`) and

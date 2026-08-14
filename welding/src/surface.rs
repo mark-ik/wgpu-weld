@@ -42,6 +42,16 @@ pub struct CefSurfaceCapabilities {
     pub popups: BrowserFeatureStatus,
     pub context_menus: BrowserFeatureStatus,
     pub console_messages: BrowserFeatureStatus,
+    /// Native system-print dialog (`CefBrowserHost::Print`).
+    pub printer: BrowserFeatureStatus,
+    /// Host-to-page and page-to-host drag/drop forwarding.
+    pub drag_drop: BrowserFeatureStatus,
+    /// Direct multi-touch input (`CefBrowserHost::SendTouchEvent`).
+    pub touch: BrowserFeatureStatus,
+    /// One-shot PNG capture via Chromium's `Page.captureScreenshot` method.
+    pub png_snapshot: BrowserFeatureStatus,
+    /// A distinct CEF request context for every producer.
+    pub profile_isolation: BrowserFeatureStatus,
 }
 
 impl CefSurfaceCapabilities {
@@ -133,6 +143,26 @@ impl CefSurfaceCapabilities {
             // details to draw its own.
             context_menus: BrowserFeatureStatus::Supported,
             console_messages: BrowserFeatureStatus::Supported,
+            // Windows and macOS have a Chromium-owned native print dialog.
+            // Linux CEF instead requires the embedder to implement a complete
+            // CefPrintHandler, including a system printer UI and spooler.
+            // welding does not silently substitute `lp` or choose a printer.
+            #[cfg(not(target_os = "linux"))]
+            printer: BrowserFeatureStatus::Supported,
+            #[cfg(target_os = "linux")]
+            printer: BrowserFeatureStatus::Unsupported(
+                "Linux CEF requires an embedder-owned print handler and printer UI",
+            ),
+            // The destination path maps DragEnter/Over/Leave/Drop directly to
+            // CEF. A page-originated drag is handed to the host as an event so
+            // its windowing toolkit can run the native system drag loop.
+            drag_drop: BrowserFeatureStatus::Supported,
+            touch: BrowserFeatureStatus::Supported,
+            // Screenshot capture is asynchronous, like PDF printing: the
+            // browser answers through a DevTools observer after the next
+            // compositor frame rather than on the caller's stack.
+            png_snapshot: BrowserFeatureStatus::Supported,
+            profile_isolation: BrowserFeatureStatus::Supported,
         }
     }
 }
@@ -186,6 +216,14 @@ mod capability_tests {
         // Not wired. These carry a reason string rather than a bare status so
         // a host can report *why* to its own user.
         assert_eq!(caps.context_menus, BrowserFeatureStatus::Supported);
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(caps.printer, BrowserFeatureStatus::Supported);
+        #[cfg(target_os = "linux")]
+        assert!(matches!(caps.printer, BrowserFeatureStatus::Unsupported(_)));
+        assert_eq!(caps.drag_drop, BrowserFeatureStatus::Supported);
+        assert_eq!(caps.touch, BrowserFeatureStatus::Supported);
+        assert_eq!(caps.png_snapshot, BrowserFeatureStatus::Supported);
+        assert_eq!(caps.profile_isolation, BrowserFeatureStatus::Supported);
 
         for status in [caps.cookie_change_events] {
             assert!(
@@ -341,8 +379,16 @@ pub struct CefSurfaceConfig {
     /// Prefer `OnAcceleratedPaint` over `OnPaint`. If accelerated paint is
     /// unavailable and `cpu-paint-fallback` is enabled, falls back automatically.
     pub prefer_accelerated: bool,
-    /// Persistent user-data directory for cookies, storage, etc.
-    /// `None` = in-memory / incognito.
+    /// Persistent per-producer user-data directory for cookies, storage,
+    /// permissions, cache, and service workers.
+    ///
+    /// Each producer gets a separate CEF `RequestContext`, even when this is
+    /// `None`; the `None` case is an isolated in-memory profile rather than
+    /// CEF's process-global context. Set an absolute path to retain that one
+    /// producer's profile across runs. This requires an explicit
+    /// [`CefRuntimeConfig::cache_path`](crate::runtime::CefRuntimeConfig::cache_path)
+    /// and the path must be inside it, because CEF otherwise chooses its
+    /// shared platform-default root cache directory.
     pub user_data_dir: Option<std::path::PathBuf>,
     /// Subscribe to the Chrome DevTools Protocol.
     ///
@@ -681,6 +727,38 @@ pub trait CefSurfaceProducer: Send {
         ))
     }
 
+    /// Open Chromium's native print dialog for the current page.
+    ///
+    /// This is deliberately separate from [`Self::print_to_pdf`]: PDF export
+    /// is a file-producing, callback-backed operation; printing hands the
+    /// final printer choice and cancellation to the platform dialog. `Ok(())`
+    /// therefore means CEF accepted the request, not that the user printed.
+    /// Linux deliberately returns [`WeldError::PlatformUnsupported`]: CEF
+    /// delegates its full print UI and spooler to an embedder-owned handler
+    /// there, and welding has no neutral system-printer abstraction yet.
+    fn print(&mut self) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "printing is not wired for this producer",
+        ))
+    }
+
+    /// Start a one-shot PNG capture of the currently composited page.
+    ///
+    /// The result arrives later from [`Self::poll_snapshot_png`]. It is a
+    /// thumbnail/preview/diagnostic helper, not the live frame transport: it
+    /// encodes and copies pixels through Chromium's DevTools screenshot path.
+    fn request_snapshot_png(&mut self) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "PNG snapshots are not wired for this producer",
+        ))
+    }
+
+    /// Take the next completed PNG capture. `Some(Err(_))` means Chromium
+    /// answered the request but could not capture or encode the page.
+    fn poll_snapshot_png(&mut self) -> Option<Result<Vec<u8>, WeldError>> {
+        None
+    }
+
     /// Search the page. Results arrive as [`NavigationEvent::FindResult`].
     ///
     /// `find_next` steps through matches for the same text; passing `false`
@@ -704,6 +782,47 @@ pub trait CefSurfaceProducer: Send {
     fn go_forward(&mut self) -> Result<(), WeldError>;
 
     fn send_mouse_input(&mut self, event: MouseEvent) -> Result<(), WeldError>;
+
+    /// Forward one physical-pixel touch contact to Chromium.
+    ///
+    /// Touch ids distinguish simultaneous contacts. A host must finish every
+    /// started id with [`TouchPhase::Ended`] or [`TouchPhase::Cancelled`]; CEF
+    /// otherwise retains a pressed contact just like a window system would.
+    fn send_touch_input(&mut self, _event: TouchInput) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "touch input is not wired for this producer",
+        ))
+    }
+
+    /// Forward an OS drag/drop operation over the webview.
+    ///
+    /// A `DragInput::Enter` must carry a payload. Subsequent `Over`, `Leave`,
+    /// and `Drop` calls only need the operation, pointer position, modifiers,
+    /// and allowed effects. Page-originated drags surface separately as
+    /// [`NavigationEvent::DragStarted`].
+    fn send_drag_input(&mut self, _event: DragInput) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "drag and drop is not wired for this producer",
+        ))
+    }
+
+    /// Tell CEF that the native system drag started by
+    /// [`NavigationEvent::DragStarted`] finished.
+    ///
+    /// `x` and `y` are physical pixels relative to the webview, matching every
+    /// other coordinate in this API. Call this after the host toolkit's drag
+    /// loop returns, including for cancellation (`DragOperations::NONE`).
+    fn finish_drag_source(
+        &mut self,
+        _x: i32,
+        _y: i32,
+        _operation: DragOperations,
+    ) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "drag and drop is not wired for this producer",
+        ))
+    }
+
     fn send_keyboard_input(&mut self, event: KeyEvent) -> Result<(), WeldError>;
     fn move_focus(&mut self, direction: FocusDirection) -> Result<(), WeldError>;
 
@@ -827,6 +946,108 @@ pub struct EventModifiers {
     pub ctrl: bool,
     pub alt: bool,
     pub meta: bool,
+    /// Buttons currently held while this input event is delivered. CEF needs
+    /// these on move events to distinguish a page drag from a hover.
+    pub left_mouse_button: bool,
+    pub middle_mouse_button: bool,
+    pub right_mouse_button: bool,
+}
+
+/// One direct-touch contact. Coordinates and radii are **physical** pixels
+/// relative to the webview's top-left; welding converts them to the DIP units
+/// CEF expects at the boundary.
+#[derive(Clone, Copy, Debug)]
+pub struct TouchInput {
+    /// A non-negative contact id. Distinct live contacts need distinct ids.
+    pub id: i32,
+    pub x: f32,
+    pub y: f32,
+    pub radius_x: f32,
+    pub radius_y: f32,
+    /// Rotation clockwise in degrees, as reported by platform touch APIs.
+    pub rotation_angle: f32,
+    /// Contact pressure in `0.0..=1.0`. Hosts without pressure data use 1.0
+    /// for pressed/moved contacts and 0.0 for ended/cancelled contacts.
+    pub pressure: f32,
+    pub phase: TouchPhase,
+    pub modifiers: EventModifiers,
+}
+
+/// The stage of a direct touch contact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TouchPhase {
+    Started,
+    Moved,
+    Ended,
+    Cancelled,
+}
+
+/// A set of drag effects. CEF accepts more than one on entry and reports the
+/// final choice on source completion; unknown bits are preserved so a newer
+/// window system cannot silently turn into "no operation".
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DragOperations(pub u32);
+
+impl DragOperations {
+    pub const NONE: Self = Self(0);
+    pub const COPY: Self = Self(1 << 0);
+    pub const LINK: Self = Self(1 << 1);
+    pub const GENERIC: Self = Self(1 << 2);
+    pub const PRIVATE: Self = Self(1 << 3);
+    pub const MOVE: Self = Self(1 << 4);
+    pub const DELETE: Self = Self(1 << 5);
+}
+
+impl std::ops::BitOr for DragOperations {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
+}
+
+/// File data made available to the page during a host-originated drag.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DragFile {
+    pub path: std::path::PathBuf,
+    /// Optional human-facing filename. `None` lets Chromium derive it from
+    /// [`Self::path`].
+    pub display_name: Option<String>,
+}
+
+/// The portable part of a drag data transfer.
+///
+/// The host can offer files, a link, fragment text, or fragment HTML. It does
+/// not expose a toolkit-specific drag object, which would pin a producer API
+/// to winit, GTK, or AppKit and still fail on the other two.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DragPayload {
+    pub files: Vec<DragFile>,
+    pub link_url: Option<String>,
+    pub link_title: Option<String>,
+    pub fragment_text: Option<String>,
+    pub fragment_html: Option<String>,
+    pub fragment_base_url: Option<String>,
+}
+
+/// One stage of an OS drag/drop operation over the webview.
+#[derive(Clone, Debug)]
+pub struct DragInput {
+    pub kind: DragEventKind,
+    /// Required for [`DragEventKind::Enter`], ignored otherwise.
+    pub payload: Option<DragPayload>,
+    pub x: i32,
+    pub y: i32,
+    pub modifiers: EventModifiers,
+    pub allowed_operations: DragOperations,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DragEventKind {
+    Enter,
+    Over,
+    Leave,
+    Drop,
 }
 
 /// Map CEF's termination status onto the platform-neutral one.
@@ -975,6 +1196,19 @@ pub enum NavigationEvent {
     PdfPrintFinished {
         path: std::path::PathBuf,
         ok: bool,
+    },
+    /// The page began a drag that must be driven by the host's native drag
+    /// loop. CEF cannot manufacture an OS drag manager for a windowless
+    /// surface, so the host receives a portable copy of the payload, starts
+    /// its toolkit drag, and then calls [`CefSurfaceProducer::finish_drag_source`].
+    ///
+    /// `x` and `y` are physical pixels relative to the view. `allowed_operations`
+    /// is a set, because the destination chooses the final effect.
+    DragStarted {
+        payload: DragPayload,
+        allowed_operations: DragOperations,
+        x: i32,
+        y: i32,
     },
     /// How a page search is going. Chromium reports progressively: several of
     /// these arrive for one search as more of the page is scanned, and
@@ -1125,5 +1359,12 @@ mod context_menu_tests {
     #[test]
     fn nothing_under_the_cursor_decodes_to_nothing() {
         assert!(context_menu_targets(0).is_empty());
+    }
+
+    #[test]
+    fn drag_effects_are_a_set_not_a_single_choice() {
+        let effects = DragOperations::COPY | DragOperations::MOVE;
+        assert_eq!(effects.0, 0b1_0001);
+        assert_eq!(DragOperations::NONE.0, 0);
     }
 }

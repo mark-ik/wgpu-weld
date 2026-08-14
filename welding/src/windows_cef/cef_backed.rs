@@ -192,6 +192,27 @@ cef::wrap_render_handler! {
                 height: rect.height.max(0) as u32,
             });
         }
+
+        fn start_dragging(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            drag_data: Option<&mut cef::DragData>,
+            allowed_ops: cef::DragOperationsMask,
+            x: ::std::os::raw::c_int,
+            y: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            let Some(drag_data) = drag_data else { return 0 };
+            let scale = self.handler.metrics.lock().unwrap().scale();
+            self.handler.events.lock().unwrap().nav.push_back(
+                crate::surface::NavigationEvent::DragStarted {
+                    payload: crate::drag::payload_from_cef(drag_data),
+                    allowed_operations: crate::DragOperations(allowed_ops.as_ref().0 as u32),
+                    x: (x as f32 * scale).round() as i32,
+                    y: (y as f32 * scale).round() as i32,
+                }
+            );
+            1
+        }
     }
 }
 
@@ -894,6 +915,7 @@ impl WeldContextMenuHandler {
 cef::wrap_dev_tools_message_observer! {
     pub(super) struct WeldDevToolsObserver {
         channel: Arc<crate::devtools::DevToolsChannel>,
+        snapshots: Arc<crate::snapshot::SnapshotChannel>,
     }
 
     impl DevToolsMessageObserver {
@@ -905,12 +927,24 @@ cef::wrap_dev_tools_message_observer! {
             // The raw wire format, results and events alike. Taking it here
             // rather than from the parsed callbacks keeps what a host sees
             // identical to what the protocol documents.
-            if let Some(bytes) = message {
+            if self.channel.is_enabled()
+                && let Some(bytes) = message
+            {
                 self.channel.push(String::from_utf8_lossy(bytes).into_owned());
             }
             // 0: not consumed, so CEF still runs its own parsed callbacks for
             // anything else that wants them.
             0
+        }
+
+        fn on_dev_tools_method_result(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            message_id: ::std::os::raw::c_int,
+            success: ::std::os::raw::c_int,
+            result: Option<&[u8]>,
+        ) {
+            self.snapshots.complete(message_id, success != 0, result);
         }
     }
 }
@@ -918,8 +952,9 @@ cef::wrap_dev_tools_message_observer! {
 impl WeldDevToolsObserver {
     pub fn build(
         channel: Arc<crate::devtools::DevToolsChannel>,
+        snapshots: Arc<crate::snapshot::SnapshotChannel>,
     ) -> cef::DevToolsMessageObserver {
-        Self::new(channel)
+        Self::new(channel, snapshots)
     }
 }
 

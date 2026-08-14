@@ -90,6 +90,8 @@ pub struct LinuxCefProducer {
     auth: Arc<crate::auth::AuthChallenges>,
     permissions: Arc<crate::permissions::Permissions>,
     devtools: Arc<crate::devtools::DevToolsChannel>,
+    #[cfg(feature = "cef-runtime")]
+    snapshots: Arc<crate::snapshot::SnapshotChannel>,
     /// Keeps the CDP subscription alive: dropping the registration
     /// unsubscribes, so the observer must outlive the producer's interest.
     #[cfg(feature = "cef-runtime")]
@@ -98,6 +100,8 @@ pub struct LinuxCefProducer {
     scripts: Arc<crate::app::ScriptResults>,
     #[cfg(feature = "cef-runtime")]
     next_script_id: u32,
+    #[cfg(feature = "cef-runtime")]
+    next_snapshot_id: i32,
     events: Arc<Mutex<EventQueues>>,
     size: PhysicalSize<u32>,
 }
@@ -149,6 +153,7 @@ impl LinuxCefProducer {
                 cef_backed::WeldDownloadHandler::build(events.clone(), downloads.clone());
             let devtools = Arc::new(crate::devtools::DevToolsChannel::default());
             devtools.set_enabled(config.surface.devtools_protocol);
+            let snapshots = Arc::new(crate::snapshot::SnapshotChannel::default());
             let permissions = Arc::new(crate::permissions::Permissions::default());
             permissions.set_enabled(config.surface.handle_permission_requests);
             let permission_handler =
@@ -186,6 +191,10 @@ impl LinuxCefProducer {
                 ..Default::default()
             };
             let url: cef::CefString = config.surface.initial_url.as_str().into();
+            // Passing no request context selects CEF's process-global profile.
+            // Build one even for the in-memory case so every producer owns its
+            // cookies, storage, and permission decisions.
+            let mut request_context = crate::profile::create(_runtime, &config.surface)?;
 
             let browser = cef::browser_host_create_browser_sync(
                 Some(&window_info),
@@ -193,7 +202,7 @@ impl LinuxCefProducer {
                 Some(&url),
                 Some(&browser_settings),
                 None,
-                None,
+                Some(&mut request_context),
             )
             .ok_or_else(|| {
                 WeldError::SurfaceCreation("browser_host_create_browser_sync returned None".into())
@@ -214,9 +223,11 @@ impl LinuxCefProducer {
                 auth,
                 permissions,
                 devtools,
+                snapshots,
                 _devtools_registration: None,
                 scripts,
                 next_script_id: 0,
+                next_snapshot_id: 1,
                 events,
                 size: initial_size,
             });
@@ -277,12 +288,7 @@ impl LinuxCefProducer {
     /// host to register against until it exists. Dropping the registration
     /// unsubscribes, so it is kept on the producer.
     #[cfg(feature = "cef-runtime")]
-    fn ensure_devtools(&mut self) -> Result<(), WeldError> {
-        if !self.devtools.is_enabled() {
-            return Err(WeldError::PlatformUnsupported(
-                "set CefSurfaceConfig::devtools_protocol to use the DevTools protocol",
-            ));
-        }
+    fn ensure_devtools_observer(&mut self) -> Result<(), WeldError> {
         if self._devtools_registration.is_some() {
             return Ok(());
         }
@@ -291,9 +297,22 @@ impl LinuxCefProducer {
                 "the browser is not ready yet",
             ));
         };
-        let mut observer = cef_backed::WeldDevToolsObserver::build(self.devtools.clone());
+        let mut observer = cef_backed::WeldDevToolsObserver::build(
+            self.devtools.clone(),
+            self.snapshots.clone(),
+        );
         self._devtools_registration = host.add_dev_tools_message_observer(Some(&mut observer));
         Ok(())
+    }
+
+    #[cfg(feature = "cef-runtime")]
+    fn ensure_devtools(&mut self) -> Result<(), WeldError> {
+        if !self.devtools.is_enabled() {
+            return Err(WeldError::PlatformUnsupported(
+                "set CefSurfaceConfig::devtools_protocol to use the DevTools protocol",
+            ));
+        }
+        self.ensure_devtools_observer()
     }
 
     /// Record a download request. It is applied on that download's next
@@ -428,7 +447,7 @@ impl CefSurfaceProducer for LinuxCefProducer {
     fn set_cookie(&mut self, url: &str, cookie: &crate::surface::Cookie) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
-            return crate::cookies::set(url, cookie);
+            return crate::cookies::set(&self.browser, url, cookie);
         }
         #[cfg(not(feature = "cef-runtime"))]
         {
@@ -440,7 +459,7 @@ impl CefSurfaceProducer for LinuxCefProducer {
     fn request_cookies(&mut self, url: Option<&str>) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
-            return crate::cookies::request(&self.cookies, url);
+            return crate::cookies::request(&self.browser, &self.cookies, url);
         }
         #[cfg(not(feature = "cef-runtime"))]
         {
@@ -463,7 +482,7 @@ impl CefSurfaceProducer for LinuxCefProducer {
     fn delete_cookies(&mut self, url: Option<&str>, name: Option<&str>) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
-            return crate::cookies::delete(url, name);
+            return crate::cookies::delete(&self.browser, url, name);
         }
         #[cfg(not(feature = "cef-runtime"))]
         {
@@ -797,6 +816,45 @@ impl CefSurfaceProducer for LinuxCefProducer {
         Err(pending("cef_browser_host_t::print_to_pdf"))
     }
 
+    fn print(&mut self) -> Result<(), WeldError> {
+        // Unlike Windows and macOS, CEF on Linux has no built-in print UI.
+        // Calling BrowserHost::Print without a CefPrintHandler simply claims a
+        // capability it cannot carry through to an actual system printer.
+        Err(WeldError::PlatformUnsupported(
+            "Linux CEF requires an embedder-owned print handler and printer UI",
+        ))
+    }
+
+    fn request_snapshot_png(&mut self) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            self.ensure_devtools_observer()?;
+            let Some(host) = self.browser.host() else {
+                return Err(WeldError::PlatformUnsupported("the browser is not ready yet"));
+            };
+            let id = self.next_snapshot_id;
+            self.next_snapshot_id = self.next_snapshot_id.checked_add(1).unwrap_or(1);
+            self.snapshots.begin(id)?;
+            let method: cef::CefString = "Page.captureScreenshot".into();
+            // `None` is meaningful: Page.captureScreenshot defaults to PNG.
+            // Ignore the immediate return: CEF documents it as meaningful only
+            // on the UI thread, and Windows intentionally runs that thread
+            // separately. The observer callback is the actual receipt.
+            let _ = host.execute_dev_tools_method(id, Some(&method), None);
+            return Ok(());
+        }
+        Err(pending("cef_browser_host_t::execute_dev_tools_method"))
+    }
+
+    fn poll_snapshot_png(&mut self) -> Option<Result<Vec<u8>, WeldError>> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            return self.snapshots.take();
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        None
+    }
+
     fn find(&mut self, text: &str, forward: bool, match_case: bool, find_next: bool)
         -> Result<(), WeldError>
     {
@@ -852,6 +910,40 @@ impl CefSurfaceProducer for LinuxCefProducer {
             return Ok(());
         }
         Err(pending("cef_browser_host_t mouse input"))
+    }
+
+    fn send_touch_input(&mut self, event: crate::TouchInput) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser.host() {
+            let scale = self.metrics.lock().unwrap().scale();
+            crate::drag::send_touch(&host, event, scale);
+            return Ok(());
+        }
+        Err(pending("cef_browser_host_t::send_touch_event"))
+    }
+
+    fn send_drag_input(&mut self, event: crate::DragInput) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser.host() {
+            let scale = self.metrics.lock().unwrap().scale();
+            return crate::drag::send_drag(&host, event, scale);
+        }
+        Err(pending("cef_browser_host_t drag target input"))
+    }
+
+    fn finish_drag_source(
+        &mut self,
+        x: i32,
+        y: i32,
+        operation: crate::DragOperations,
+    ) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser.host() {
+            let scale = self.metrics.lock().unwrap().scale();
+            crate::drag::finish_drag_source(&host, x, y, operation, scale);
+            return Ok(());
+        }
+        Err(pending("cef_browser_host_t drag source completion"))
     }
 
     fn send_keyboard_input(&mut self, event: KeyEvent) -> Result<(), WeldError> {

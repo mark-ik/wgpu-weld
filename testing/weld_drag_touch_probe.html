@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>READY</title>
+<style>
+  html, body, #target { height: 100%; margin: 0; }
+  #target { display: grid; place-items: center; font: 32px system-ui; touch-action: none; }
+  #source { position: fixed; left: 500px; top: 350px; padding: 20px; background: #bde; }
+</style>
+<div id="target">waiting for touch or file drop</div>
+<div id="source" draggable="true">drag this page text</div>
+<script>
+  const target = document.querySelector("#target");
+  const source = document.querySelector("#source");
+  function report(value) {
+    document.title = value;
+    target.textContent = value;
+  }
+  for (const type of ["touchstart", "touchend"]) {
+    target.addEventListener(type, event => {
+      event.preventDefault();
+      report(`TOUCH:${type}:${event.changedTouches.length}`);
+    }, { passive: false });
+  }
+  target.addEventListener("dragenter", event => event.preventDefault());
+  target.addEventListener("dragover", event => event.preventDefault());
+  target.addEventListener("drop", event => {
+    event.preventDefault();
+    const names = [...event.dataTransfer.files].map(file => file.name).join(",");
+    report(`DROP:${event.dataTransfer.files.length}:${names}`);
+  });
+  source.addEventListener("mousedown", () => report("PAGE_DRAG:mousedown"));
+  source.addEventListener("dragstart", () => report("PAGE_DRAG:started"));
+</script>

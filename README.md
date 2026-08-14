@@ -87,18 +87,16 @@ call before any CEF code runs.
   distribution; producer constructors return a pending-wiring error.
 
 Current plan (`design_docs/`, 2026-08-10 parity plan): W1 through W6 have
-landed, and W7 is done bar one row: downloads, permission requests and context
+landed. W7 is done bar one row: downloads, permission requests, and context
 menus are verified on all three platforms; `GetAuthCredentials` is wired and
-answerable but CEF has never been observed to call it. **W9, the Chrome DevTools Protocol, is done and verified on all three** — the
-one capability this lane has that a system webview cannot: the wire format
-passes through unwrapped, JSON in and JSON out, so an existing CDP client can
-drive an off-screen browser. W8, the long tail, is under way: find-in-page, zoom, history state, print-to-PDF
-and the user-agent override are in and verified; drag/drop, touch, printing to
-a printer and per-producer profiles remain. What remains is W7, the host-decision surfaces (downloads, auth
-challenges, permission requests, context menus); W8, the long tail (drag,
-touch, find-in-page, PDF, zoom and UA settings, per-producer profiles); and
-W9, the Chrome DevTools Protocol, which is this lane's distinguishing feature
-and the one thing no sibling can offer.
+answerable but CEF has never been observed to call it. W8's code is complete:
+host/page drag-drop, direct touch, PNG snapshots, and one CEF `RequestContext`
+per producer have Windows receipts; macOS and Linux share the implementations
+but still need their hardware passes. System printing opens CEF's native dialog
+on Windows and macOS, while Linux explicitly reports it unavailable because CEF
+requires an embedder-owned printer UI and spooler. W9, the Chrome DevTools
+Protocol, is done and verified on all three: its unwrapped JSON wire format lets
+an existing CDP client drive an off-screen browser.
 
 ## Use
 

@@ -227,14 +227,13 @@ mod cef_backed {
 /// only means CEF accepted the request.
 #[cfg(feature = "cef-runtime")]
 pub(crate) fn request(
+    browser: &cef::Browser,
     jar: &std::sync::Arc<CookieJar>,
     url: Option<&str>,
 ) -> Result<(), crate::error::WeldError> {
     use cef::ImplCookieManager;
 
-    let manager = cef::cookie_manager_get_global_manager(None).ok_or_else(|| {
-        crate::error::WeldError::BrowserOp("no global cookie manager".into())
-    })?;
+    let manager = manager(browser)?;
     jar.reset();
     let mut visitor = cef_backed::WeldCookieVisitor::build(jar.clone());
 
@@ -257,12 +256,14 @@ pub(crate) fn request(
 }
 
 #[cfg(feature = "cef-runtime")]
-pub(crate) fn set(url: &str, cookie: &Cookie) -> Result<(), crate::error::WeldError> {
+pub(crate) fn set(
+    browser: &cef::Browser,
+    url: &str,
+    cookie: &Cookie,
+) -> Result<(), crate::error::WeldError> {
     use cef::ImplCookieManager;
 
-    let manager = cef::cookie_manager_get_global_manager(None).ok_or_else(|| {
-        crate::error::WeldError::BrowserOp("no global cookie manager".into())
-    })?;
+    let manager = manager(browser)?;
     let url_s: cef::CefString = url.into();
     let cef_cookie = to_cef(cookie);
     if manager.set_cookie(Some(&url_s), Some(&cef_cookie), None) == 0 {
@@ -274,12 +275,14 @@ pub(crate) fn set(url: &str, cookie: &Cookie) -> Result<(), crate::error::WeldEr
 }
 
 #[cfg(feature = "cef-runtime")]
-pub(crate) fn delete(url: Option<&str>, name: Option<&str>) -> Result<(), crate::error::WeldError> {
+pub(crate) fn delete(
+    browser: &cef::Browser,
+    url: Option<&str>,
+    name: Option<&str>,
+) -> Result<(), crate::error::WeldError> {
     use cef::ImplCookieManager;
 
-    let manager = cef::cookie_manager_get_global_manager(None).ok_or_else(|| {
-        crate::error::WeldError::BrowserOp("no global cookie manager".into())
-    })?;
+    let manager = manager(browser)?;
     let url_s = url.map(cef::CefString::from);
     let name_s = name.map(cef::CefString::from);
     if manager.delete_cookies(url_s.as_ref(), name_s.as_ref(), None) == 0 {
@@ -288,4 +291,24 @@ pub(crate) fn delete(url: Option<&str>, name: Option<&str>) -> Result<(), crate:
         ));
     }
     Ok(())
+}
+
+/// Return this browser's cookie manager, never CEF's process-global manager.
+///
+/// Every CEF producer receives a distinct RequestContext. Going through the
+/// browser host is what keeps the public cookie API in the same profile as the
+/// browser's navigation, local storage, cache, and permissions.
+#[cfg(feature = "cef-runtime")]
+fn manager(browser: &cef::Browser) -> Result<cef::CookieManager, crate::error::WeldError> {
+    use cef::{ImplBrowser, ImplBrowserHost, ImplRequestContext};
+
+    let host = browser.host().ok_or_else(|| {
+        crate::error::WeldError::BrowserOp("browser has no CEF host for its cookie context".into())
+    })?;
+    let context = host.request_context().ok_or_else(|| {
+        crate::error::WeldError::BrowserOp("browser has no CEF request context for cookies".into())
+    })?;
+    context.cookie_manager(None).ok_or_else(|| {
+        crate::error::WeldError::BrowserOp("CEF request context has no cookie manager".into())
+    })
 }

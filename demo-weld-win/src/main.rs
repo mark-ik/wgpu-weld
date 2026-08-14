@@ -58,6 +58,8 @@ struct DemoState {
     frames_drawn: u32,
     cookies_requested: bool,
     script_requested: bool,
+    snapshot_requested: bool,
+    snapshot_path: Option<std::path::PathBuf>,
     scripted: scripted::ScriptedInput,
     cursor: (f32, f32),
     mods: EventModifiers,
@@ -156,6 +158,10 @@ impl ApplicationHandler for DemoApp {
                     // WELD_DOWNLOAD_DIR=path accepts downloads into that
                     // directory; unset refuses them, which is the default.
                     download_dir: std::env::var("WELD_DOWNLOAD_DIR").ok().map(Into::into),
+                    // WELD_PROFILE is an absolute persistent profile directory.
+                    // It must be inside WELD_CACHE_ROOT (or the documented
+                    // default below), because that is CEF's root cache path.
+                    user_data_dir: std::env::var_os("WELD_PROFILE").map(Into::into),
                     devtools_protocol: std::env::var("WELD_CDP").is_ok(),
                     // WELD_AUTH=user:pass answers auth challenges; unset
                     // declines them, which is the default.
@@ -187,6 +193,8 @@ impl ApplicationHandler for DemoApp {
             frames_drawn: 0,
             cookies_requested: false,
             script_requested: false,
+            snapshot_requested: false,
+            snapshot_path: std::env::var_os("WELD_SNAPSHOT").map(Into::into),
             scripted: scripted::ScriptedInput::from_env(),
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
@@ -246,12 +254,10 @@ impl ApplicationHandler for DemoApp {
             }
 
             WindowEvent::ModifiersChanged(m) => {
-                s.mods = EventModifiers {
-                    shift: m.state().shift_key(),
-                    ctrl: m.state().control_key(),
-                    alt: m.state().alt_key(),
-                    meta: m.state().super_key(),
-                };
+                s.mods.shift = m.state().shift_key();
+                s.mods.ctrl = m.state().control_key();
+                s.mods.alt = m.state().alt_key();
+                s.mods.meta = m.state().super_key();
             }
 
             WindowEvent::KeyboardInput { event: ke, .. } => {
@@ -322,6 +328,11 @@ impl ApplicationHandler for DemoApp {
                 } else {
                     MouseAction::Released
                 };
+                match mb {
+                    MouseButton::Left => s.mods.left_mouse_button = state == ElementState::Pressed,
+                    MouseButton::Middle => s.mods.middle_mouse_button = state == ElementState::Pressed,
+                    MouseButton::Right => s.mods.right_mouse_button = state == ElementState::Pressed,
+                }
                 if let Err(err) = s.producer.send_mouse_input(MouseEvent {
                     x: s.cursor.0 as i32,
                     y: s.cursor.1 as i32,
@@ -437,6 +448,23 @@ impl ApplicationHandler for DemoApp {
                     }
                 }
 
+                if let Some(result) = s.producer.poll_snapshot_png() {
+                    match result {
+                        Ok(bytes) => {
+                            if let Some(path) = s.snapshot_path.as_ref() {
+                                match std::fs::write(path, &bytes) {
+                                    Ok(()) if bytes.starts_with(b"\x89PNG\r\n\x1a\n") => {
+                                        eprintln!("weld demo: PNG snapshot {} bytes -> {}", bytes.len(), path.display());
+                                    }
+                                    Ok(()) => eprintln!("weld demo: snapshot was not a PNG"),
+                                    Err(e) => eprintln!("weld demo: could not write snapshot: {e}"),
+                                }
+                            }
+                        }
+                        Err(e) => eprintln!("weld demo: snapshot failed: {e}"),
+                    }
+                }
+
                 if let Some(cookies) = s.producer.poll_cookies() {
                     eprintln!("weld demo: COOKIES n={}", cookies.len());
                     for c in cookies.iter().take(5) {
@@ -456,6 +484,7 @@ impl ApplicationHandler for DemoApp {
                     );
                     scripted::answer_auth_if_challenged(&mut s.producer, &event);
                     scripted::answer_permission_if_asked(&mut s.producer, &event);
+                    scripted::finish_page_drag_if_started(&mut s.producer, &event);
                 }
 
                 // The scripted gestures, for a machine nobody is sitting at:
@@ -477,6 +506,12 @@ impl ApplicationHandler for DemoApp {
                             Err(e) => eprintln!("weld demo: print_to_pdf failed: {e}"),
                         }
                     }
+                    if std::env::var("WELD_PRINT").is_ok() {
+                        match s.producer.print() {
+                            Ok(()) => eprintln!("weld demo: print dialog requested"),
+                            Err(e) => eprintln!("weld demo: print failed: {e}"),
+                        }
+                    }
                     if std::env::var("WELD_ZOOM").is_ok() {
                         let _ = s.producer.zoom(welding::ZoomCommand::In);
                         let _ = s.producer.zoom(welding::ZoomCommand::In);
@@ -487,6 +522,13 @@ impl ApplicationHandler for DemoApp {
                         s.producer.can_go_back(),
                         s.producer.can_go_forward()
                     );
+                }
+                if !s.snapshot_requested && s.frames_drawn > 90 && s.snapshot_path.is_some() {
+                    s.snapshot_requested = true;
+                    match s.producer.request_snapshot_png() {
+                        Ok(()) => eprintln!("weld demo: PNG snapshot requested"),
+                        Err(e) => eprintln!("weld demo: snapshot request failed: {e}"),
+                    }
                 }
                 // WELD_CDP=<method> sends one CDP call once the page is up,
                 // then every reply and event is printed as it arrives.
@@ -594,6 +636,22 @@ impl ApplicationHandler for DemoApp {
 
                 s.host_ctx.queue.submit([enc.finish()]);
                 output.present();
+                // WELD_EXIT_AFTER_FRAMES makes an unattended probe finite.
+                // This counts presentation ticks, not imported frames: a
+                // static accelerated browser may paint only once.
+                if !s.closing
+                    && std::env::var("WELD_EXIT_AFTER_FRAMES")
+                        .ok()
+                        .and_then(|n| n.parse::<u32>().ok())
+                        .is_some_and(|n| s.frames_drawn >= n)
+                {
+                    eprintln!("weld demo: exit after {} frames", s.frames_drawn);
+                    s.closing = true;
+                    if let Err(e) = s.producer.close() {
+                        eprintln!("weld demo: close failed: {e}");
+                        el.exit();
+                    }
+                }
                 if s.closing && s.producer.is_closed() {
                     el.exit();
                 } else {
@@ -654,7 +712,11 @@ fn main() {
             .collect();
         eprintln!("weld demo: switches {:?}", runtime_config.command_line_switches);
     }
-    runtime_config.cache_path = Some(std::env::temp_dir().join("wgpu-weld-demo-cache"));
+    // WELD_CACHE_ROOT is the CEF root cache. A WELD_PROFILE directory must
+    // live inside it; this is CEF's process-wide RequestContext invariant.
+    runtime_config.cache_path = std::env::var_os("WELD_CACHE_ROOT")
+        .map(Into::into)
+        .or_else(|| Some(std::env::temp_dir().join("wgpu-weld-demo-cache")));
     // WELD_UA replaces the whole User-Agent; WELD_UA_PRODUCT only the token.
     runtime_config.user_agent = std::env::var("WELD_UA").ok();
     runtime_config.user_agent_product = std::env::var("WELD_UA_PRODUCT").ok();
