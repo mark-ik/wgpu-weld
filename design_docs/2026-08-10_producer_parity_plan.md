@@ -778,16 +778,18 @@ now (first, then every 500th).
   IDs and phases rather than translating touches into mouse input.
 
   The system-printer boundary is split honestly. On Windows, `print()` opened
-  the native chooser and exposed the installed printer queues on 2026-08-13;
-  the dialog was cancelled before a job was submitted. macOS calls the same
-  CEF-owned native-dialog path but has no current hardware receipt. Selecting
-  a printer and creating physical output remains a user decision. Linux CEF
-  has no built-in dialog:
+  CEF's native chooser and exposed the installed printer queues on 2026-08-13.
+  On 2026-08-14, `WELD_PRINT=1` selected the ready `Brother HL-3170CDW series
+  Printer` and submitted one W8 probe page. Windows retained job 2 as
+  `Complete` with one of one pages printed (20,739 bytes), and PrintService
+  event 307 confirms physical output through its WSD port. macOS calls the
+  same CEF-owned native-dialog path but has no current hardware receipt.
+  Linux CEF has no built-in dialog:
   it requires a complete embedder `CefPrintHandler` with printer UI and
   spooler, so welding returns an explicit unsupported error there rather than
   selecting a default printer or calling `lp`. Drag, touch, snapshot, and
   profile are hardware-verified on all three platforms; macOS printer output
-  remains a user decision.
+  remains unmeasured.
   (`WasHidden`-backed visibility landed early, during W4.)
 - **W9, CDP. DONE 2026-08-13**, verified on all three (Windows, M4, ThinkPad):
   `Browser.getVersion` returns a real protocol result

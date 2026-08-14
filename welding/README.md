@@ -102,10 +102,12 @@ Chrome-bootstrap pattern seen elsewhere here: Chrome owns the login prompt and
 a windowless browser has none. Proxy authentication is untested — CEF reports
 `is_proxy` separately, and that path may well work. Do not rely on this row.
 
-[^linuxprint]: Windows' native dialog was observed on 2026-08-13 after a
-`print()` request and cancelled before submitting a job. This proves CEF reaches
-the platform printer chooser, not that a physical page was produced. Linux CEF
-provides no native printer dialog. It requires an
+[^linuxprint]: Windows' native dialog was observed on 2026-08-13, then
+hardware-verified on 2026-08-14: `WELD_PRINT=1` opened the CEF-owned dialog,
+the ready `Brother HL-3170CDW series Printer` queue was selected, and one W8
+probe page was submitted. Windows retained job 2 as `Complete`, with one of one
+pages printed (20,739 bytes); PrintService event 307 confirms physical output.
+Linux CEF provides no native printer dialog. It requires an
 embedder-owned `CefPrintHandler` to supply both the dialog and spooler, so
 `print()` returns an explained unsupported error there. `welding` does not
 silently select a default printer or invoke `lp`.
