@@ -736,12 +736,29 @@ now (first, then every 500th).
   changed the cookie helpers from CEF's global manager to the browser's own
   request context, so the public cookie API cannot leak across profiles.
 
+  **The same tail is now hardware-verified on both Macs, 2026-08-14.** The
+  Intel iMac (macOS 15.7.7, 1x) and M4 iMac (macOS 26.5.1, native 2x) each ran
+  the ordered touch, file-drop, and page-drag battery against the probe page.
+  Both post-gesture screenshots visibly end at `PAGE_DRAG:started`, proving
+  the page-originated half after the earlier host inputs; they are valid PNGs
+  (11791 and 21990 bytes respectively) and each child profile wrote `Cookies`.
+  `WELD_SNAPSHOT_AFTER_SCRIPTED=1` makes that timing explicit for unattended
+  evidence instead of taking the normal early compositor snapshot.
+
   The ThinkPad exposed a setup ordering rule. A disk-backed child
   `RequestContext` is initialized through CEF's host loop; creating its browser
   immediately made `browser_host_create_browser_sync` return `None`, despite
   CEF documenting child paths as valid. Pumping the host loop once after the
   context is created and before creating the browser completes that setup. The
   same persistent child-profile run then created, loaded, and wrote its profile.
+
+  macOS has the same asynchronous context boundary, but a different safe pump
+  point. `CefDoMessageLoopWork` inside winit's `resumed` callback re-enters
+  AppKit and aborts. `prepare_profile` therefore creates the context and keeps
+  its CEF readiness handler alive; the host pumps outside winit, then
+  `try_new_with_prepared_profile` returns `None` until CEF calls that handler.
+  Only then may synchronous browser creation run. Both Intel and Apple Silicon
+  receipts passed through that path.
 
   Snapshot capture is intentionally asynchronous and private to the producer:
   `request_snapshot_png` starts Chromium `Page.captureScreenshot`, and
@@ -759,9 +776,9 @@ now (first, then every 500th).
   has no built-in dialog:
   it requires a complete embedder `CefPrintHandler` with printer UI and
   spooler, so welding returns an explicit unsupported error there rather than
-  selecting a default printer or calling `lp`. The new Linux drag, touch,
-  snapshot, and profile paths are hardware-verified; macOS still needs its
-  receipts for those operations.
+  selecting a default printer or calling `lp`. Drag, touch, snapshot, and
+  profile are hardware-verified on all three platforms; macOS printer output
+  remains a user decision.
   (`WasHidden`-backed visibility landed early, during W4.)
 - **W9, CDP. DONE 2026-08-13**, verified on all three (Windows, M4, ThinkPad):
   `Browser.getVersion` returns a real protocol result

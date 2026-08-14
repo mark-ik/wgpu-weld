@@ -49,10 +49,10 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | Print to PDF | verified | wired | verified |
 | User agent override | verified | wired | verified |
 | System printer dialog | verified | wired | unavailable [^linuxprint] |
-| Host/page drag-drop | verified | wired | verified |
-| Direct touch | verified | wired | verified |
-| PNG snapshot | verified | wired | verified |
-| Per-producer profile | verified | wired | verified |
+| Host/page drag-drop | verified | verified | verified |
+| Direct touch | verified | verified | verified |
+| PNG snapshot | verified | verified | verified |
+| Per-producer profile | verified | verified | verified |
 
 "verified" means observed working on that platform's hardware. "wired" means
 implemented but not yet exercised on that platform's hardware.
@@ -63,6 +63,12 @@ a page-originated payload to the host's toolkit drag loop; `TouchInput` keeps
 contact identifiers and phases intact; `request_snapshot_png` /
 `poll_snapshot_png` returns compositor PNG bytes asynchronously; every
 producer owns a CEF `RequestContext`. Pointer and pen remain unmodelled.
+
+On macOS, a disk-backed child context becomes ready asynchronously. Create it
+with `MacosCefProducer::prepare_profile` in the native event callback, pump CEF
+outside that callback, then retry `try_new_with_prepared_profile` until it
+returns the producer. Calling CEF's pump inside winit re-enters AppKit and
+aborts the process.
 
 [^linux]: Linux needs the DMABUF buffer to carry an **explicit** DRM format
 modifier. Intel/Mesa supplies one, and the frame import is verified there;
