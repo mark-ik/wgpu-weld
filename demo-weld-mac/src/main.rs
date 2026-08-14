@@ -46,16 +46,17 @@ use winit::{
 };
 
 use welding::{
-    macos_cef::{MacosCefConfig, MacosCefProducer},
     CefRuntime, CefRuntimeConfig, CefSurfaceConfig, CefSurfaceProducer, EventModifiers,
     FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent, KeyEventKind, MouseAction,
     MouseButton, MouseEvent, PopupSurface,
+    macos_cef::{MacosCefConfig, MacosCefProducer, PreparedMacosCefProfile},
 };
 
 use crate::keys::keycode_to_vk;
 
 struct DemoApp {
     cef_runtime: Option<CefRuntime>,
+    pending: Option<PendingState>,
     state: Option<DemoState>,
     exit_after_frames: Option<u32>,
     exit_after_popups: Option<u32>,
@@ -67,6 +68,23 @@ struct DemoApp {
     /// not open, and Chromium's popup blocker swallows `window.open` before
     /// `on_before_popup` is ever reached.
     scripted: scripted::ScriptedInput,
+}
+
+/// The native window and Metal surface are created in winit's `resumed`
+/// callback, but a persistent CEF request context must be pumped once before
+/// its browser is created. Holding the native half here lets `tick` finish
+/// that work between winit dispatches.
+struct PendingState {
+    window: Arc<Window>,
+    surface: wgpu::Surface<'static>,
+    surface_config: wgpu::SurfaceConfiguration,
+    host_ctx: HostWgpuContext,
+    cef_runtime: CefRuntime,
+    config: MacosCefConfig,
+    profile: PreparedMacosCefProfile,
+    blit: blit::Blit,
+    recover_url: String,
+    snapshot_path: Option<std::path::PathBuf>,
 }
 
 struct DemoState {
@@ -96,7 +114,7 @@ struct DemoState {
 
 impl ApplicationHandler for DemoApp {
     fn resumed(&mut self, el: &ActiveEventLoop) {
-        if self.state.is_some() {
+        if self.state.is_some() || self.pending.is_some() {
             return;
         }
         let window = Arc::new(
@@ -166,57 +184,50 @@ impl ApplicationHandler for DemoApp {
         // how the HiDPI path gets exercised on a 1x screen.
         let scale = forced_scale().unwrap_or_else(|| window.scale_factor());
         let url = std::env::var("WELD_URL").unwrap_or_else(|_| "https://example.com".into());
-        log::info!("creating CEF browser ({}x{}) at {url}", win_size.width, win_size.height);
-        let producer = MacosCefProducer::new(
-            &cef_runtime,
-            MacosCefConfig {
-                surface: CefSurfaceConfig {
-                    initial_url: url.clone(),
-                    initial_size: win_size,
-                    // Physical size plus the display scale: CEF lays out at
-                    // size/scale CSS pixels and paints the full physical size.
-                    scale_factor: scale as f32,
-                    background_color: env_background(),
-                    // WELD_DOWNLOAD_DIR=path accepts downloads into that
-                    // directory; unset refuses them, which is the default.
-                    download_dir: std::env::var("WELD_DOWNLOAD_DIR").ok().map(Into::into),
-                    // WELD_PROFILE must be an absolute subdirectory of
-                    // WELD_CACHE_ROOT, which CEF uses as the root cache.
-                    user_data_dir: std::env::var_os("WELD_PROFILE").map(Into::into),
-                    devtools_protocol: std::env::var("WELD_CDP").is_ok(),
-                    // WELD_AUTH=user:pass answers auth challenges; unset
-                    // declines them, which is the default.
-                    handle_auth_challenges: std::env::var("WELD_AUTH").is_ok(),
-                    // WELD_PERMISSIONS=grant|deny answers permission requests;
-                    // unset denies them, which is the default.
-                    handle_permission_requests: std::env::var("WELD_PERMISSIONS").is_ok(),
-                    ..Default::default()
-                },
+        let config = MacosCefConfig {
+            surface: CefSurfaceConfig {
+                initial_url: url.clone(),
+                initial_size: win_size,
+                // Physical size plus the display scale: CEF lays out at
+                // size/scale CSS pixels and paints the full physical size.
+                scale_factor: scale as f32,
+                background_color: env_background(),
+                // WELD_DOWNLOAD_DIR=path accepts downloads into that
+                // directory; unset refuses them, which is the default.
+                download_dir: std::env::var("WELD_DOWNLOAD_DIR").ok().map(Into::into),
+                // WELD_PROFILE must be an absolute subdirectory of
+                // WELD_CACHE_ROOT, which CEF uses as the root cache.
+                user_data_dir: std::env::var_os("WELD_PROFILE").map(Into::into),
+                devtools_protocol: std::env::var("WELD_CDP").is_ok(),
+                // WELD_AUTH=user:pass answers auth challenges; unset
+                // declines them, which is the default.
+                handle_auth_challenges: std::env::var("WELD_AUTH").is_ok(),
+                // WELD_PERMISSIONS=grant|deny answers permission requests;
+                // unset denies them, which is the default.
+                handle_permission_requests: std::env::var("WELD_PERMISSIONS").is_ok(),
+                ..Default::default()
             },
-        )
-        .expect("failed to create CEF browser surface");
-        log::info!("CEF browser created");
-
-        self.state = Some(DemoState {
+        };
+        let profile = match MacosCefProducer::prepare_profile(&cef_runtime, &config) {
+            Ok(profile) => profile,
+            Err(err) => {
+                log::error!("failed to prepare CEF profile: {err}");
+                self.cef_runtime = Some(cef_runtime);
+                self.should_exit = true;
+                return;
+            }
+        };
+        self.pending = Some(PendingState {
             window,
             surface,
             surface_config,
             host_ctx,
             cef_runtime,
-            producer,
+            config,
+            profile,
             blit,
-            frame: None,
-            popup: None,
-            frames_imported: 0,
             recover_url: url,
-            battery_started: false,
-            ticks: 0,
-            cdp_ticks: 0,
-            snapshot_requested: false,
             snapshot_path: std::env::var_os("WELD_SNAPSHOT").map(Into::into),
-            popups_imported: 0,
-            cursor: (0.0, 0.0),
-            mods: EventModifiers::default(),
         });
     }
 
@@ -242,7 +253,9 @@ impl ApplicationHandler for DemoApp {
                 // A forced WELD_SCALE outranks it: on a 1x panel winit reports
                 // 1.0 here and would undo the very override being tested.
                 if forced_scale().is_some() {
-                    log::info!("ScaleFactorChanged({scale_factor}) ignored: WELD_SCALE pins the scale");
+                    log::info!(
+                        "ScaleFactorChanged({scale_factor}) ignored: WELD_SCALE pins the scale"
+                    );
                 } else if let Err(err) = s.producer.set_scale_factor(scale_factor as f32) {
                     log_scale_err(err);
                 }
@@ -324,8 +337,12 @@ impl ApplicationHandler for DemoApp {
                 };
                 match mb {
                     MouseButton::Left => s.mods.left_mouse_button = state == ElementState::Pressed,
-                    MouseButton::Middle => s.mods.middle_mouse_button = state == ElementState::Pressed,
-                    MouseButton::Right => s.mods.right_mouse_button = state == ElementState::Pressed,
+                    MouseButton::Middle => {
+                        s.mods.middle_mouse_button = state == ElementState::Pressed
+                    }
+                    MouseButton::Right => {
+                        s.mods.right_mouse_button = state == ElementState::Pressed
+                    }
                 }
                 let _ = s.producer.send_mouse_input(MouseEvent {
                     x: s.cursor.0 as i32,
@@ -365,6 +382,59 @@ impl ApplicationHandler for DemoApp {
 }
 
 impl DemoApp {
+    /// Finish CEF setup after `pump_app_events` has returned. CEF's macOS
+    /// message pump drains the NSApplication queue, so this cannot happen in
+    /// `resumed` without re-entering winit.
+    fn start_pending(&mut self) {
+        let Some(mut pending) = self.pending.take() else {
+            return;
+        };
+        pending.cef_runtime.do_message_loop_work();
+        let producer = match MacosCefProducer::try_new_with_prepared_profile(
+            &pending.config,
+            &mut pending.profile,
+        ) {
+            Ok(None) => {
+                self.pending = Some(pending);
+                return;
+            }
+            Ok(Some(producer)) => producer,
+            Err(err) => {
+                log::error!("failed to create CEF browser surface: {err}");
+                self.should_exit = true;
+                return;
+            }
+        };
+        log::info!(
+            "creating CEF browser ({}x{}) at {}",
+            pending.config.surface.initial_size.width,
+            pending.config.surface.initial_size.height,
+            pending.config.surface.initial_url,
+        );
+        log::info!("CEF browser created");
+        self.state = Some(DemoState {
+            window: pending.window,
+            surface: pending.surface,
+            surface_config: pending.surface_config,
+            host_ctx: pending.host_ctx,
+            cef_runtime: pending.cef_runtime,
+            producer,
+            blit: pending.blit,
+            frame: None,
+            popup: None,
+            frames_imported: 0,
+            recover_url: pending.recover_url,
+            battery_started: false,
+            ticks: 0,
+            cdp_ticks: 0,
+            snapshot_requested: false,
+            snapshot_path: pending.snapshot_path,
+            popups_imported: 0,
+            cursor: (0.0, 0.0),
+            mods: EventModifiers::default(),
+        });
+    }
+
     /// One pass of CEF work plus one rendered frame, run *outside* winit's
     /// event dispatch.
     ///
@@ -376,6 +446,9 @@ impl DemoApp {
     /// problem, which is why only this demo is shaped that way.
     fn tick(&mut self) {
         let exit_after = self.exit_after_frames;
+        if self.state.is_none() {
+            self.start_pending();
+        }
         let Some(s) = self.state.as_mut() else {
             return;
         };
@@ -434,10 +507,10 @@ impl DemoApp {
             scripted::finish_page_drag_if_started(&mut s.producer, &event);
         }
 
-            // Parity battery: one run reports frames, script results,
-            // HiDPI layout and cookies, so the same evidence exists on
-            // every platform.
-            s.ticks += 1;
+        // Parity battery: one run reports frames, script results,
+        // HiDPI layout and cookies, so the same evidence exists on
+        // every platform.
+        s.ticks += 1;
         if s.cdp_ticks == 200 || s.ticks == 200 {
             if let Ok(text) = std::env::var("WELD_FIND") {
                 match s.producer.find(&text, true, false, false) {
@@ -492,59 +565,62 @@ impl DemoApp {
         // Ticks, not imported frames: accelerated OSR only paints on change,
         // so a static page yields one frame and the battery would never fire.
         if !s.battery_started && s.ticks > 60 {
-                s.battery_started = true;
-                if let Ok(script) = std::env::var("WELD_SCRIPT") {
-                    match s.producer.request_script_result(&script) {
-                        Ok(id) => log::info!("script request #{id}"),
-                        Err(e) => log::error!("request_script_result failed: {e}"),
-                    }
-                }
-                if let Ok(url) = std::env::var("WELD_COOKIE_URL") {
-                    let probe = welding::Cookie {
-                        name: "weld_probe".into(),
-                        value: "parity".into(),
-                        domain: "example.com".into(),
-                        path: "/".into(),
-                        ..Default::default()
-                    };
-                    match s.producer.set_cookie(&url, &probe) {
-                        Ok(()) => log::info!("set_cookie accepted"),
-                        Err(e) => log::error!("set_cookie failed: {e}"),
-                    }
-                    if let Err(e) = s.producer.request_cookies(Some(&url)) {
-                        log::error!("request_cookies failed: {e}");
-                    }
+            s.battery_started = true;
+            if let Ok(script) = std::env::var("WELD_SCRIPT") {
+                match s.producer.request_script_result(&script) {
+                    Ok(id) => log::info!("script request #{id}"),
+                    Err(e) => log::error!("request_script_result failed: {e}"),
                 }
             }
-            if let Some(result) = s.producer.poll_script_result() {
-                match result.value {
-                    Ok(json) => log::info!("SCRIPT #{} => {json}", result.id),
-                    Err(err) => log::error!("SCRIPT #{} threw: {err}", result.id),
+            if let Ok(url) = std::env::var("WELD_COOKIE_URL") {
+                let probe = welding::Cookie {
+                    name: "weld_probe".into(),
+                    value: "parity".into(),
+                    domain: "example.com".into(),
+                    path: "/".into(),
+                    ..Default::default()
+                };
+                match s.producer.set_cookie(&url, &probe) {
+                    Ok(()) => log::info!("set_cookie accepted"),
+                    Err(e) => log::error!("set_cookie failed: {e}"),
+                }
+                if let Err(e) = s.producer.request_cookies(Some(&url)) {
+                    log::error!("request_cookies failed: {e}");
                 }
             }
-            if let Some(result) = s.producer.poll_snapshot_png() {
-                match result {
-                    Ok(bytes) => {
-                        if let Some(path) = s.snapshot_path.as_ref() {
-                            match std::fs::write(path, &bytes) {
-                                Ok(()) if bytes.starts_with(b"\x89PNG\r\n\x1a\n") => {
-                                    eprintln!("weld demo: PNG snapshot {} bytes -> {}", bytes.len(), path.display());
-                                }
-                                Ok(()) => eprintln!("weld demo: snapshot was not a PNG"),
-                                Err(e) => eprintln!("weld demo: could not write snapshot: {e}"),
+        }
+        if let Some(result) = s.producer.poll_script_result() {
+            match result.value {
+                Ok(json) => log::info!("SCRIPT #{} => {json}", result.id),
+                Err(err) => log::error!("SCRIPT #{} threw: {err}", result.id),
+            }
+        }
+        if let Some(result) = s.producer.poll_snapshot_png() {
+            match result {
+                Ok(bytes) => {
+                    if let Some(path) = s.snapshot_path.as_ref() {
+                        match std::fs::write(path, &bytes) {
+                            Ok(()) if bytes.starts_with(b"\x89PNG\r\n\x1a\n") => {
+                                eprintln!(
+                                    "weld demo: PNG snapshot {} bytes -> {}",
+                                    bytes.len(),
+                                    path.display()
+                                );
                             }
+                            Ok(()) => eprintln!("weld demo: snapshot was not a PNG"),
+                            Err(e) => eprintln!("weld demo: could not write snapshot: {e}"),
                         }
                     }
-                    Err(e) => eprintln!("weld demo: snapshot failed: {e}"),
                 }
+                Err(e) => eprintln!("weld demo: snapshot failed: {e}"),
             }
-            if let Some(cookies) = s.producer.poll_cookies() {
-                log::info!("COOKIES n={}", cookies.len());
-                for c in cookies.iter().take(3) {
-                    log::info!("  {}={} domain={}", c.name, c.value, c.domain);
-                }
+        }
+        if let Some(cookies) = s.producer.poll_cookies() {
+            log::info!("COOKIES n={}", cookies.len());
+            for c in cookies.iter().take(3) {
+                log::info!("  {}={} domain={}", c.name, c.value, c.domain);
             }
-
+        }
 
         // The scripted gestures, for a machine nobody is sitting at. Only
         // once the page has painted: the first paint can land before its own
@@ -594,7 +670,10 @@ fn main() {
         .and_then(|macos| macos.parent())
         .map(|contents| contents.join("Frameworks"))
         .expect("could not resolve Contents/Frameworks from the executable path");
-    if !frameworks.join("Chromium Embedded Framework.framework").exists() {
+    if !frameworks
+        .join("Chromium Embedded Framework.framework")
+        .exists()
+    {
         eprintln!(
             "demo-weld-mac must run from its .app bundle; no framework at {}\n\
              Build it with: cd demo-weld-mac && cargo run --bin bundle-demo-weld-mac",
@@ -622,14 +701,16 @@ fn main() {
         .push(("use-mock-keychain".to_owned(), None));
     // WELD_SWITCHES=disable-popup-blocking,lang=en-GB
     if let Ok(list) = std::env::var("WELD_SWITCHES") {
-        config.command_line_switches.extend(
-            list.split(',')
-                .filter(|s| !s.is_empty())
-                .map(|s| match s.split_once('=') {
-                    Some((k, v)) => (k.to_owned(), Some(v.to_owned())),
-                    None => (s.to_owned(), None),
-                }),
-        );
+        config
+            .command_line_switches
+            .extend(
+                list.split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| match s.split_once('=') {
+                        Some((k, v)) => (k.to_owned(), Some(v.to_owned())),
+                        None => (s.to_owned(), None),
+                    }),
+            );
         eprintln!("weld demo: switches {:?}", config.command_line_switches);
     }
     let runtime = CefRuntime::initialize(config).expect("welding: CEF initialize failed");
@@ -667,6 +748,7 @@ fn main() {
     let scripted_armed = scripted.armed();
     let mut app = DemoApp {
         cef_runtime: Some(runtime),
+        pending: None,
         state: None,
         exit_after_frames,
         exit_after_popups,
@@ -719,7 +801,6 @@ fn env_background() -> Option<[u8; 3]> {
         Err(_) => Some([255, 255, 255]),
     }
 }
-
 
 fn log_scale_err(err: welding::WeldError) {
     log::error!("set_scale_factor failed: {err}");

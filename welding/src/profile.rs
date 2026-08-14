@@ -17,6 +17,17 @@ pub(crate) fn create(
     runtime: &CefRuntime,
     config: &CefSurfaceConfig,
 ) -> Result<cef::RequestContext, WeldError> {
+    create_with_handler(runtime, config, None)
+}
+
+/// Build one context and optionally receive CEF's asynchronous initialization
+/// callback. macOS uses the callback to defer browser creation until its host
+/// event loop has finished bringing a persistent child profile online.
+pub(crate) fn create_with_handler(
+    runtime: &CefRuntime,
+    config: &CefSurfaceConfig,
+    handler: Option<&mut cef::RequestContextHandler>,
+) -> Result<cef::RequestContext, WeldError> {
     let mut settings = cef::RequestContextSettings::default();
 
     if let Some(path) = config.user_data_dir.as_ref() {
@@ -56,7 +67,7 @@ pub(crate) fn create(
         settings.persist_session_cookies = 1;
     }
 
-    cef::request_context_create_context(Some(&settings), None).ok_or_else(|| {
+    cef::request_context_create_context(Some(&settings), handler).ok_or_else(|| {
         WeldError::SurfaceCreation("cef_request_context_create_context returned None".into())
     })
 }

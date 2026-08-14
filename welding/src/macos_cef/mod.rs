@@ -8,7 +8,10 @@
 /// importer releases it after wrapping it in a `MTLTexture`.
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use dpi::PhysicalSize;
@@ -23,11 +26,13 @@ use crate::{
     },
 };
 
-
+#[cfg(feature = "cef-runtime")]
+use cef::rc::Rc;
 #[cfg(feature = "cef-runtime")]
 use cef::{
     ImplAuthCallback, ImplBrowser, ImplBrowserHost, ImplFrame, ImplListValue,
     ImplMediaAccessCallback, ImplPermissionPromptCallback, ImplProcessMessage,
+    ImplRequestContextHandler, RequestContextHandler, WrapRequestContextHandler,
 };
 
 // ── Public config ─────────────────────────────────────────────────────────────
@@ -38,7 +43,9 @@ pub struct MacosCefConfig {
 
 impl Default for MacosCefConfig {
     fn default() -> Self {
-        Self { surface: CefSurfaceConfig::default() }
+        Self {
+            surface: CefSurfaceConfig::default(),
+        }
     }
 }
 
@@ -59,6 +66,20 @@ struct WeldRenderHandlerInner {
     ime: Arc<crate::ime::LatestComposition>,
     events: Arc<Mutex<EventQueues>>,
     metrics: Arc<Mutex<crate::view::ViewMetrics>>,
+}
+
+// CEF invokes this on its UI thread only after a RequestContext can create
+// browsers. A persistent child profile takes that asynchronous route on macOS,
+// unlike an in-memory context.
+#[cfg(feature = "cef-runtime")]
+cef::wrap_request_context_handler! {
+    struct RequestContextReadyHandler { ready: Arc<AtomicBool> }
+
+    impl RequestContextHandler {
+        fn on_request_context_initialized(&self, _request_context: Option<&mut cef::RequestContext>) {
+            self.ready.store(true, Ordering::Release);
+        }
+    }
 }
 
 // ── cef-runtime: render handler + client ─────────────────────────────────────
@@ -105,6 +126,19 @@ pub struct MacosCefProducer {
     size: PhysicalSize<u32>,
 }
 
+/// A CEF context prepared for a macOS surface.
+///
+/// CEF initializes persistent child profiles through the host event loop. Use
+/// [`MacosCefProducer::prepare_profile`] in a winit callback, pump CEF outside
+/// that callback, and call [`MacosCefProducer::try_new_with_prepared_profile`]
+/// until it returns a producer.
+pub struct PreparedMacosCefProfile {
+    #[cfg(feature = "cef-runtime")]
+    context: cef::RequestContext,
+    #[cfg(feature = "cef-runtime")]
+    ready: Arc<AtomicBool>,
+}
+
 #[cfg(feature = "cef-runtime")]
 unsafe impl Send for MacosCefProducer {}
 
@@ -112,118 +146,16 @@ impl MacosCefProducer {
     pub fn new(_runtime: &CefRuntime, config: MacosCefConfig) -> Result<Self, WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
-            let initial_size = config.surface.initial_size;
-            let frame_slot = Arc::new(Mutex::new(PendingFrameSlot::default()));
-            let events = Arc::new(Mutex::new(EventQueues {
-                nav: VecDeque::new(),
-                web_messages: VecDeque::new(),
-            }));
-            let metrics = Arc::new(Mutex::new(crate::view::ViewMetrics::new(
-                initial_size,
-                config.surface.scale_factor,
-            )));
-            let popup_slot = Arc::new(Mutex::new(PendingFrameSlot::default()));
-            let popup = Arc::new(crate::popup::PopupState::default());
-            let cursor = Arc::new(crate::cursor::LatestCursor::default());
-            let ime = Arc::new(crate::ime::LatestComposition::default());
-            let cookies = Arc::new(crate::cookies::CookieJar::default());
-            let downloads = Arc::new(crate::downloads::Downloads::default());
-            let auth = Arc::new(crate::auth::AuthChallenges::default());
-            auth.set_enabled(config.surface.handle_auth_challenges);
-            let scripts = Arc::new(crate::app::ScriptResults::default());
-
-            let inner = WeldRenderHandlerInner {
-                frame_slot: frame_slot.clone(),
-                popup_slot: popup_slot.clone(),
-                popup: popup.clone(),
-                cursor: cursor.clone(),
-                ime: ime.clone(),
-                events: events.clone(),
-                metrics: metrics.clone(),
-            };
-            let render_handler = cef_backed::WeldRenderHandler::build(inner.clone());
-            let load_handler = cef_backed::WeldLoadHandler::build(inner.clone());
-            let display_handler = cef_backed::WeldDisplayHandler::build(inner);
-            let life_span_handler = cef_backed::WeldLifeSpanHandler::build(events.clone());
-            let request_handler = cef_backed::WeldRequestHandler::build(events.clone(), auth.clone());
-            downloads.set_dir(config.surface.download_dir.clone());
-            let download_handler =
-                cef_backed::WeldDownloadHandler::build(events.clone(), downloads.clone());
-            let devtools = Arc::new(crate::devtools::DevToolsChannel::default());
-            devtools.set_enabled(config.surface.devtools_protocol);
-            let snapshots = Arc::new(crate::snapshot::SnapshotChannel::default());
-            let permissions = Arc::new(crate::permissions::Permissions::default());
-            permissions.set_enabled(config.surface.handle_permission_requests);
-            let permission_handler =
-                cef_backed::WeldPermissionHandler::build(events.clone(), permissions.clone());
-            let context_menu_handler =
-                cef_backed::WeldContextMenuHandler::build(events.clone(), metrics.clone());
-            let find_handler = cef_backed::WeldFindHandler::build(events.clone());
-            let mut client = cef_backed::WeldClient::build(
-                render_handler,
-                load_handler,
-                display_handler,
-                life_span_handler,
-                request_handler,
-                download_handler,
-                permission_handler,
-                context_menu_handler,
-                find_handler,
-                scripts.clone(),
-                events.clone(),
-            );
-
-            let window_info = cef::WindowInfo {
-                windowless_rendering_enabled: 1,
-                shared_texture_enabled: 1,
-                // CEF self-drives paints at `windowless_frame_rate`. Setting
-                // this to 1 requires the host to call SendExternalBeginFrame.
-                external_begin_frame_enabled: 0,
-                ..Default::default()
-            };
-            let browser_settings = cef::BrowserSettings {
-                windowless_frame_rate: 60,
-                background_color: config.surface.cef_background_color(),
-                ..Default::default()
-            };
-            let url: cef::CefString = config.surface.initial_url.as_str().into();
+            if config.surface.user_data_dir.is_some() {
+                return Err(WeldError::SurfaceCreation(
+                    "macOS persistent profiles initialize asynchronously; use \
+                     MacosCefProducer::prepare_profile and \
+                     try_new_with_prepared_profile from the host event loop"
+                        .into(),
+                ));
+            }
             let mut request_context = crate::profile::create(_runtime, &config.surface)?;
-
-            let browser = cef::browser_host_create_browser_sync(
-                Some(&window_info),
-                Some(&mut client),
-                Some(&url),
-                Some(&browser_settings),
-                None,
-                Some(&mut request_context),
-            )
-            .ok_or_else(|| {
-                WeldError::SurfaceCreation("browser_host_create_browser_sync returned None".into())
-            })?;
-
-            let browser_id = browser.identifier();
-            return Ok(MacosCefProducer {
-                browser_id,
-                browser,
-                metrics,
-                frame_slot,
-                popup_slot,
-                popup,
-                cursor,
-                ime,
-                cookies,
-                downloads,
-                auth,
-                permissions,
-                devtools,
-                snapshots,
-                _devtools_registration: None,
-                scripts,
-                next_script_id: 0,
-                next_snapshot_id: 1,
-                events,
-                size: initial_size,
-            });
+            return Self::new_with_request_context(&config, &mut request_context);
         }
 
         #[cfg(not(feature = "cef-runtime"))]
@@ -233,6 +165,174 @@ impl MacosCefProducer {
                 "macOS CEF vtable wiring requires the `cef-runtime` feature".into(),
             ))
         }
+    }
+
+    /// Create the isolated context during a winit callback.
+    ///
+    /// Call [`CefRuntime::do_message_loop_work`] outside that callback, then
+    /// use [`Self::try_new_with_prepared_profile`] to create the browser once
+    /// CEF invokes the readiness callback.
+    pub fn prepare_profile(
+        runtime: &CefRuntime,
+        config: &MacosCefConfig,
+    ) -> Result<PreparedMacosCefProfile, WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            let ready = Arc::new(AtomicBool::new(false));
+            let mut handler = RequestContextReadyHandler::new(ready.clone());
+            let context =
+                crate::profile::create_with_handler(runtime, &config.surface, Some(&mut handler))?;
+            return Ok(PreparedMacosCefProfile { context, ready });
+        }
+
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            let _ = (runtime, config);
+            Err(WeldError::SurfaceCreation(
+                "macOS CEF vtable wiring requires the `cef-runtime` feature".into(),
+            ))
+        }
+    }
+
+    /// Create the browser after [`Self::prepare_profile`] has reported ready.
+    /// `Ok(None)` means the caller should pump CEF again and retry later.
+    pub fn try_new_with_prepared_profile(
+        config: &MacosCefConfig,
+        profile: &mut PreparedMacosCefProfile,
+    ) -> Result<Option<Self>, WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        {
+            if !profile.ready.load(Ordering::Acquire) {
+                return Ok(None);
+            }
+            return Self::new_with_request_context(config, &mut profile.context).map(Some);
+        }
+
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            let _ = (config, profile);
+            Err(WeldError::SurfaceCreation(
+                "macOS CEF vtable wiring requires the `cef-runtime` feature".into(),
+            ))
+        }
+    }
+
+    #[cfg(feature = "cef-runtime")]
+    fn new_with_request_context(
+        config: &MacosCefConfig,
+        request_context: &mut cef::RequestContext,
+    ) -> Result<Self, WeldError> {
+        let initial_size = config.surface.initial_size;
+        let frame_slot = Arc::new(Mutex::new(PendingFrameSlot::default()));
+        let events = Arc::new(Mutex::new(EventQueues {
+            nav: VecDeque::new(),
+            web_messages: VecDeque::new(),
+        }));
+        let metrics = Arc::new(Mutex::new(crate::view::ViewMetrics::new(
+            initial_size,
+            config.surface.scale_factor,
+        )));
+        let popup_slot = Arc::new(Mutex::new(PendingFrameSlot::default()));
+        let popup = Arc::new(crate::popup::PopupState::default());
+        let cursor = Arc::new(crate::cursor::LatestCursor::default());
+        let ime = Arc::new(crate::ime::LatestComposition::default());
+        let cookies = Arc::new(crate::cookies::CookieJar::default());
+        let downloads = Arc::new(crate::downloads::Downloads::default());
+        let auth = Arc::new(crate::auth::AuthChallenges::default());
+        auth.set_enabled(config.surface.handle_auth_challenges);
+        let scripts = Arc::new(crate::app::ScriptResults::default());
+
+        let inner = WeldRenderHandlerInner {
+            frame_slot: frame_slot.clone(),
+            popup_slot: popup_slot.clone(),
+            popup: popup.clone(),
+            cursor: cursor.clone(),
+            ime: ime.clone(),
+            events: events.clone(),
+            metrics: metrics.clone(),
+        };
+        let render_handler = cef_backed::WeldRenderHandler::build(inner.clone());
+        let load_handler = cef_backed::WeldLoadHandler::build(inner.clone());
+        let display_handler = cef_backed::WeldDisplayHandler::build(inner);
+        let life_span_handler = cef_backed::WeldLifeSpanHandler::build(events.clone());
+        let request_handler = cef_backed::WeldRequestHandler::build(events.clone(), auth.clone());
+        downloads.set_dir(config.surface.download_dir.clone());
+        let download_handler =
+            cef_backed::WeldDownloadHandler::build(events.clone(), downloads.clone());
+        let devtools = Arc::new(crate::devtools::DevToolsChannel::default());
+        devtools.set_enabled(config.surface.devtools_protocol);
+        let snapshots = Arc::new(crate::snapshot::SnapshotChannel::default());
+        let permissions = Arc::new(crate::permissions::Permissions::default());
+        permissions.set_enabled(config.surface.handle_permission_requests);
+        let permission_handler =
+            cef_backed::WeldPermissionHandler::build(events.clone(), permissions.clone());
+        let context_menu_handler =
+            cef_backed::WeldContextMenuHandler::build(events.clone(), metrics.clone());
+        let find_handler = cef_backed::WeldFindHandler::build(events.clone());
+        let mut client = cef_backed::WeldClient::build(
+            render_handler,
+            load_handler,
+            display_handler,
+            life_span_handler,
+            request_handler,
+            download_handler,
+            permission_handler,
+            context_menu_handler,
+            find_handler,
+            scripts.clone(),
+            events.clone(),
+        );
+
+        let window_info = cef::WindowInfo {
+            windowless_rendering_enabled: 1,
+            shared_texture_enabled: 1,
+            // CEF self-drives paints at `windowless_frame_rate`. Setting
+            // this to 1 requires the host to call SendExternalBeginFrame.
+            external_begin_frame_enabled: 0,
+            ..Default::default()
+        };
+        let browser_settings = cef::BrowserSettings {
+            windowless_frame_rate: 60,
+            background_color: config.surface.cef_background_color(),
+            ..Default::default()
+        };
+        let url: cef::CefString = config.surface.initial_url.as_str().into();
+
+        let browser = cef::browser_host_create_browser_sync(
+            Some(&window_info),
+            Some(&mut client),
+            Some(&url),
+            Some(&browser_settings),
+            None,
+            Some(request_context),
+        )
+        .ok_or_else(|| {
+            WeldError::SurfaceCreation("browser_host_create_browser_sync returned None".into())
+        })?;
+
+        let browser_id = browser.identifier();
+        Ok(MacosCefProducer {
+            browser_id,
+            browser,
+            metrics,
+            frame_slot,
+            popup_slot,
+            popup,
+            cursor,
+            ime,
+            cookies,
+            downloads,
+            auth,
+            permissions,
+            devtools,
+            snapshots,
+            _devtools_registration: None,
+            scripts,
+            next_script_id: 0,
+            next_snapshot_id: 1,
+            events,
+            size: initial_size,
+        })
     }
 }
 
@@ -290,10 +390,8 @@ impl MacosCefProducer {
                 "the browser is not ready yet",
             ));
         };
-        let mut observer = cef_backed::WeldDevToolsObserver::build(
-            self.devtools.clone(),
-            self.snapshots.clone(),
-        );
+        let mut observer =
+            cef_backed::WeldDevToolsObserver::build(self.devtools.clone(), self.snapshots.clone());
         self._devtools_registration = host.add_dev_tools_message_observer(Some(&mut observer));
         Ok(())
     }
@@ -422,7 +520,9 @@ impl CefSurfaceProducer for MacosCefProducer {
         #[cfg(not(feature = "cef-runtime"))]
         {
             let _ = script;
-            Err(WeldError::PlatformUnsupported("script results require the cef-runtime feature"))
+            Err(WeldError::PlatformUnsupported(
+                "script results require the cef-runtime feature",
+            ))
         }
     }
 
@@ -445,7 +545,9 @@ impl CefSurfaceProducer for MacosCefProducer {
         #[cfg(not(feature = "cef-runtime"))]
         {
             let _ = (url, cookie);
-            Err(WeldError::PlatformUnsupported("cookies require the cef-runtime feature"))
+            Err(WeldError::PlatformUnsupported(
+                "cookies require the cef-runtime feature",
+            ))
         }
     }
 
@@ -457,7 +559,9 @@ impl CefSurfaceProducer for MacosCefProducer {
         #[cfg(not(feature = "cef-runtime"))]
         {
             let _ = url;
-            Err(WeldError::PlatformUnsupported("cookies require the cef-runtime feature"))
+            Err(WeldError::PlatformUnsupported(
+                "cookies require the cef-runtime feature",
+            ))
         }
     }
 
@@ -480,7 +584,9 @@ impl CefSurfaceProducer for MacosCefProducer {
         #[cfg(not(feature = "cef-runtime"))]
         {
             let _ = (url, name);
-            Err(WeldError::PlatformUnsupported("cookies require the cef-runtime feature"))
+            Err(WeldError::PlatformUnsupported(
+                "cookies require the cef-runtime feature",
+            ))
         }
     }
 
@@ -490,7 +596,9 @@ impl CefSurfaceProducer for MacosCefProducer {
             host.was_hidden(if visible { 0 } else { 1 });
             return Ok(());
         }
-        Err(WeldError::PlatformUnsupported("visibility requires the cef-runtime feature"))
+        Err(WeldError::PlatformUnsupported(
+            "visibility requires the cef-runtime feature",
+        ))
     }
 
     fn poll_cursor_shape(&mut self) -> Option<crate::surface::CursorShape> {
@@ -519,7 +627,10 @@ impl CefSurfaceProducer for MacosCefProducer {
         #[cfg(feature = "cef-runtime")]
         if let Some(host) = self.browser.host() {
             let text: cef::CefString = text.into();
-            let selection = cef::Range { from: selection.0, to: selection.1 };
+            let selection = cef::Range {
+                from: selection.0,
+                to: selection.1,
+            };
             // `replacement_range` must be a real pointer, never None. CEF's own
             // C++ wrapper takes it by reference and so always passes one, which
             // makes non-null the C API's contract; libcef's generated entry
@@ -528,18 +639,18 @@ impl CefSurfaceProducer for MacosCefProducer {
             // it dropped every composition before CEF saw it. UINT32_MAX twice
             // is the invalid range that means "replace nothing", which is what
             // cefclient passes.
-            let no_replacement = cef::Range { from: u32::MAX, to: u32::MAX };
+            let no_replacement = cef::Range {
+                from: u32::MAX,
+                to: u32::MAX,
+            };
             // No underlines: CEF renders the composition inside the page, and
             // the default styling is what a page author expects.
-            host.ime_set_composition(
-                Some(&text),
-                None,
-                Some(&no_replacement),
-                Some(&selection),
-            );
+            host.ime_set_composition(Some(&text), None, Some(&no_replacement), Some(&selection));
             return Ok(());
         }
-        Err(WeldError::PlatformUnsupported("IME requires the cef-runtime feature"))
+        Err(WeldError::PlatformUnsupported(
+            "IME requires the cef-runtime feature",
+        ))
     }
 
     fn ime_commit_text(&mut self, text: &str) -> Result<(), WeldError> {
@@ -548,11 +659,16 @@ impl CefSurfaceProducer for MacosCefProducer {
             let text: cef::CefString = text.into();
             // Same contract as ime_set_composition: a NULL replacement_range is
             // dropped silently by libcef's entry point.
-            let no_replacement = cef::Range { from: u32::MAX, to: u32::MAX };
+            let no_replacement = cef::Range {
+                from: u32::MAX,
+                to: u32::MAX,
+            };
             host.ime_commit_text(Some(&text), Some(&no_replacement), 0);
             return Ok(());
         }
-        Err(WeldError::PlatformUnsupported("IME requires the cef-runtime feature"))
+        Err(WeldError::PlatformUnsupported(
+            "IME requires the cef-runtime feature",
+        ))
     }
 
     fn ime_finish_composing(&mut self, keep_selection: bool) -> Result<(), WeldError> {
@@ -561,7 +677,9 @@ impl CefSurfaceProducer for MacosCefProducer {
             host.ime_finish_composing_text(keep_selection as _);
             return Ok(());
         }
-        Err(WeldError::PlatformUnsupported("IME requires the cef-runtime feature"))
+        Err(WeldError::PlatformUnsupported(
+            "IME requires the cef-runtime feature",
+        ))
     }
 
     fn ime_cancel_composition(&mut self) -> Result<(), WeldError> {
@@ -570,7 +688,9 @@ impl CefSurfaceProducer for MacosCefProducer {
             host.ime_cancel_composition();
             return Ok(());
         }
-        Err(WeldError::PlatformUnsupported("IME requires the cef-runtime feature"))
+        Err(WeldError::PlatformUnsupported(
+            "IME requires the cef-runtime feature",
+        ))
     }
 
     fn set_scale_factor(&mut self, scale: f32) -> Result<(), WeldError> {
@@ -590,7 +710,9 @@ impl CefSurfaceProducer for MacosCefProducer {
         #[cfg(not(feature = "cef-runtime"))]
         {
             let _ = scale;
-            Err(WeldError::PlatformUnsupported("scale factor requires the cef-runtime feature"))
+            Err(WeldError::PlatformUnsupported(
+                "scale factor requires the cef-runtime feature",
+            ))
         }
     }
 
@@ -642,7 +764,9 @@ impl CefSurfaceProducer for MacosCefProducer {
         {
             self.ensure_devtools()?;
             let Some(host) = self.browser.host() else {
-                return Err(WeldError::PlatformUnsupported("the browser is not ready yet"));
+                return Err(WeldError::PlatformUnsupported(
+                    "the browser is not ready yet",
+                ));
             };
             // The wire format goes straight through, unparsed.
             host.send_dev_tools_message(Some(json.as_bytes()));
@@ -741,20 +865,28 @@ impl CefSurfaceProducer for MacosCefProducer {
 
     fn reload(&mut self) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        { self.browser.reload(); return Ok(()); }
+        {
+            self.browser.reload();
+            return Ok(());
+        }
         Err(pending("cef_browser_t::reload"))
     }
 
     fn stop(&mut self) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        { self.browser.stop_load(); return Ok(()); }
+        {
+            self.browser.stop_load();
+            return Ok(());
+        }
         Err(pending("cef_browser_t::stop_load"))
     }
 
     fn can_go_back(&self) -> bool {
         #[cfg(feature = "cef-runtime")]
         {
-            return Some(&self.browser).map(|b| b.can_go_back() != 0).unwrap_or(false);
+            return Some(&self.browser)
+                .map(|b| b.can_go_back() != 0)
+                .unwrap_or(false);
         }
         #[cfg(not(feature = "cef-runtime"))]
         false
@@ -763,7 +895,9 @@ impl CefSurfaceProducer for MacosCefProducer {
     fn can_go_forward(&self) -> bool {
         #[cfg(feature = "cef-runtime")]
         {
-            return Some(&self.browser).map(|b| b.can_go_forward() != 0).unwrap_or(false);
+            return Some(&self.browser)
+                .map(|b| b.can_go_forward() != 0)
+                .unwrap_or(false);
         }
         #[cfg(not(feature = "cef-runtime"))]
         false
@@ -823,7 +957,9 @@ impl CefSurfaceProducer for MacosCefProducer {
         {
             self.ensure_devtools_observer()?;
             let Some(host) = self.browser.host() else {
-                return Err(WeldError::PlatformUnsupported("the browser is not ready yet"));
+                return Err(WeldError::PlatformUnsupported(
+                    "the browser is not ready yet",
+                ));
             };
             let id = self.next_snapshot_id;
             self.next_snapshot_id = self.next_snapshot_id.checked_add(1).unwrap_or(1);
@@ -844,9 +980,13 @@ impl CefSurfaceProducer for MacosCefProducer {
         None
     }
 
-    fn find(&mut self, text: &str, forward: bool, match_case: bool, find_next: bool)
-        -> Result<(), WeldError>
-    {
+    fn find(
+        &mut self,
+        text: &str,
+        forward: bool,
+        match_case: bool,
+        find_next: bool,
+    ) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         if let Some(host) = self.browser.host() {
             let text: cef::CefString = text.into();
@@ -871,13 +1011,19 @@ impl CefSurfaceProducer for MacosCefProducer {
 
     fn go_back(&mut self) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        { self.browser.go_back(); return Ok(()); }
+        {
+            self.browser.go_back();
+            return Ok(());
+        }
         Err(pending("cef_browser_t::go_back"))
     }
 
     fn go_forward(&mut self) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        { self.browser.go_forward(); return Ok(()); }
+        {
+            self.browser.go_forward();
+            return Ok(());
+        }
         Err(pending("cef_browser_t::go_forward"))
     }
 
@@ -1009,7 +1155,9 @@ impl CefSurfaceProducer for MacosCefProducer {
 }
 
 fn pending(op: &'static str) -> WeldError {
-    WeldError::BrowserOp(format!("{op}: requires `cef-runtime` feature or pending wiring"))
+    WeldError::BrowserOp(format!(
+        "{op}: requires `cef-runtime` feature or pending wiring"
+    ))
 }
 
 /// Encode `s` as a JSON string literal (double-quoted, backslash-escapes only).
@@ -1018,7 +1166,7 @@ fn escape_js_string(s: &str) -> String {
     out.push('"');
     for c in s.chars() {
         match c {
-            '"'  => out.push_str("\\\""),
+            '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
@@ -1027,7 +1175,7 @@ fn escape_js_string(s: &str) -> String {
                 use std::fmt::Write;
                 let _ = write!(out, "\\u{:04x}", c as u32);
             }
-            c    => out.push(c),
+            c => out.push(c),
         }
     }
     out.push('"');
