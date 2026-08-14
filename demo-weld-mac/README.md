@@ -84,6 +84,8 @@ example.com waits until `WELD_TIMEOUT_SECS` (default 60) gives up.
 | `WELD_TIMEOUT_SECS` | Give up and report anyway. Default 60. |
 | `WELD_SNAPSHOT` | Write an asynchronous Chromium screenshot to this PNG path. |
 | `WELD_SNAPSHOT_AFTER_SCRIPTED` | With scripted input, wait until every enabled gesture was sent before requesting the PNG. |
+| `WELD_RECEIPT` | Append navigation, script, PDF, and snapshot results here when a GUI launch has no stdout. |
+| `WELD_HISTORY` | After two real seconds, record `can_go_back` and `can_go_forward` in `WELD_RECEIPT`. |
 
 ## Verified on
 

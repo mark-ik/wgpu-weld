@@ -701,8 +701,8 @@ now (first, then every 500th).
   called by CEF. Done when: those capability rows read Y with the same event/decision
   shapes scrying uses.
 - **W8, long tail. CODE COMPLETE 2026-08-13.** Find-in-page, zoom, and
-  `can_go_back`/`can_go_forward` are in and verified on Windows and Linux
-  (macOS wired, same code). A page built with exactly seven matches reports
+  `can_go_back`/`can_go_forward` are in and verified on all three platforms.
+  A page built with exactly seven matches reports
   `count: 7`, progressively, with `final_update` on the last.
 
   Zoom needed a control to believe. Reading `zoom_level()` straight after two
@@ -715,15 +715,24 @@ now (first, then every 500th).
   session: 546 unzoomed against 390 zoomed. Third time this week a UI-thread-only
   getter has produced a plausible wrong number.
 
-  **Print to PDF and the user agent landed too**, verified on Windows and
-  Linux: `PdfPrintFinished { ok: true }` with a real file on disk (19162 bytes
-  beginning `%PDF-1.4` on Windows, 8784 on Linux), and `WeldProbe/1.0` showing
-  up in `navigator.userAgent` where Chrome's product token would be.
+  **Print to PDF and the user agent landed too**, verified on all three
+  platforms: `PdfPrintFinished { ok: true }` with a real file on disk (19162
+  bytes beginning `%PDF-1.4` on Windows, 8784 on Linux, and 9636 on both Macs),
+  and `WeldProbe/1.0` showing up in `navigator.userAgent` where Chrome's
+  product token would be.
 
   The user agent went on `CefRuntimeConfig`, not `CefSurfaceConfig`, because
   CEF takes it in `CefSettings`: it is process-wide and every producer under one
   runtime shares it. Putting it on the surface config would have implied a
   per-browser knob that does not exist.
+
+  **The remaining macOS W8 core receipts landed 2026-08-14.** Both the Intel
+  iMac and M4 iMac returned the terminal `FindResult { count: 7,
+  final_update: true }`; their viewport titles changed from 640 to 512 CSS px
+  after two zoom steps; `can_go_back=true` after a same-document history entry;
+  and each wrote a 9636-byte `%PDF-1.4` file. The optional `WELD_RECEIPT` path
+  records these events for Launch Services runs, where macOS discards ordinary
+  stdout. It also captured the exact product-token replacement in the UA.
 
   **W8 tail implementation landed 2026-08-13.** Windows and the ThinkPad have
   executable receipts: a direct `TouchInput` produced `TOUCH:touchstart:1`

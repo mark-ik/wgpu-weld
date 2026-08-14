@@ -12,7 +12,7 @@ of them import through.
 
 **Made with AI**
 
-## State, 2026-08-13
+## State, 2026-08-14
 
 Version 0.9.0 is the published baseline; the W8-tail work below is not yet
 released. Every "verified" below was checked by running it on that
@@ -43,11 +43,11 @@ first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
 | Permission requests | verified | verified | verified |
 | Context menus | verified | verified [^macmenu] | verified |
 | DevTools protocol (CDP) | verified | verified | verified |
-| Find in page | verified | wired | verified |
-| Zoom | verified | wired | verified [^zoomlevel] |
-| History state (`can_go_back`) | verified | wired | verified |
-| Print to PDF | verified | wired | verified |
-| User agent override | verified | wired | verified |
+| Find in page | verified | verified | verified |
+| Zoom | verified | verified | verified [^zoomlevel] |
+| History state (`can_go_back`) | verified | verified | verified |
+| Print to PDF | verified | verified | verified |
+| User agent override | verified | verified | verified |
 | System printer dialog | verified | wired | unavailable [^linuxprint] |
 | Host/page drag-drop | verified | verified | verified |
 | Direct touch | verified | verified | verified |

@@ -31,6 +31,7 @@ mod probe;
 mod scripted;
 
 use std::{
+    io::Write,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -110,6 +111,8 @@ struct DemoState {
     popups_imported: u32,
     cursor: (f32, f32),
     mods: EventModifiers,
+    started_at: Instant,
+    history_checked: bool,
 }
 
 impl ApplicationHandler for DemoApp {
@@ -432,6 +435,8 @@ impl DemoApp {
             popups_imported: 0,
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
+            started_at: Instant::now(),
+            history_checked: false,
         });
     }
 
@@ -501,6 +506,7 @@ impl DemoApp {
 
         while let Some(event) = s.producer.poll_navigation_event() {
             log::info!("nav: {event:?}");
+            receipt(format_args!("nav: {event:?}"));
             scripted::recover_if_crashed(&mut s.producer, &s.recover_url, &event);
             scripted::answer_auth_if_challenged(&mut s.producer, &event);
             scripted::answer_permission_if_asked(&mut s.producer, &event);
@@ -514,14 +520,26 @@ impl DemoApp {
         if s.cdp_ticks == 200 || s.ticks == 200 {
             if let Ok(text) = std::env::var("WELD_FIND") {
                 match s.producer.find(&text, true, false, false) {
-                    Ok(()) => eprintln!("weld demo: find {text:?}"),
-                    Err(e) => eprintln!("weld demo: find failed: {e}"),
+                    Ok(()) => {
+                        eprintln!("weld demo: find {text:?}");
+                        receipt(format_args!("find requested: {text:?}"));
+                    }
+                    Err(e) => {
+                        eprintln!("weld demo: find failed: {e}");
+                        receipt(format_args!("find failed: {e}"));
+                    }
                 }
             }
             if let Ok(pdf) = std::env::var("WELD_PDF") {
                 match s.producer.print_to_pdf(std::path::Path::new(&pdf)) {
-                    Ok(()) => eprintln!("weld demo: print_to_pdf {pdf}"),
-                    Err(e) => eprintln!("weld demo: print_to_pdf failed: {e}"),
+                    Ok(()) => {
+                        eprintln!("weld demo: print_to_pdf {pdf}");
+                        receipt(format_args!("pdf requested: {pdf}"));
+                    }
+                    Err(e) => {
+                        eprintln!("weld demo: print_to_pdf failed: {e}");
+                        receipt(format_args!("pdf request failed: {e}"));
+                    }
                 }
             }
             if std::env::var("WELD_PRINT").is_ok() {
@@ -533,12 +551,18 @@ impl DemoApp {
             if std::env::var("WELD_ZOOM").is_ok() {
                 let _ = s.producer.zoom(welding::ZoomCommand::In);
                 let _ = s.producer.zoom(welding::ZoomCommand::In);
+                receipt(format_args!("zoom: requested +2"));
             }
-            eprintln!(
-                "weld demo: can_go_back={} can_go_forward={}",
-                s.producer.can_go_back(),
-                s.producer.can_go_forward()
-            );
+        }
+        if !s.history_checked
+            && std::env::var("WELD_HISTORY").is_ok()
+            && s.started_at.elapsed() >= Duration::from_secs(2)
+        {
+            s.history_checked = true;
+            let back = s.producer.can_go_back();
+            let forward = s.producer.can_go_forward();
+            eprintln!("weld demo: can_go_back={back} can_go_forward={forward}");
+            receipt(format_args!("history: can_go_back={back} can_go_forward={forward}"));
         }
         // The normal snapshot is an early compositor receipt. A scripted
         // battery can opt into waiting until its last input has crossed into
@@ -599,8 +623,14 @@ impl DemoApp {
         }
         if let Some(result) = s.producer.poll_script_result() {
             match result.value {
-                Ok(json) => log::info!("SCRIPT #{} => {json}", result.id),
-                Err(err) => log::error!("SCRIPT #{} threw: {err}", result.id),
+                Ok(json) => {
+                    log::info!("SCRIPT #{} => {json}", result.id);
+                    receipt(format_args!("script #{}: {json}", result.id));
+                }
+                Err(err) => {
+                    log::error!("SCRIPT #{} threw: {err}", result.id);
+                    receipt(format_args!("script #{} failed: {err}", result.id));
+                }
             }
         }
         if let Some(result) = s.producer.poll_snapshot_png() {
@@ -614,6 +644,7 @@ impl DemoApp {
                                     bytes.len(),
                                     path.display()
                                 );
+                                receipt(format_args!("snapshot: {} bytes", bytes.len()));
                             }
                             Ok(()) => eprintln!("weld demo: snapshot was not a PNG"),
                             Err(e) => eprintln!("weld demo: could not write snapshot: {e}"),
@@ -812,4 +843,16 @@ fn env_background() -> Option<[u8; 3]> {
 
 fn log_scale_err(err: welding::WeldError) {
     log::error!("set_scale_factor failed: {err}");
+}
+
+/// `WELD_RECEIPT=/path/to/file` appends validation lines for a GUI launch
+/// where macOS has no useful stdout sink.
+fn receipt(line: std::fmt::Arguments<'_>) {
+    let Some(path) = std::env::var_os("WELD_RECEIPT") else {
+        return;
+    };
+    let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
+    let _ = writeln!(file, "{line}");
 }
