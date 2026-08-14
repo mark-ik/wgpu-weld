@@ -82,6 +82,8 @@ example.com waits until `WELD_TIMEOUT_SECS` (default 60) gives up.
 | `WELD_URL` | Initial page. Defaults to `https://example.com`. |
 | `WELD_EXIT_AFTER_FRAMES` | Probe and exit after N imported frames. |
 | `WELD_TIMEOUT_SECS` | Give up and report anyway. Default 60. |
+| `WELD_SNAPSHOT` | Write an asynchronous Chromium screenshot to this PNG path. |
+| `WELD_SNAPSHOT_AFTER_SCRIPTED` | With scripted input, wait until every enabled gesture was sent before requesting the PNG. |
 
 ## Verified on
 

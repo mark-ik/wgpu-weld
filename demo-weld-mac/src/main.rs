@@ -540,7 +540,15 @@ impl DemoApp {
                 s.producer.can_go_forward()
             );
         }
-        if !s.snapshot_requested && s.ticks > 90 && s.snapshot_path.is_some() {
+        // The normal snapshot is an early compositor receipt. A scripted
+        // battery can opt into waiting until its last input has crossed into
+        // CEF, so the pixels also record the final page-side gesture result.
+        let wait_for_scripted_snapshot = std::env::var("WELD_SNAPSHOT_AFTER_SCRIPTED").is_ok();
+        if !s.snapshot_requested
+            && s.ticks > 90
+            && s.snapshot_path.is_some()
+            && (!wait_for_scripted_snapshot || self.scripted.complete())
+        {
             s.snapshot_requested = true;
             match s.producer.request_snapshot_png() {
                 Ok(()) => eprintln!("weld demo: PNG snapshot requested"),

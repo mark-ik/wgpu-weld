@@ -126,6 +126,31 @@ impl ScriptedInput {
             || self.page_drag.is_some()
     }
 
+    /// Whether every enabled, ordered gesture has been handed to the producer.
+    ///
+    /// This deliberately says nothing about an asynchronous page response. It
+    /// lets an unattended probe take its screenshot after the last input has
+    /// crossed the host/CEF boundary rather than before the settle interval.
+    pub fn complete(&self) -> bool {
+        let stages = [
+            (self.touch_at.is_some(), 0),
+            (self.drop_file.is_some(), 3),
+            (self.page_drag.is_some(), 4),
+            (self.click_at.is_some(), 5),
+            (self.wheel.is_some(), 6),
+            (self.key.is_some(), 7),
+            (self.ime.is_some(), 8),
+            (self.hide_cycle, 10),
+            (self.devtools, 11),
+            (self.right_click_at.is_some(), 12),
+        ];
+        let last = stages
+            .into_iter()
+            .filter_map(|(enabled, stage)| enabled.then_some(stage))
+            .max();
+        last.is_none_or(|stage| self.stage > stage)
+    }
+
     /// Call once per tick, with `ready` set once the page has painted. Fires at
     /// most one gesture per call, in order.
     pub fn tick<P: CefSurfaceProducer + ?Sized>(&mut self, producer: &mut P, ready: bool) {
