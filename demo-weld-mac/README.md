@@ -93,3 +93,15 @@ macOS 15.7.7, Intel iMac (`x86_64-apple-darwin`), 2026-08-10.
 
 macOS 26.5.1, Apple M4 iMac (`aarch64-apple-darwin`, Metal 4, native 2x
 display), 2026-08-12 — full battery, popup surfaces included.
+
+macOS 26.5.1, Apple M4 iMac (`aarch64-apple-darwin`), 2026-08-16, on the
+**wgpu-30 default row** at `02fb1cc`. `VALIDATION PASS`, 2 frames, probe
+16384/16384 non-zero.
+
+Two things to know when re-running this unattended. `bundle-demo-weld-mac`
+replaces files in place, so the `.app` directory keeps the mtime of its first
+bundling while the executables inside are current; read the mtime on
+`Contents/MacOS/demo-weld-mac` to tell a fresh build from a stale one. And
+`WELD_SNAPSHOT` needs `WELD_EXIT_AFTER_FRAMES` set high enough to outlive the
+asynchronous PNG callback. At 1 or 2 frames the process exits first and writes
+no file, even though the probe passed.
