@@ -1,12 +1,14 @@
+#[cfg(feature = "cef-runtime")]
+use std::sync::atomic::{AtomicBool, AtomicU64};
 /// Windows CEF producer: accelerated OSR via `OnAcceleratedPaint`.
 ///
 /// # Handle lifetime
 ///
 /// `CefAcceleratedPaintInfo::shared_texture_handle` is callback-scoped. Under
-/// `cef-runtime` the `on_accelerated_paint` callback calls `DuplicateHandle`,
-/// opens that duplicate on the host device, and copies into an application-owned
-/// texture before returning. Only that owned texture crosses the callback
-/// boundary.
+/// `cef-runtime` the `on_accelerated_paint` callback calls `DuplicateHandle`
+/// and copies into an application-owned texture before returning. The copied
+/// shared handle crosses the callback boundary; callers may either let Weld
+/// import it or take it through [`WindowsCefProducer::acquire_native_frame`].
 ///
 /// # Threading
 ///
@@ -18,26 +20,24 @@
 use std::{
     collections::VecDeque,
     sync::{
-        atomic::{AtomicI32, Ordering},
         Arc, Mutex,
+        atomic::{AtomicI32, Ordering},
     },
 };
-#[cfg(feature = "cef-runtime")]
-use std::sync::atomic::{AtomicBool, AtomicU64};
 
 use dpi::PhysicalSize;
 
+#[cfg(feature = "cef-runtime")]
+use crate::native_frame::D3d11CallbackFrameCopier;
 use crate::{
     error::WeldError,
-    native_frame::{HostWgpuContext, ImportedTexture},
+    native_frame::{Dx12SharedTexture, HostWgpuContext, ImportedTexture, WgpuTextureImporter},
     runtime::CefRuntime,
     surface::{
         CefSurfaceConfig, CefSurfaceMode, CefSurfaceProducer, FocusDirection, KeyEvent, MouseEvent,
         NavigationEvent,
     },
 };
-#[cfg(feature = "cef-runtime")]
-use crate::native_frame::{D3d11CallbackFrameCopier, Dx12SharedTexture, WgpuTextureImporter};
 
 #[cfg(feature = "cef-runtime")]
 use cef::{
@@ -52,7 +52,9 @@ pub struct WindowsCefConfig {
 }
 impl Default for WindowsCefConfig {
     fn default() -> Self {
-        Self { surface: CefSurfaceConfig::default() }
+        Self {
+            surface: CefSurfaceConfig::default(),
+        }
     }
 }
 
@@ -68,13 +70,12 @@ struct EventQueues {
 #[cfg(feature = "cef-runtime")]
 #[derive(Clone)]
 struct WeldRenderHandlerInner {
-    frame_slot: Arc<Mutex<Option<ImportedTexture>>>,
-    popup_slot: Arc<Mutex<Option<ImportedTexture>>>,
+    frame_slot: Arc<Mutex<Option<Dx12SharedTexture>>>,
+    popup_slot: Arc<Mutex<Option<Dx12SharedTexture>>>,
     popup: Arc<crate::popup::PopupState>,
     cursor: Arc<crate::cursor::LatestCursor>,
     ime: Arc<crate::ime::LatestComposition>,
     next_generation: Arc<AtomicU64>,
-    host_ctx: HostWgpuContext,
     callback_copier: Arc<D3d11CallbackFrameCopier>,
     events: Arc<Mutex<EventQueues>>,
     metrics: Arc<Mutex<crate::view::ViewMetrics>>,
@@ -85,6 +86,9 @@ struct WeldRenderHandlerInner {
 struct WeldLifeSpanState {
     closed: Arc<AtomicBool>,
     close_requested: Arc<AtomicBool>,
+    /// `create_browser` is asynchronous. Keep the host's requested visibility
+    /// until `on_after_created` has a BrowserHost to receive it.
+    visible: Arc<AtomicBool>,
     browser_id: Arc<AtomicI32>,
     browser: Arc<Mutex<Option<cef::Browser>>>,
 }
@@ -106,9 +110,11 @@ pub struct WindowsCefProducer {
     closed: Arc<AtomicBool>,
     #[cfg(feature = "cef-runtime")]
     close_requested: Arc<AtomicBool>,
-    frame_slot: Arc<Mutex<Option<ImportedTexture>>>,
     #[cfg(feature = "cef-runtime")]
-    popup_slot: Arc<Mutex<Option<ImportedTexture>>>,
+    visible: Arc<AtomicBool>,
+    frame_slot: Arc<Mutex<Option<Dx12SharedTexture>>>,
+    #[cfg(feature = "cef-runtime")]
+    popup_slot: Arc<Mutex<Option<Dx12SharedTexture>>>,
     #[cfg(feature = "cef-runtime")]
     popup: Arc<crate::popup::PopupState>,
     #[cfg(feature = "cef-runtime")]
@@ -164,19 +170,22 @@ impl WindowsCefProducer {
             let initial_size = config.surface.initial_size;
             let frame_slot = Arc::new(Mutex::new(None));
             let next_generation = Arc::new(AtomicU64::new(0));
-            let events =
-                Arc::new(Mutex::new(EventQueues { nav: VecDeque::new(), web_messages: VecDeque::new() }));
+            let events = Arc::new(Mutex::new(EventQueues {
+                nav: VecDeque::new(),
+                web_messages: VecDeque::new(),
+            }));
             let metrics = Arc::new(Mutex::new(crate::view::ViewMetrics::new(
                 initial_size,
                 config.surface.scale_factor,
             )));
             let closed = Arc::new(AtomicBool::new(false));
             let close_requested = Arc::new(AtomicBool::new(false));
+            let visible = Arc::new(AtomicBool::new(true));
             let browser_id = Arc::new(AtomicI32::new(0));
             let browser = Arc::new(Mutex::new(None));
             let callback_copier = Arc::new(D3d11CallbackFrameCopier::new(host_ctx)?);
 
-            let popup_slot: Arc<Mutex<Option<ImportedTexture>>> = Arc::new(Mutex::new(None));
+            let popup_slot: Arc<Mutex<Option<Dx12SharedTexture>>> = Arc::new(Mutex::new(None));
             let popup = Arc::new(crate::popup::PopupState::default());
             let cursor = Arc::new(crate::cursor::LatestCursor::default());
             let ime = Arc::new(crate::ime::LatestComposition::default());
@@ -193,7 +202,6 @@ impl WindowsCefProducer {
                 cursor: cursor.clone(),
                 ime: ime.clone(),
                 next_generation,
-                host_ctx: host_ctx.clone(),
                 callback_copier,
                 events: events.clone(),
                 metrics: metrics.clone(),
@@ -201,6 +209,7 @@ impl WindowsCefProducer {
             let life_span_state = WeldLifeSpanState {
                 closed: closed.clone(),
                 close_requested: close_requested.clone(),
+                visible: visible.clone(),
                 browser_id: browser_id.clone(),
                 browser: browser.clone(),
             };
@@ -210,7 +219,8 @@ impl WindowsCefProducer {
                 cef_backed::WeldLifeSpanHandler::build(life_span_state, events.clone());
             let load_handler = cef_backed::WeldLoadHandler::build(inner.clone());
             let display_handler = cef_backed::WeldDisplayHandler::build(inner);
-            let request_handler = cef_backed::WeldRequestHandler::build(events.clone(), auth.clone());
+            let request_handler =
+                cef_backed::WeldRequestHandler::build(events.clone(), auth.clone());
             downloads.set_dir(config.surface.download_dir.clone());
             let download_handler =
                 cef_backed::WeldDownloadHandler::build(events.clone(), downloads.clone());
@@ -274,6 +284,7 @@ impl WindowsCefProducer {
                 metrics,
                 closed,
                 close_requested,
+                visible,
                 frame_slot,
                 popup_slot,
                 popup,
@@ -312,6 +323,17 @@ impl WindowsCefProducer {
         {
             self.browser_id.load(Ordering::Acquire) == 0
         }
+    }
+
+    /// Take the newest application-owned CEF frame without importing it.
+    ///
+    /// This is the neutral-host path: the returned frame transfers its Win32
+    /// shared handle, so the caller imports it on its own wgpu device and then
+    /// closes the handle. Calling this and `CefSurfaceProducer::acquire_frame`
+    /// are alternatives; each consumes the single-slot mailbox.
+    #[cfg(feature = "cef-runtime")]
+    pub fn acquire_native_frame(&mut self) -> Option<Dx12SharedTexture> {
+        self.frame_slot.lock().unwrap().take()
     }
 
     #[cfg(feature = "cef-runtime")]
@@ -376,10 +398,8 @@ impl WindowsCefProducer {
                 "the browser is not ready yet",
             ));
         };
-        let mut observer = cef_backed::WeldDevToolsObserver::build(
-            self.devtools.clone(),
-            self.snapshots.clone(),
-        );
+        let mut observer =
+            cef_backed::WeldDevToolsObserver::build(self.devtools.clone(), self.snapshots.clone());
         self._devtools_registration = host.add_dev_tools_message_observer(Some(&mut observer));
         Ok(())
     }
@@ -426,14 +446,20 @@ impl CefSurfaceProducer for WindowsCefProducer {
 
     fn acquire_frame(
         &mut self,
-        _ctx: &HostWgpuContext,
+        ctx: &HostWgpuContext,
     ) -> Result<Option<ImportedTexture>, WeldError> {
-        Ok(self.frame_slot.lock().unwrap().take())
+        self.frame_slot
+            .lock()
+            .unwrap()
+            .take()
+            .map(|frame| WgpuTextureImporter::import_owned_dx12_callback_frame(frame, ctx))
+            .transpose()
+            .map_err(Into::into)
     }
 
     fn acquire_popup(
         &mut self,
-        _ctx: &HostWgpuContext,
+        ctx: &HostWgpuContext,
     ) -> Result<Option<crate::surface::PopupSurface>, WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
@@ -442,9 +468,10 @@ impl CefSurfaceProducer for WindowsCefProducer {
             };
             // CEF reports popup geometry in DIP; hosts draw in physical pixels.
             let rect = self.metrics.lock().unwrap().rect_to_physical(rect);
-            let Some(texture) = self.popup_slot.lock().unwrap().take() else {
+            let Some(frame) = self.popup_slot.lock().unwrap().take() else {
                 return Ok(None);
             };
+            let texture = WgpuTextureImporter::import_owned_dx12_callback_frame(frame, ctx)?;
             return Ok(Some(crate::surface::PopupSurface { texture, rect }));
         }
         #[cfg(not(feature = "cef-runtime"))]
@@ -502,7 +529,9 @@ impl CefSurfaceProducer for WindowsCefProducer {
         #[cfg(not(feature = "cef-runtime"))]
         {
             let _ = script;
-            Err(WeldError::PlatformUnsupported("script results require the cef-runtime feature"))
+            Err(WeldError::PlatformUnsupported(
+                "script results require the cef-runtime feature",
+            ))
         }
     }
 
@@ -526,7 +555,9 @@ impl CefSurfaceProducer for WindowsCefProducer {
         #[cfg(not(feature = "cef-runtime"))]
         {
             let _ = (url, cookie);
-            Err(WeldError::PlatformUnsupported("cookies require the cef-runtime feature"))
+            Err(WeldError::PlatformUnsupported(
+                "cookies require the cef-runtime feature",
+            ))
         }
     }
 
@@ -539,7 +570,9 @@ impl CefSurfaceProducer for WindowsCefProducer {
         #[cfg(not(feature = "cef-runtime"))]
         {
             let _ = url;
-            Err(WeldError::PlatformUnsupported("cookies require the cef-runtime feature"))
+            Err(WeldError::PlatformUnsupported(
+                "cookies require the cef-runtime feature",
+            ))
         }
     }
 
@@ -563,17 +596,28 @@ impl CefSurfaceProducer for WindowsCefProducer {
         #[cfg(not(feature = "cef-runtime"))]
         {
             let _ = (url, name);
-            Err(WeldError::PlatformUnsupported("cookies require the cef-runtime feature"))
+            Err(WeldError::PlatformUnsupported(
+                "cookies require the cef-runtime feature",
+            ))
         }
     }
 
     fn set_visible(&mut self, visible: bool) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
-            host.was_hidden(if visible { 0 } else { 1 });
+        {
+            self.visible.store(visible, Ordering::Release);
+            if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+                host.was_hidden(if visible { 0 } else { 1 });
+            }
             return Ok(());
         }
-        Err(WeldError::PlatformUnsupported("visibility requires the cef-runtime feature"))
+        #[cfg(not(feature = "cef-runtime"))]
+        {
+            let _ = visible;
+            Err(WeldError::PlatformUnsupported(
+                "visibility requires the cef-runtime feature",
+            ))
+        }
     }
 
     fn poll_cursor_shape(&mut self) -> Option<crate::surface::CursorShape> {
@@ -602,7 +646,10 @@ impl CefSurfaceProducer for WindowsCefProducer {
         #[cfg(feature = "cef-runtime")]
         if let Some(host) = self.browser().and_then(|browser| browser.host()) {
             let text: cef::CefString = text.into();
-            let selection = cef::Range { from: selection.0, to: selection.1 };
+            let selection = cef::Range {
+                from: selection.0,
+                to: selection.1,
+            };
             // `replacement_range` must be a real pointer, never None. CEF's own
             // C++ wrapper takes it by reference and so always passes one, which
             // makes non-null the C API's contract; libcef's generated entry
@@ -611,18 +658,18 @@ impl CefSurfaceProducer for WindowsCefProducer {
             // it dropped every composition before CEF saw it. UINT32_MAX twice
             // is the invalid range that means "replace nothing", which is what
             // cefclient passes.
-            let no_replacement = cef::Range { from: u32::MAX, to: u32::MAX };
+            let no_replacement = cef::Range {
+                from: u32::MAX,
+                to: u32::MAX,
+            };
             // No underlines: CEF renders the composition inside the page, and
             // the default styling is what a page author expects.
-            host.ime_set_composition(
-                Some(&text),
-                None,
-                Some(&no_replacement),
-                Some(&selection),
-            );
+            host.ime_set_composition(Some(&text), None, Some(&no_replacement), Some(&selection));
             return Ok(());
         }
-        Err(WeldError::PlatformUnsupported("IME requires the cef-runtime feature"))
+        Err(WeldError::PlatformUnsupported(
+            "IME requires the cef-runtime feature",
+        ))
     }
 
     fn ime_commit_text(&mut self, text: &str) -> Result<(), WeldError> {
@@ -631,11 +678,16 @@ impl CefSurfaceProducer for WindowsCefProducer {
             let text: cef::CefString = text.into();
             // Same contract as ime_set_composition: a NULL replacement_range is
             // dropped silently by libcef's entry point.
-            let no_replacement = cef::Range { from: u32::MAX, to: u32::MAX };
+            let no_replacement = cef::Range {
+                from: u32::MAX,
+                to: u32::MAX,
+            };
             host.ime_commit_text(Some(&text), Some(&no_replacement), 0);
             return Ok(());
         }
-        Err(WeldError::PlatformUnsupported("IME requires the cef-runtime feature"))
+        Err(WeldError::PlatformUnsupported(
+            "IME requires the cef-runtime feature",
+        ))
     }
 
     fn ime_finish_composing(&mut self, keep_selection: bool) -> Result<(), WeldError> {
@@ -644,7 +696,9 @@ impl CefSurfaceProducer for WindowsCefProducer {
             host.ime_finish_composing_text(keep_selection as _);
             return Ok(());
         }
-        Err(WeldError::PlatformUnsupported("IME requires the cef-runtime feature"))
+        Err(WeldError::PlatformUnsupported(
+            "IME requires the cef-runtime feature",
+        ))
     }
 
     fn ime_cancel_composition(&mut self) -> Result<(), WeldError> {
@@ -653,7 +707,9 @@ impl CefSurfaceProducer for WindowsCefProducer {
             host.ime_cancel_composition();
             return Ok(());
         }
-        Err(WeldError::PlatformUnsupported("IME requires the cef-runtime feature"))
+        Err(WeldError::PlatformUnsupported(
+            "IME requires the cef-runtime feature",
+        ))
     }
 
     fn set_scale_factor(&mut self, scale: f32) -> Result<(), WeldError> {
@@ -673,7 +729,9 @@ impl CefSurfaceProducer for WindowsCefProducer {
         #[cfg(not(feature = "cef-runtime"))]
         {
             let _ = scale;
-            Err(WeldError::PlatformUnsupported("scale factor requires the cef-runtime feature"))
+            Err(WeldError::PlatformUnsupported(
+                "scale factor requires the cef-runtime feature",
+            ))
         }
     }
 
@@ -725,7 +783,9 @@ impl CefSurfaceProducer for WindowsCefProducer {
         {
             self.ensure_devtools()?;
             let Some(host) = self.browser().and_then(|browser| browser.host()) else {
-                return Err(WeldError::PlatformUnsupported("the browser is not ready yet"));
+                return Err(WeldError::PlatformUnsupported(
+                    "the browser is not ready yet",
+                ));
             };
             // The wire format goes straight through, unparsed.
             host.send_dev_tools_message(Some(json.as_bytes()));
@@ -847,7 +907,10 @@ impl CefSurfaceProducer for WindowsCefProducer {
     fn can_go_back(&self) -> bool {
         #[cfg(feature = "cef-runtime")]
         {
-            return self.browser().map(|b| b.can_go_back() != 0).unwrap_or(false);
+            return self
+                .browser()
+                .map(|b| b.can_go_back() != 0)
+                .unwrap_or(false);
         }
         #[cfg(not(feature = "cef-runtime"))]
         false
@@ -856,7 +919,10 @@ impl CefSurfaceProducer for WindowsCefProducer {
     fn can_go_forward(&self) -> bool {
         #[cfg(feature = "cef-runtime")]
         {
-            return self.browser().map(|b| b.can_go_forward() != 0).unwrap_or(false);
+            return self
+                .browser()
+                .map(|b| b.can_go_forward() != 0)
+                .unwrap_or(false);
         }
         #[cfg(not(feature = "cef-runtime"))]
         false
@@ -880,7 +946,11 @@ impl CefSurfaceProducer for WindowsCefProducer {
     fn zoom_level(&self) -> f64 {
         #[cfg(feature = "cef-runtime")]
         {
-            return self.browser().and_then(|browser| browser.host()).map(|h| h.zoom_level()).unwrap_or(0.0);
+            return self
+                .browser()
+                .and_then(|browser| browser.host())
+                .map(|h| h.zoom_level())
+                .unwrap_or(0.0);
         }
         #[cfg(not(feature = "cef-runtime"))]
         0.0
@@ -916,7 +986,9 @@ impl CefSurfaceProducer for WindowsCefProducer {
         {
             self.ensure_devtools_observer()?;
             let Some(host) = self.browser().and_then(|browser| browser.host()) else {
-                return Err(WeldError::PlatformUnsupported("the browser is not ready yet"));
+                return Err(WeldError::PlatformUnsupported(
+                    "the browser is not ready yet",
+                ));
             };
             let id = self.next_snapshot_id;
             self.next_snapshot_id = self.next_snapshot_id.checked_add(1).unwrap_or(1);
@@ -939,9 +1011,13 @@ impl CefSurfaceProducer for WindowsCefProducer {
         None
     }
 
-    fn find(&mut self, text: &str, forward: bool, match_case: bool, find_next: bool)
-        -> Result<(), WeldError>
-    {
+    fn find(
+        &mut self,
+        text: &str,
+        forward: bool,
+        match_case: bool,
+        find_next: bool,
+    ) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         if let Some(host) = self.browser().and_then(|browser| browser.host()) {
             let text: cef::CefString = text.into();
@@ -1102,7 +1178,12 @@ impl CefSurfaceProducer for WindowsCefProducer {
                 let window_info = cef::WindowInfo {
                     window_name: "DevTools".into(),
                     style: WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VISIBLE,
-                    bounds: cef::Rect { x: 0, y: 0, width: 1024, height: 768 },
+                    bounds: cef::Rect {
+                        x: 0,
+                        y: 0,
+                        width: 1024,
+                        height: 768,
+                    },
                     ..Default::default()
                 };
                 let settings = cef::BrowserSettings::default();
@@ -1113,12 +1194,7 @@ impl CefSurfaceProducer for WindowsCefProducer {
                 // the framework on macOS rather than an error. (0,0) is the
                 // "inspect nothing in particular" value.
                 let inspect_at = cef::Point { x: 0, y: 0 };
-                host.show_dev_tools(
-                    Some(&window_info),
-                    None,
-                    Some(&settings),
-                    Some(&inspect_at),
-                );
+                host.show_dev_tools(Some(&window_info), None, Some(&settings), Some(&inspect_at));
                 return Ok(());
             }
         }
@@ -1148,7 +1224,9 @@ impl CefSurfaceProducer for WindowsCefProducer {
 }
 
 fn pending(op: &'static str) -> WeldError {
-    WeldError::BrowserOp(format!("{op}: requires `cef-runtime` feature or pending wiring"))
+    WeldError::BrowserOp(format!(
+        "{op}: requires `cef-runtime` feature or pending wiring"
+    ))
 }
 
 /// Encode `s` as a JSON string literal (double-quoted, backslash-escapes only).
@@ -1158,7 +1236,7 @@ fn escape_js_string(s: &str) -> String {
     out.push('"');
     for c in s.chars() {
         match c {
-            '"'  => out.push_str("\\\""),
+            '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
@@ -1167,7 +1245,7 @@ fn escape_js_string(s: &str) -> String {
                 use std::fmt::Write;
                 let _ = write!(out, "\\u{:04x}", c as u32);
             }
-            c    => out.push(c),
+            c => out.push(c),
         }
     }
     out.push('"');

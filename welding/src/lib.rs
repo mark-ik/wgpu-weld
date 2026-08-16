@@ -102,7 +102,7 @@ pub use surface::{
     CefSurfaceProducer, Cookie, EventModifiers, FocusDirection, KeyEvent, KeyEventKind,
     CursorShape, ImeComposition, MouseAction, MouseButton, MouseEvent, NavigationEvent, PopupRect,
     ContextMenuTarget, PopupSurface, ProcessTerminationStatus, SameSite, ZoomCommand, DragEventKind,
-    DragFile, DragInput, DragOperations, DragPayload, TouchInput, TouchPhase,
+    ContactDevice, DragFile, DragInput, DragOperations, DragPayload, TouchInput, TouchPhase,
 };
 pub use auth::AuthId;
 pub use downloads::DownloadId;

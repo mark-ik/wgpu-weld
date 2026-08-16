@@ -16,7 +16,6 @@ pub struct D3d11CallbackFrameCopier {
 impl D3d11CallbackFrameCopier {
     pub fn new(ctx: &HostWgpuContext) -> Result<Self, ImportError> {
         use windows::{
-            core::Interface,
             Win32::{
                 Foundation::HMODULE,
                 Graphics::{
@@ -31,6 +30,7 @@ impl D3d11CallbackFrameCopier {
                     Dxgi::{CreateDXGIFactory1, IDXGIAdapter, IDXGIFactory4},
                 },
             },
+            core::Interface,
         };
 
         if ctx.backend != InteropBackend::Dx12 {
@@ -73,8 +73,8 @@ impl D3d11CallbackFrameCopier {
             )
         }
         .map_err(|err| ImportError::Hal(format!("D3D11CreateDevice failed: {err}")))?;
-        let device =
-            device.ok_or_else(|| ImportError::Hal("D3D11CreateDevice returned no device".into()))?;
+        let device = device
+            .ok_or_else(|| ImportError::Hal("D3D11CreateDevice returned no device".into()))?;
         let context = context
             .ok_or_else(|| ImportError::Hal("D3D11CreateDevice returned no context".into()))?;
         let device1 = device
@@ -91,10 +91,14 @@ impl D3d11CallbackFrameCopier {
     fn copy_to_owned_shared_frame(
         &self,
         frame: Dx12SharedTexture,
-    ) -> Result<(Dx12SharedTexture, windows::Win32::Graphics::Direct3D11::ID3D11Texture2D), ImportError>
-    {
+    ) -> Result<
+        (
+            Dx12SharedTexture,
+            windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+        ),
+        ImportError,
+    > {
         use windows::{
-            core::{Interface, PCWSTR},
             Win32::{
                 Foundation::{CloseHandle, GENERIC_ALL, HANDLE},
                 Graphics::{
@@ -106,6 +110,7 @@ impl D3d11CallbackFrameCopier {
                     Dxgi::{IDXGIKeyedMutex, IDXGIResource1},
                 },
             },
+            core::{Interface, PCWSTR},
         };
 
         struct OwnedHandle(HANDLE);
@@ -119,16 +124,22 @@ impl D3d11CallbackFrameCopier {
             }
         }
 
-        let source_handle = OwnedHandle(HANDLE(frame.handle));
-        let source = unsafe { self.device1.OpenSharedResource1::<ID3D11Texture2D>(source_handle.0) }
-            .map_err(|err| ImportError::D3d11OpenShared(err.to_string()))?;
+        let size = frame.size;
+        let format = frame.format;
+        let generation = frame.generation;
+        let source_handle = OwnedHandle(HANDLE(frame.into_raw_handle()));
+        let source = unsafe {
+            self.device1
+                .OpenSharedResource1::<ID3D11Texture2D>(source_handle.0)
+        }
+        .map_err(|err| ImportError::D3d11OpenShared(err.to_string()))?;
         let mut desc = Default::default();
         unsafe { source.GetDesc(&mut desc) };
         desc.Usage = D3D11_USAGE_DEFAULT;
         desc.BindFlags = (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32;
         desc.CPUAccessFlags = 0;
-        desc.MiscFlags =
-            (D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0 | D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0) as u32;
+        desc.MiscFlags = (D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0
+            | D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0) as u32;
 
         let mut target = None;
         unsafe { self.device.CreateTexture2D(&desc, None, Some(&mut target)) }
@@ -138,8 +149,9 @@ impl D3d11CallbackFrameCopier {
         let target_mutex = target
             .cast::<IDXGIKeyedMutex>()
             .map_err(|err| ImportError::Hal(format!("IDXGIKeyedMutex cast failed: {err}")))?;
-        unsafe { target_mutex.AcquireSync(0, 500) }
-            .map_err(|err| ImportError::Hal(format!("IDXGIKeyedMutex AcquireSync failed: {err}")))?;
+        unsafe { target_mutex.AcquireSync(0, 500) }.map_err(|err| {
+            ImportError::Hal(format!("IDXGIKeyedMutex AcquireSync failed: {err}"))
+        })?;
         unsafe {
             self.context.CopyResource(&target, &source);
         }
@@ -160,7 +172,9 @@ impl D3d11CallbackFrameCopier {
         Ok((
             Dx12SharedTexture {
                 handle: target_handle.0,
-                ..frame
+                size,
+                format,
+                generation,
             },
             target,
         ))
@@ -220,22 +234,34 @@ impl WgpuTextureImporter {
     /// the opened resource must not escape that callback. Copying through D3D11
     /// matches CEF's native Windows sharing path and keeps the pooled source
     /// inside the callback.
-    pub fn copy_dx12_callback_frame(
+    pub fn copy_dx12_callback_frame_to_owned(
+        frame: Dx12SharedTexture,
+        copier: &D3d11CallbackFrameCopier,
+    ) -> Result<Dx12SharedTexture, ImportError> {
+        let (copied_frame, _d3d11_target) = copier.copy_to_owned_shared_frame(frame)?;
+        Ok(copied_frame)
+    }
+
+    /// Import a callback-owned CEF frame and perform the cache-visible read
+    /// that the D3D11-to-D3D12 handoff requires. Consumes the frame, closing
+    /// its transferred Win32 handle after `OpenSharedHandle` has taken its own
+    /// resource reference.
+    pub fn import_owned_dx12_callback_frame(
         frame: Dx12SharedTexture,
         ctx: &HostWgpuContext,
-        copier: &D3d11CallbackFrameCopier,
     ) -> Result<ImportedTexture, ImportError> {
-        let (copied_frame, _d3d11_target) = copier.copy_to_owned_shared_frame(frame)?;
-        let imported = Self::import_dx12(copied_frame, ctx)?;
+        let imported = Self::import_dx12(frame, ctx)?;
         let cache_flush_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("weld-cef-dx12-cache-flush"),
             size: wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64,
             usage: wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("weld-cef-dx12-cache-flush"),
-        });
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("weld-cef-dx12-cache-flush"),
+            });
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &imported.texture,
@@ -267,6 +293,19 @@ impl WgpuTextureImporter {
                 ImportError::Hal(format!("waiting for D3D12 cache flush failed: {err}"))
             })?;
         Ok(imported)
+    }
+
+    /// Compatibility path for hosts that want Weld to both copy and import.
+    /// New neutral surface-engine hosts call
+    /// [`copy_dx12_callback_frame_to_owned`](Self::copy_dx12_callback_frame_to_owned)
+    /// in the callback, then import the transferred handle themselves.
+    pub fn copy_dx12_callback_frame(
+        frame: Dx12SharedTexture,
+        ctx: &HostWgpuContext,
+        copier: &D3d11CallbackFrameCopier,
+    ) -> Result<ImportedTexture, ImportError> {
+        let frame = Self::copy_dx12_callback_frame_to_owned(frame, copier)?;
+        Self::import_owned_dx12_callback_frame(frame, ctx)
     }
 }
 

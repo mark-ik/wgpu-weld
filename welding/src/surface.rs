@@ -960,6 +960,9 @@ pub struct EventModifiers {
 pub struct TouchInput {
     /// A non-negative contact id. Distinct live contacts need distinct ids.
     pub id: i32,
+    /// CEF routes touch and pen contacts through the same event API but needs
+    /// the Pointer Events device kind to preserve DOM `pointerType`.
+    pub device: ContactDevice,
     pub x: f32,
     pub y: f32,
     pub radius_x: f32,
@@ -971,6 +974,12 @@ pub struct TouchInput {
     pub pressure: f32,
     pub phase: TouchPhase,
     pub modifiers: EventModifiers,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContactDevice {
+    Touch,
+    Pen,
 }
 
 /// The stage of a direct touch contact.

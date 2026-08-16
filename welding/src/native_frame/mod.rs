@@ -120,7 +120,7 @@ impl NativeFrame {
 }
 
 // Windows
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct Dx12SharedTexture {
     /// Owned Win32 `HANDLE` to a shared D3D texture.
     ///
@@ -134,6 +134,33 @@ pub struct Dx12SharedTexture {
 }
 
 unsafe impl Send for Dx12SharedTexture {}
+
+impl Dx12SharedTexture {
+    /// Relinquish this frame's owned handle to a host that imports through a
+    /// different GPU boundary. The receiving host must call `CloseHandle`
+    /// after `OpenSharedHandle` succeeds or fails.
+    pub fn into_raw_handle(self) -> *mut std::os::raw::c_void {
+        let frame = std::mem::ManuallyDrop::new(self);
+        frame.handle
+    }
+}
+
+/// A CEF callback frame owns the duplicate shared handle returned by the
+/// callback copier. Keeping that ownership on the frame closes dropped
+/// mailbox replacements instead of leaking one Win32 handle per paint.
+#[cfg(windows)]
+impl Drop for Dx12SharedTexture {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe {
+                let _ = windows::Win32::Foundation::CloseHandle(
+                    windows::Win32::Foundation::HANDLE(self.handle),
+                );
+            }
+            self.handle = std::ptr::null_mut();
+        }
+    }
+}
 
 // macOS
 #[derive(Clone, Copy, Debug)]

@@ -187,6 +187,7 @@ impl ScriptedInput {
         for (phase, pressure) in [(TouchPhase::Started, 1.0), (TouchPhase::Ended, 0.0)] {
             if let Err(e) = producer.send_touch_input(TouchInput {
                 id: 1,
+                device: welding::ContactDevice::Touch,
                 x: x as f32,
                 y: y as f32,
                 radius_x: 8.0,

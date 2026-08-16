@@ -5,8 +5,8 @@ use cef::{ImplBrowserHost, ImplDragData};
 use crate::{
     WeldError,
     surface::{
-        DragEventKind, DragFile, DragInput, DragOperations, DragPayload, EventModifiers,
-        TouchInput, TouchPhase,
+        ContactDevice, DragEventKind, DragFile, DragInput, DragOperations, DragPayload,
+        EventModifiers, TouchInput, TouchPhase,
     },
 };
 
@@ -65,7 +65,10 @@ pub(crate) fn send_touch(host: &cef::BrowserHost, event: TouchInput, scale: f32)
         pressure: event.pressure.clamp(0.0, 1.0),
         type_: phase,
         modifiers: modifiers(event.modifiers),
-        pointer_type: cef::PointerType::TOUCH,
+        pointer_type: match event.device {
+            ContactDevice::Touch => cef::PointerType::TOUCH,
+            ContactDevice::Pen => cef::PointerType::PEN,
+        },
     };
     host.send_touch_event(Some(&event));
 }

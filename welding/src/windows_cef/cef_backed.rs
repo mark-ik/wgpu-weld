@@ -108,9 +108,8 @@ cef::wrap_render_handler! {
                     format,
                     generation,
                 };
-            match WgpuTextureImporter::copy_dx12_callback_frame(
+            match WgpuTextureImporter::copy_dx12_callback_frame_to_owned(
                 frame,
-                &self.handler.host_ctx,
                 &self.handler.callback_copier,
             ) {
                 Ok(frame) => {
@@ -265,6 +264,13 @@ cef::wrap_life_span_handler! {
             let browser_id = browser.identifier();
             *self.state.browser.lock().unwrap() = Some(browser.clone());
             self.state.browser_id.store(browser_id, Ordering::Release);
+            if let Some(host) = browser.host() {
+                host.was_hidden(if self.state.visible.load(Ordering::Acquire) {
+                    0
+                } else {
+                    1
+                });
+            }
             if self.state.close_requested.load(Ordering::Acquire) {
                 if let Some(host) = browser.host() {
                     host.close_browser(1);
@@ -751,7 +757,8 @@ cef::wrap_download_handler! {
 /// CEF hands strings back as `CefStringUserfree`, which is empty when unset.
 fn cef_string(s: cef::CefStringUserfree) -> String {
     let raw: Option<&cef::sys::_cef_string_utf16_t> = (&s).into();
-    raw.map(|r| cef::CefStringUtf16::from(*r).to_string()).unwrap_or_default()
+    raw.map(|r| cef::CefStringUtf16::from(*r).to_string())
+        .unwrap_or_default()
 }
 
 impl WeldDownloadHandler {
