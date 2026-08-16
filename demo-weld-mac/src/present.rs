@@ -103,7 +103,8 @@ pub(crate) fn render(s: &mut DemoState) {
     }
 
     s.host_ctx.queue.submit([enc.finish()]);
-    output.present();
+            // wgpu 30 moved presentation from SurfaceTexture to Queue.
+            s.host_ctx.queue.present(output);
     s.window.request_redraw();
 }
 

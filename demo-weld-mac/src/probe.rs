@@ -77,7 +77,7 @@ pub fn sample(
         })
         .map_err(|err| format!("poll while mapping readback failed: {err}"))?;
 
-    let data = slice.get_mapped_range();
+    let data = slice.get_mapped_range().expect("map range");
     let non_zero_bytes = data.iter().filter(|b| **b != 0).count();
     let first_pixels = data
         .chunks_exact(4)

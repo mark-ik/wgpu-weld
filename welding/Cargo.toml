@@ -10,7 +10,7 @@ categories = ["rendering", "web-programming", "multimedia"]
 readme = "README.md"
 
 [features]
-default = ["wgpu-29"]
+default = ["wgpu-30"]
 # Pick the row matching the host's wgpu. The newest enabled row wins when
 # features unify, so --all-features remains useful.
 wgpu-30 = ["dep:wgpu_30", "dep:wgpu_hal_30", "grafting/wgpu-30"]

@@ -666,7 +666,7 @@ dependencies = [
  "pollster",
  "raw-window-handle",
  "welding",
- "wgpu 29.0.3",
+ "wgpu 30.0.0",
  "winit",
 ]
 
@@ -680,7 +680,7 @@ dependencies = [
  "pollster",
  "semver",
  "welding",
- "wgpu 29.0.3",
+ "wgpu 30.0.0",
  "winit",
 ]
 
@@ -693,7 +693,7 @@ dependencies = [
  "pollster",
  "raw-window-handle",
  "welding",
- "wgpu 29.0.3",
+ "wgpu 30.0.0",
  "winit",
 ]
 

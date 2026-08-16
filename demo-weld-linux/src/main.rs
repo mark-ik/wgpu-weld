@@ -116,6 +116,8 @@ impl ApplicationHandler for DemoApp {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: Some(&surface),
                     force_fallback_adapter: false,
+                    // wgpu 30 limit bucketing, off to keep the adapter's real limits.
+                    apply_limit_buckets: false,
                 })
                 .await
                 .expect("no suitable wgpu Vulkan adapter");
@@ -144,6 +146,8 @@ impl ApplicationHandler for DemoApp {
                 width: sz.width.max(1),
                 height: sz.height.max(1),
                 present_mode: wgpu::PresentMode::AutoVsync,
+                // wgpu 30 made surface color space explicit; Auto keeps pre-30 behavior.
+                color_space: wgpu::SurfaceColorSpace::Auto,
                 alpha_mode: wgpu::CompositeAlphaMode::Auto,
                 view_formats: vec![],
                 desired_maximum_frame_latency: 2,
@@ -661,7 +665,8 @@ impl ApplicationHandler for DemoApp {
                 }
 
                 s.host_ctx.queue.submit([enc.finish()]);
-                output.present();
+            // wgpu 30 moved presentation from SurfaceTexture to Queue.
+            s.host_ctx.queue.present(output);
                 s.window.request_redraw();
             }
 
