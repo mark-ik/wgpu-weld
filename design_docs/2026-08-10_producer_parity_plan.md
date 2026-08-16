@@ -476,6 +476,48 @@ paint, and the animating IME probe page paints forever. That filled the
 ThinkPad's 7.5G tmpfs and took the run down with it. The error is rate-limited
 now (first, then every 500th).
 
+## Headed GPU-import receipts, 2026-08-13
+
+Taken on the `agent/w8-hardware-tail` code (HEAD `1269462`), against the
+animating probe page so the import path runs continuously rather than once.
+These are the live foreign-texture receipts the matrix and unit tests cannot
+give.
+
+| path | machine | result |
+| --- | --- | --- |
+| DX12 shared texture -> wgpu | Windows 11, this laptop | **1632 frames imported**, first `1280x800 Bgra8Unorm`, no `acquire_frame` failures |
+| IOSurface -> MTLTexture -> wgpu | Intel iMac, macOS 15.7.7 | **1541 frames imported**, `VALIDATION PASS: the IOSurface carried real pixels` |
+| DMA-BUF -> Vulkan external memory | ThinkPad, AMD Renoir/RADV | **0 imported, by design**: `DRM_FORMAT_MOD_INVALID` refused with the typed error, 3 refusals, `LoadEnd` control passing |
+
+The macOS receipt is the strongest of the three because it reads the imported
+texture back and asserts real pixels; the Windows one proves a live import
+stream but has no readback. The Linux row is a *negative* receipt and the only
+one available on this hardware: a successful DMA-BUF import needs Intel/Mesa,
+which supplies an explicit modifier. Apple Silicon was asleep and is not
+claimed here — the Metal receipt above is Intel.
+
+Two measurement failures on the way, both worth recording because both produced
+a plausible wrong reading:
+
+- The first Linux run reported "0 frames imported" and I nearly filed it as the
+  expected RADV refusal. It was not: `LD_LIBRARY_PATH` pointed at a
+  `cef_linux*` directory chosen by `find ... | head -1` that held no
+  `libcef.so`, and the binary never started. The refusal line was absent
+  because nothing ran, and the run before it had been truncated before being
+  read. The corrected run has a `LoadEnd` control precisely so an absence can
+  be told apart from a non-start.
+- The CEF runtime layout on this branch puts `libcef.so`, `icudtl.dat`,
+  `locales` and `resources.pak` directly in `target/debug`, not in a
+  `cef_linux*` subdirectory. Any script carrying the old path silently produces
+  a dead binary.
+
+**The demos cannot produce a wgpu-28 or wgpu-30 receipt.** `welding` compiles
+against all three rows, but the demos are written against wgpu 29 only: flipping
+the workspace to 30 fails them on `RequestAdapterOptions::apply_limit_buckets`,
+`SurfaceConfiguration::color_space` and `SurfaceTexture::present`. So the 28 and
+30 rows are compile-verified and configuration-tested, and *not* live-verified.
+Closing that needs the demos ported, which is its own job.
+
 ## Plan
 
 ### W: welding phases, in bite order
