@@ -15,11 +15,17 @@ features. Pick the row matching the host, with default features disabled for
 28 or 30. `welding::wgpu` re-exports the selected version so public device and
 texture types cannot silently come from a different major.
 
+Every row compiles and is covered by the configuration tests, but the live
+GPU-import receipts below were taken on the **default 29 row**: the bundled
+demos are written against wgpu 29's surface API, so they cannot currently
+exercise 28 or 30 end to end on hardware. Treat those two rows as
+compile-verified rather than hardware-verified.
+
 **Made with AI**
 
 ## State, 2026-08-14
 
-Version 0.9.0 is the published baseline; the W8-tail work below is not yet
+Version 0.10.0 is the published baseline; the W8-tail work below is not yet
 released. Every "verified" below was checked by running it on that
 platform's hardware, in one battery per machine: Windows 11 (this laptop),
 macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac (the
