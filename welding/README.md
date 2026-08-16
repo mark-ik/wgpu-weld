@@ -10,6 +10,11 @@ has, its sibling [`scrying`](https://crates.io/crates/scrying) covers that lane;
 [`grafting`](https://crates.io/crates/grafting) is the texture-interop core both
 of them import through.
 
+The crate defaults to wgpu 29 and also carries `wgpu-28` and `wgpu-30`
+features. Pick the row matching the host, with default features disabled for
+28 or 30. `welding::wgpu` re-exports the selected version so public device and
+texture types cannot silently come from a different major.
+
 **Made with AI**
 
 ## State, 2026-08-14

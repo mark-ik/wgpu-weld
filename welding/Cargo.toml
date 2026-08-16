@@ -10,7 +10,18 @@ categories = ["rendering", "web-programming", "multimedia"]
 readme = "README.md"
 
 [features]
-default = []
+default = ["wgpu-29"]
+# Pick the row matching the host's wgpu. The newest enabled row wins when
+# features unify, so --all-features remains useful.
+wgpu-30 = ["dep:wgpu_30", "dep:wgpu_hal_30", "grafting/wgpu-30"]
+wgpu-29 = ["dep:wgpu_29", "dep:wgpu_hal_29", "grafting/wgpu-29"]
+wgpu-28 = [
+    "dep:wgpu_28",
+    "dep:wgpu_hal_28",
+    "dep:metal",
+    "dep:foreign-types-shared",
+    "grafting/wgpu-28",
+]
 # Real CEF integration via the `cef`/`cef-dll-sys` crate family.
 # Enables the `cef` crate (which downloads / links libcef at build time via
 # cef-dll-sys) and activates working implementations of CefRuntime and the
@@ -25,8 +36,12 @@ cpu-paint-fallback = []
 dpi.workspace = true
 log = "0.4"
 thiserror = "2.0.17"
-wgpu = { workspace = true, features = ["metal"] }
-wgpu-hal = "29.0"
+wgpu_30 = { package = "wgpu", version = "30.0.0", features = ["metal"], optional = true }
+wgpu_hal_30 = { package = "wgpu-hal", version = "30.0.0", optional = true }
+wgpu_29 = { package = "wgpu", version = "29.0.1", features = ["metal"], optional = true }
+wgpu_hal_29 = { package = "wgpu-hal", version = "29.0.1", optional = true }
+wgpu_28 = { package = "wgpu", version = "28.0.0", features = ["metal"], optional = true }
+wgpu_hal_28 = { package = "wgpu-hal", version = "28.0.0", optional = true }
 # CEF ABI layer: generated bindings + wrap_* handler macros + typed
 # AcceleratedPaintInfo. Only active under the `cef-runtime` feature.
 cef = { version = "148", features = ["accelerated_osr"], optional = true }
@@ -38,10 +53,9 @@ serde_json = { version = "1", optional = true }
 # import (OpenSharedHandle -> wgpu) to grafting instead of duplicating it; the
 # CEF-specific callback copy + cache-flush stay in welding. Windows-only: it backs
 # `native_frame::dx12` alone, and the Metal / DMABUF arms import through wgpu-hal
-# directly. `default-features = false` drops grafting's GL producer path
-# (surfman/glow); `wgpu-29` matches welding's wgpu so the imported texture shares
-# one device.
-grafting = { version = "0.5", default-features = false, features = ["wgpu-29"] }
+# directly. The welding wgpu-* feature forwards the matching grafting row;
+# `default-features = false` drops grafting's GL producer path (surfman/glow).
+grafting = { version = "0.5", default-features = false }
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
@@ -54,6 +68,10 @@ windows = { version = "0.62", features = [
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# wgpu-hal 28 exposes metal-rs handles; 29/30 expose objc2-metal handles. The
+# importer converts only at the HAL boundary.
+metal = { version = "0.33.0", optional = true }
+foreign-types-shared = { version = "0.3.1", optional = true }
 objc2 = "0.6.3"
 objc2-foundation = "0.3.2"
 objc2-io-surface = "0.3.2"

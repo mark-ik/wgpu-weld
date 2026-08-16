@@ -154,47 +154,48 @@ pub(super) fn import_vulkan(
         };
 
         let vk_device_for_drop = vk_device.clone();
-        let imported = ctx
-            .device
-            .create_texture_from_hal::<wgpu::wgc::api::Vulkan>(
-                hal_device.texture_from_raw(
-                    vulkan_image,
-                    &wgpu_hal::TextureDescriptor {
-                        label: Some("welding-cef-dmabuf-vulkan-import"),
-                        size: wgpu::Extent3d {
-                            width: frame_size.width,
-                            height: frame_size.height,
-                            depth_or_array_layers: 1,
-                        },
-                        format: frame_format,
-                        dimension: wgpu::TextureDimension::D2,
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        usage: wgpu::TextureUses::RESOURCE,
-                        view_formats: Vec::new(),
-                        memory_flags: wgpu_hal::MemoryFlags::empty(),
-                    },
-                    Some(Box::new(move || {
-                        vk_device_for_drop.destroy_image(vulkan_image, None);
-                        vk_device_for_drop.free_memory(memory, None);
-                    })),
-                    wgpu_hal::vulkan::TextureMemory::External,
-                ),
-                &wgpu::TextureDescriptor {
+        let imported = crate::wgpu_compat::create_texture_from_hal::<wgpu::wgc::api::Vulkan>(
+            &ctx.device,
+            hal_device.texture_from_raw(
+                vulkan_image,
+                &wgpu_hal::TextureDescriptor {
                     label: Some("welding-cef-dmabuf-vulkan-import"),
                     size: wgpu::Extent3d {
                         width: frame_size.width,
                         height: frame_size.height,
                         depth_or_array_layers: 1,
                     },
+                    format: frame_format,
+                    dimension: wgpu::TextureDimension::D2,
                     mip_level_count: 1,
                     sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: frame_format,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
+                    usage: wgpu::TextureUses::RESOURCE,
+                    view_formats: Vec::new(),
+                    memory_flags: wgpu_hal::MemoryFlags::empty(),
                 },
-            );
+                Some(Box::new(move || {
+                    vk_device_for_drop.destroy_image(vulkan_image, None);
+                    vk_device_for_drop.free_memory(memory, None);
+                })),
+                wgpu_hal::vulkan::TextureMemory::External,
+            ),
+            &wgpu::TextureDescriptor {
+                label: Some("welding-cef-dmabuf-vulkan-import"),
+                size: wgpu::Extent3d {
+                    width: frame_size.width,
+                    height: frame_size.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: frame_format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            // The locally created image has not left UNDEFINED layout.
+            wgpu::TextureUses::UNINITIALIZED,
+        );
 
         let view = imported.create_view(&wgpu::TextureViewDescriptor::default());
         Ok(ImportedTexture {

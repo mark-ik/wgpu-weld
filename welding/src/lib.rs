@@ -1,9 +1,42 @@
 #![doc = include_str!("../README.md")]
 
+// Alias the feature-selected wgpu family back to the plain crate names. Public
+// re-exports let hosts name the exact Device/Texture types welding expects.
+#[cfg(feature = "wgpu-30")]
+pub extern crate wgpu_30 as wgpu;
+#[cfg(feature = "wgpu-30")]
+pub extern crate wgpu_hal_30 as wgpu_hal;
+
+#[cfg(all(feature = "wgpu-29", not(feature = "wgpu-30")))]
+pub extern crate wgpu_29 as wgpu;
+#[cfg(all(feature = "wgpu-29", not(feature = "wgpu-30")))]
+pub extern crate wgpu_hal_29 as wgpu_hal;
+
+#[cfg(all(
+    feature = "wgpu-28",
+    not(feature = "wgpu-29"),
+    not(feature = "wgpu-30")
+))]
+pub extern crate wgpu_28 as wgpu;
+#[cfg(all(
+    feature = "wgpu-28",
+    not(feature = "wgpu-29"),
+    not(feature = "wgpu-30")
+))]
+pub extern crate wgpu_hal_28 as wgpu_hal;
+
+#[cfg(not(any(feature = "wgpu-28", feature = "wgpu-29", feature = "wgpu-30")))]
+compile_error!(
+    "welding needs one wgpu version feature: enable `wgpu-29` (default), `wgpu-30`, or `wgpu-28`"
+);
+
 pub mod error;
 pub mod native_frame;
 pub mod runtime;
 pub mod surface;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod wgpu_compat;
 
 // Only the producers consume this, and they are cef-runtime-only. The logic is
 // worth unit-testing either way, so allow rather than cfg the module out.

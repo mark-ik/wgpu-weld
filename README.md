@@ -112,6 +112,16 @@ govern every consumer (details in [`welding/README.md`](welding/README.md)):
 3. CEF is not a system library: ship libcef with the app and point
    `CEF_PATH` at a CEF 148 binary distribution.
 
+The library defaults to wgpu 29 and also carries `wgpu-28` and `wgpu-30`.
+Select 28 or 30 with default features disabled; combine `cef-runtime` with
+the same feature list when building the real Chromium integration.
+
+```toml
+[dependencies]
+welding = { git = "https://github.com/merely-made/wgpu-weld" }
+welding = { git = "https://github.com/merely-made/wgpu-weld", default-features = false, features = ["wgpu-30"] }
+```
+
 ```sh
 cargo check -p welding                          # no CEF needed
 cargo check -p welding --features cef-runtime   # real integration
