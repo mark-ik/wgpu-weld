@@ -15,7 +15,7 @@ weld's seen the first release of the stack.
 
 3) I have a prototype browser in my stack called turnstone. I would like users
 to be able to switch between servo, chromium, the system webview, and the nascent 
-native genet web engine, provided they are willing to deal with the size.
+native genet web engine, which will offer static->scripted->fullweb render tiers.
 The real advantage is being able to choose the right engine for your platform!
 
 4) A big thing I'm pursuing is a unified wgpu device: same version, 
