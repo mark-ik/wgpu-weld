@@ -421,6 +421,12 @@ impl ApplicationHandler for DemoApp {
                     .is_some_and(|timeout_at| Instant::now() >= timeout_at)
                 {
                     log::info!("gracefully closing after configured timeout");
+                    // Report here too, as demo-weld-mac does. Without it a run
+                    // that times out waiting for frames which never arrive
+                    // says nothing about the frames it did import, and a
+                    // report taken long after the last paint is exactly what
+                    // tells a decayed buffer from a fresh one.
+                    report(s);
                     let _ = s.producer.close();
                     el.exit();
                     return;

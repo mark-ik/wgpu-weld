@@ -23,7 +23,7 @@ How far each row has been taken:
 
 | row | evidence |
 | --- | --- |
-| `wgpu-30` (default) | live GPU-import receipts on all three paths — DX12 1578 frames, Metal on Apple Silicon `VALIDATION PASS` with a 16384/16384 non-zero probe, DMA-BUF refusing as designed on RADV |
+| `wgpu-30` (default) | live GPU-import receipts on all three paths — DX12 1578 frames, Metal on Apple Silicon `VALIDATION PASS` with a 16384/16384 non-zero probe, DMA-BUF on AMD/RADV the same 16384/16384 plus a whole-texture dump |
 | `wgpu-29` | live receipts on all three paths, taken before the default flip |
 | `wgpu-28` | compiles and passes the configuration tests; **not** exercised on hardware |
 
@@ -87,15 +87,26 @@ outside that callback, then retry `try_new_with_prepared_profile` until it
 returns the producer. Calling CEF's pump inside winit re-enters AppKit and
 aborts the process.
 
-[^linux]: Linux needs the DMABUF buffer to carry an **explicit** DRM format
-modifier. Intel/Mesa supplies one, and the frame import is verified there;
-AMD/RADV hands over `DRM_FORMAT_MOD_INVALID`, and importing that needs
-`VK_EXT_image_drm_format_modifier` enabled on the wgpu device, which wgpu does
-not do. `welding` refuses such a buffer with a typed error naming the situation
-rather than producing a broken texture. This is why the popup row reads
-"opens": on the AMD test machine CEF offers the dropdown and reports its
-geometry (`on_popup_show`, then `on_popup_size 320x197 at 0,80`), and only the
-texture import is refused, by the same modifier limitation.
+[^linux]: Linux needs the DMABUF buffer to carry a DRM format modifier.
+Intel/Mesa supplies an explicit one and the frame import is verified there.
+AMD/RADV hands over `DRM_FORMAT_MOD_INVALID` instead, and importing that needs
+`VK_EXT_image_drm_format_modifier` on the wgpu device.
+
+**Which row you are on decides what happens.** wgpu enables that extension from
+**30** onward and exposes it as `VULKAN_EXTERNAL_MEMORY_DMA_BUF`; wgpu 28 and
+29 have no such feature. So on `wgpu-30`, a host that requests the feature gets
+the buffer imported as `DRM_FORMAT_MOD_LINEAR`, verified on RADV by dumping the
+whole imported texture rather than counting non-zero bytes, which a
+wrongly-tiled buffer would also pass. On `wgpu-28` and `wgpu-29`, `welding`
+still refuses such a buffer with a typed error naming the situation rather than
+producing a broken texture.
+
+The popup row reads "opens" because it was measured on the AMD machine while
+that refusal was still in force: CEF offered the dropdown and reported its
+geometry (`on_popup_show`, then `on_popup_size 320x197 at 0,80`) while the
+texture import was refused. Popup import has not been re-measured since the
+`wgpu-30` path started importing, so treat that row as untested rather than as
+a known limit.
 
 [^zoomlevel]: `zoom` works everywhere. `zoom_level`, the getter, only reads
 truly where the host thread is CEF's UI thread — Linux and macOS here. CEF
