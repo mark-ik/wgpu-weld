@@ -29,14 +29,17 @@ How far each row has been taken:
 
 **Made with AI**
 
-## State, 2026-08-14
+## State, 2026-08-17
 
-Version 0.11.0 is the published baseline; the W8-tail work below is not yet
-released. Every "verified" below was checked by running it on that
-platform's hardware, in one battery per machine: Windows 11 (this laptop),
-macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac (the
-first arm64 run, at a native 2x scale factor), and Fedora on a ThinkPad
-(AMD Renoir/RADV).
+Version 0.12.0 is the published baseline, and it is the first one where
+accelerated GPU import works on **every** desktop platform. Linux had only
+ever worked on Intel/Mesa; AMD/RADV was refused with a typed error until
+0.12.0, for reasons the `[^linux]` note below explains.
+
+Every "verified" here was checked by running it on that platform's hardware,
+in one battery per machine: Windows 11 (this laptop), macOS 15.7 on an Intel
+iMac, macOS 26.5 on an Apple Silicon M4 iMac (at a native 2x scale factor),
+and Fedora 44 on a ThinkPad (AMD Renoir/RADV, Mesa 26.1.5).
 
 | | Windows | macOS | Linux |
 | --- | --- | --- | --- |
