@@ -157,16 +157,27 @@ pub fn dump_ppm(
         })
         .map_err(|err| format!("poll while mapping dump failed: {err}"))?;
 
+    // CEF's imported frames are always BGRA, but a swapchain may be either,
+    // and this is also used on swapchain images. PPM wants RGB.
+    let swap_bgr = matches!(
+        texture.format(),
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    );
+
     let data = slice.get_mapped_range().expect("map range");
     let mut out = Vec::with_capacity((width * height * 3) as usize + 32);
     out.extend_from_slice(format!("P6\n{width} {height}\n255\n").as_bytes());
     for row in 0..height {
         let start = (row * padded) as usize;
         for px in data[start..start + unpadded as usize].chunks_exact(4) {
-            // CEF hands over BGRA; PPM wants RGB.
-            out.push(px[2]);
-            out.push(px[1]);
-            out.push(px[0]);
+            let (r, g, b) = if swap_bgr {
+                (px[2], px[1], px[0])
+            } else {
+                (px[0], px[1], px[2])
+            };
+            out.push(r);
+            out.push(g);
+            out.push(b);
         }
     }
     drop(data);

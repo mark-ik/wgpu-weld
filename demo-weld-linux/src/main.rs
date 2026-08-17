@@ -36,6 +36,27 @@
 //! tiling bug: on example.com frame 1 gave 12160/16384 bytes non-zero starting
 //! with black, and frame 2 gave 16384/16384 starting with `[238,238,238,255]`,
 //! which is `#EEEEEE`, the real background.
+//!
+//! # When the window looks wrong but the texture is right
+//!
+//! `WELD_PRESENT_DUMP=<path.ppm>` copies the **swapchain** out just before
+//! presenting, once, after `WELD_PRESENT_DUMP_AFTER_SECS` (default 8). It
+//! needs `COPY_SRC` on the surface, which is requested only when the variable
+//! is set.
+//!
+//! Keep the three instruments distinct, because they answer different
+//! questions and confusing them wastes hours:
+//!
+//! | instrument | answers |
+//! | --- | --- |
+//! | `WELD_TEXTURE_DUMP` | what CEF handed over |
+//! | `WELD_PRESENT_DUMP` | what this application drew |
+//! | a screen capture | what the compositor chose to show |
+//!
+//! On a Wayland session the third is not measurable over SSH at all:
+//! `ffmpeg -f x11grab -i :0.0` returns black whatever is on screen, because
+//! Wayland surfaces are not in the X root window. Put a known-visible window
+//! up as a positive control before believing any such capture.
 
 use std::{
     sync::Arc,
@@ -92,6 +113,16 @@ struct DemoState {
     cdp_ticks: u32,
     snapshot_requested: bool,
     snapshot_path: Option<std::path::PathBuf>,
+    /// `WELD_PRESENT_DUMP=<path.ppm>`: copy the swapchain out just before
+    /// presenting it, once, after `present_dump_at`.
+    ///
+    /// This answers a question neither of the other instruments can. The
+    /// texture dump shows what CEF handed over, and a screen capture shows
+    /// what the compositor chose to show, which on Xwayland is a black root
+    /// window whatever is really on screen. This shows what the render pass
+    /// actually produced, and needs nobody's cooperation.
+    present_dump: Option<std::path::PathBuf>,
+    present_dump_at: Instant,
     import_errors: u64,
     scripted: scripted::ScriptedInput,
     /// Cached popup widget surface, held across frames because CEF only
@@ -178,8 +209,23 @@ impl ApplicationHandler for DemoApp {
                 .find(|f| f.is_srgb())
                 .unwrap_or(caps.formats[0]);
             let sz = window.inner_size();
+            // WELD_PRESENT_DUMP needs to copy the swapchain image out, which
+            // needs COPY_SRC on it. Only ask when the dump is wanted, and only
+            // when the surface offers it, so the ordinary path configures
+            // exactly as it always did.
+            let mut usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
+            if std::env::var_os("WELD_PRESENT_DUMP").is_some() {
+                if caps.usages.contains(wgpu::TextureUsages::COPY_SRC) {
+                    usage |= wgpu::TextureUsages::COPY_SRC;
+                } else {
+                    log::error!(
+                        "WELD_PRESENT_DUMP set but this surface does not support COPY_SRC; \
+                         the dump will be skipped"
+                    );
+                }
+            }
             let cfg = wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                usage,
                 format: fmt,
                 width: sz.width.max(1),
                 height: sz.height.max(1),
@@ -266,6 +312,16 @@ impl ApplicationHandler for DemoApp {
             cdp_ticks: 0,
             snapshot_requested: false,
             snapshot_path: std::env::var_os("WELD_SNAPSHOT").map(Into::into),
+            present_dump: std::env::var_os("WELD_PRESENT_DUMP").map(Into::into),
+            // Default late enough to be well past the last paint of a static
+            // page, since the steady state is the interesting one.
+            present_dump_at: Instant::now()
+                + Duration::from_secs(
+                    std::env::var("WELD_PRESENT_DUMP_AFTER_SECS")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(8),
+                ),
             import_errors: 0,
             scripted: scripted::ScriptedInput::from_env(),
             popup: None,
@@ -709,6 +765,29 @@ impl ApplicationHandler for DemoApp {
                 }
 
                 s.host_ctx.queue.submit([enc.finish()]);
+
+                // Read the swapchain back before it goes to the compositor.
+                // Whatever is in here is what the render pass produced, so a
+                // black image means the blit failed and a page means it did
+                // not, with no compositor or screen-capture in the path.
+                if s.present_dump.is_some() && Instant::now() >= s.present_dump_at {
+                    let path = s.present_dump.take().expect("checked is_some");
+                    match probe::dump_ppm(
+                        &s.host_ctx.device,
+                        &s.host_ctx.queue,
+                        &output.texture,
+                        &path.to_string_lossy(),
+                    ) {
+                        Ok(()) => log::info!(
+                            "present dump -> {} ({} frame(s) imported, holding a frame: {})",
+                            path.display(),
+                            s.frames_imported,
+                            s.frame.is_some()
+                        ),
+                        Err(e) => log::error!("present dump failed: {e}"),
+                    }
+                }
+
             // wgpu 30 moved presentation from SurfaceTexture to Queue.
             s.host_ctx.queue.present(output);
                 s.window.request_redraw();
