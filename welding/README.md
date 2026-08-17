@@ -53,7 +53,7 @@ and Fedora 44 on a ThinkPad (AMD Renoir/RADV, Mesa 26.1.5).
 | Cookies (read, write, delete) | verified | verified | verified |
 | Script results (JS value back) | verified | verified | verified |
 | Chromium command-line switches | verified | verified | verified |
-| Popup widgets (`<select>`) | verified | **differs by macOS** [^macpopup] | opens, import blocked [^linux] |
+| Popup widgets (`<select>`) | verified | **differs by macOS** [^macpopup] | opens, import untested [^linux] |
 | Renderer crash recovery | verified | verified | event not delivered [^linuxcrash] |
 | Visibility (`set_visible`) | verified | verified | wired |
 | DevTools window | verified | **crashes CEF** [^macdevtools] | no crash, no window seen |

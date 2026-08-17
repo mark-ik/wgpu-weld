@@ -38,12 +38,18 @@ content inside its own pipeline. It is the CEF sibling of
 and [`wgpu-graft`](https://github.com/merely-made/wgpu-graft) (Servo, plus
 the shared `grafting` interop core).
 
-## Status (2026-08-12)
+## Status (2026-08-17)
 
-Prototype. `welding` 0.9.0 in this repo, 0.8.0 published on crates.io
-(MPL-2.0). Per-platform detail, and
-the difference between "verified on that hardware" and "implemented but not
-yet run there", is the table in [`welding/README.md`](welding/README.md).
+Prototype. `welding` 0.12.0, published on crates.io (MPL-2.0). Per-platform
+detail, and the difference between "verified on that hardware" and
+"implemented but not yet run there", is the table in
+[`welding/README.md`](welding/README.md).
+
+0.12.0 is the first release where accelerated GPU import works on every
+desktop platform reachable for testing. Linux had only ever worked on
+Intel/Mesa; AMD/RADV was refused until wgpu 30 supplied the extension that
+case needs. NVIDIA's proprietary driver and Wayland-native remain outside the
+CEF path.
 
 A parity battery was run on all three platforms on 2026-08-12 (Windows 11,
 macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac, Fedora
@@ -68,19 +74,22 @@ call before any CEF code runs.
 
 - All three platform import lanes are hardware-verified: Windows (D3D11
   copy, D3D12 shared handle via the `grafting` crate, into wgpu), Linux
-  (DMABUF via Vulkan external memory, Fedora 44 + Intel/Mesa), macOS
-  (IOSurface via Metal, closed 2026-08-10). The Linux import needs an
-  explicit DRM format modifier: Intel/Mesa supplies one, AMD/RADV does not,
-  and that case is refused with a typed error pending wgpu enabling
-  `VK_EXT_image_drm_format_modifier`.
+  (DMABUF via Vulkan external memory, Fedora 44 on Intel/Mesa and on AMD
+  Renoir/RADV), macOS (IOSurface via Metal, on both Intel and Apple Silicon).
+  Linux needs a DRM format modifier to import. Intel/Mesa supplies an explicit
+  one; AMD/RADV supplies `DRM_FORMAT_MOD_INVALID` instead, and importing that
+  needs `VK_EXT_image_drm_format_modifier`, which wgpu enables from 30 on. So
+  the `wgpu-30` row imports it as linear, and the `wgpu-29` and `wgpu-28` rows
+  still refuse with a typed error.
 - The capability probe reports honestly as of the 2026-08-10 truth pass: a
   unit test pins every "Supported" claim to a real handler.
 - Popup widget surfaces (`<select>` dropdowns and similar) render via a
   separate `acquire_popup` surface: verified on Windows and on macOS 26
   (Apple Silicon). On macOS 15.7 (Intel) Chromium used a native menu and no
   popup was ever delivered, so the behaviour differs by macOS generation. On
-  Linux the dropdown opens and reports its geometry, and only the texture
-  import is refused, by the AMD/RADV modifier limitation above.
+  Linux the dropdown opens and reports its geometry; its texture import has
+  not been re-measured since the AMD fix landed, so treat that as untested
+  rather than as a known limit.
 - HiDPI is honoured (`scale_factor` plus a live `set_scale_factor`): sizes and
   coordinates stay physical, and CEF is told how many make one CSS pixel.
   Verified on all three by forcing a 2x scale on a 1x panel and having the page
@@ -120,8 +129,7 @@ landed. W7 is done bar one row: downloads, permission requests, and context
 menus are verified on all three platforms; `GetAuthCredentials` is wired and
 answerable but CEF has never been observed to call it. W8's code is complete:
 host/page drag-drop, direct touch, PNG snapshots, and one CEF `RequestContext`
-per producer have Windows receipts; macOS and Linux share the implementations
-but still need their hardware passes. System printing reaches CEF's native
+per producer are verified on all three. System printing reaches CEF's native
 dialog on Windows, is wired on macOS, and explicitly reports unavailable on
 Linux, where CEF requires an embedder-owned printer UI and spooler. W9, the
 Chrome DevTools Protocol, is done and verified on all three: its unwrapped JSON wire format lets
@@ -141,14 +149,18 @@ govern every consumer (details in [`welding/README.md`](welding/README.md)):
 3. CEF is not a system library: ship libcef with the app and point
    `CEF_PATH` at a CEF 148 binary distribution.
 
-The library defaults to wgpu 29 and also carries `wgpu-28` and `wgpu-30`.
-Select 28 or 30 with default features disabled; combine `cef-runtime` with
-the same feature list when building the real Chromium integration.
+The library defaults to wgpu 30 and also carries `wgpu-29` and `wgpu-28`.
+Select 29 or 28 with default features disabled; combine `cef-runtime` with
+the same feature list when building the real Chromium integration. The
+default row changed from 29 to 30 in 0.11.0, so a consumer taking default
+features moves major with it.
 
 ```toml
 [dependencies]
-welding = { git = "https://github.com/merely-made/wgpu-weld" }
-welding = { git = "https://github.com/merely-made/wgpu-weld", default-features = false, features = ["wgpu-30"] }
+welding = "0.12"
+
+# or pin an older row:
+# welding = { version = "0.12", default-features = false, features = ["wgpu-29"] }
 ```
 
 ```sh
@@ -169,5 +181,4 @@ MPL-2.0 ([LICENSE](LICENSE)).
 
 ---
 
-*This README was generated by AI and will be edited by the author upon
-release.*
+**Made with AI**
