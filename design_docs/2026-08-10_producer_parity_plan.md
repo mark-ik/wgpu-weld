@@ -518,6 +518,27 @@ the workspace to 30 fails them on `RequestAdapterOptions::apply_limit_buckets`,
 30 rows are compile-verified and configuration-tested, and *not* live-verified.
 Closing that needs the demos ported, which is its own job.
 
+## Receipts on the wgpu-30 row, 2026-08-14
+
+The default row flipped to 30 in `02fb1cc`, which invalidated the receipts
+above: they were taken on 29. Re-taken on all three paths at `770b6bb`.
+
+| path | machine | result |
+| --- | --- | --- |
+| DX12 shared texture -> wgpu | Windows 11 | **1578 frames imported**, `1280x800 Bgra8Unorm`, `LoadEnd` control passing |
+| IOSurface -> MTLTexture -> wgpu | M4 iMac, macOS 26.5.1, arm64 | `VALIDATION PASS`, probe **16384/16384 non-zero** (recorded in `770b6bb`) |
+| DMA-BUF -> Vulkan external memory | ThinkPad, AMD Renoir/RADV | **0 imported, by design**: `DRM_FORMAT_MOD_INVALID` refused with the typed error, `LoadEnd` control passing |
+
+So `wgpu-30` is now hardware-verified on every path, and the caveat published
+in 0.10.0's README — that the demos could not exercise 28 or 30 end to end —
+is **no longer true**: the demos were ported alongside the flip. It stays true
+for `wgpu-28`, which nobody has run on hardware.
+
+Worth stating for consumers rather than leaving in the commit log: **flipping
+the default row is a breaking change for anyone taking default features.**
+0.10.0 defaulted to 29 and 0.11.0 defaults to 30, so an unpinned consumer moves
+a wgpu major without asking. The README now says so and gives the pin.
+
 ## Plan
 
 ### W: welding phases, in bite order
