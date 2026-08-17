@@ -39,13 +39,29 @@ ever worked on Intel/Mesa; AMD/RADV was refused with a typed error until
 **Main builds against CEF 151** (`cef` `151.6.0+151.3.18`); 0.12.0 shipped
 CEF 147. The library compiled unchanged across those three Chromium majors.
 
-`scripts/parity-battery.sh` re-ran on all three platforms on 2026-08-17 and
-each reported the same **12 pass, 2 live, 1 fail**: import, input, popups,
-find, zoom, IME, context menu, touch, page drag, script/PDF/UA, visibility and
-crash recovery all still hold on 151. Downloads and CDP ran clean but emit no
-receipt of their own, so the battery records them as live rather than passing;
-they are unverified on 151, not known good. DevTools is the one real
-regression, and it is a bad one: see [^devtools].
+`scripts/parity-battery.sh` ran on all four machines on 2026-08-17:
+
+| machine | result |
+| --- | --- |
+| Windows 11, RTX 4060 | 12 pass, 2 live, 1 fail |
+| Fedora 44, AMD Renoir/RADV | 12 pass, 2 live, 1 fail |
+| macOS 26.5, Apple M4 | 12 pass, 2 live, 1 fail |
+| macOS 15.7, Intel iMac | 11 pass, 2 live, 2 fail |
+
+Import, input, find, zoom, IME, context menu, touch, page drag,
+script/PDF/UA, visibility and crash recovery hold everywhere on 151.
+
+**Only two things fail, and neither is new behaviour discovered by accident.**
+DevTools is a real 151 regression on Windows and Linux, see [^devtools]. The
+Intel iMac's second failure is the `<select>` popup, which is the known macOS
+split in [^macpopup] reproducing rather than anything breaking: the page
+loaded, the click landed, no popup surface was delivered and nothing reported
+an error. The battery cannot tell a documented platform difference from a
+fault, so it reports that as a failure and this note supplies the reading.
+
+Downloads and CDP ran clean but emit no receipt of their own, so the battery
+records them as live rather than passing. They are **unverified on 151, not
+known good**.
 
 Rows not covered by the battery (cookies, console, auth, permissions, the
 system print dialog) were last measured on 147 and have not been re-run.
