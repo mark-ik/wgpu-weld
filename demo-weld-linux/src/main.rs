@@ -8,8 +8,34 @@
 //! cargo run -p demo-weld-linux
 //! ```
 //!
-//! Validated against Intel/Mesa + Vulkan + X11. NVIDIA proprietary and Wayland
-//! are not currently supported by the CEF Linux DMABUF path.
+//! Validated against Intel/Mesa + Vulkan + X11, and since 2026-08-16 against
+//! **AMD Renoir / RADV** (Mesa 26.1.5) on the wgpu-30 row. NVIDIA proprietary
+//! and Wayland are not currently supported by the CEF Linux DMABUF path.
+//!
+//! AMD needs wgpu 30. CEF supplies `DRM_FORMAT_MOD_INVALID` there rather than
+//! an explicit modifier, and importing that needs
+//! `VK_EXT_image_drm_format_modifier`, which wgpu only enables from 30 on and
+//! surfaces as `VULKAN_EXTERNAL_MEMORY_DMA_BUF`. This demo requests that
+//! feature when the adapter has it; welding then imports the buffer as
+//! `DRM_FORMAT_MOD_LINEAR`.
+//!
+//! # Verifying the layout, not just the arrival
+//!
+//! `WELD_EXIT_AFTER_FRAMES` reads a 64x64 corner back and reports how many
+//! bytes are non-zero. That catches a dead import but **not** a wrongly-tiled
+//! one, which is scrambled yet non-zero. `WELD_TEXTURE_DUMP=<path.ppm>` writes
+//! the whole imported texture out, which shows scrambling at a glance:
+//!
+//! ```text
+//! WELD_TEXTURE_DUMP=/tmp/imported.ppm WELD_EXIT_AFTER_FRAMES=2 cargo run -p demo-weld-linux
+//! magick /tmp/imported.ppm /tmp/imported.png
+//! ```
+//!
+//! Ask for at least 2 frames. The first accelerated paint lands before the page
+//! does, so probing it reports a partial corner that looks exactly like a
+//! tiling bug: on example.com frame 1 gave 12160/16384 bytes non-zero starting
+//! with black, and frame 2 gave 16384/16384 starting with `[238,238,238,255]`,
+//! which is `#EEEEEE`, the real background.
 
 use std::{
     sync::Arc,
@@ -121,10 +147,22 @@ impl ApplicationHandler for DemoApp {
                 })
                 .await
                 .expect("no suitable wgpu Vulkan adapter");
+            // welding needs VK_EXT_image_drm_format_modifier to import the
+            // implicit-modifier buffers CEF produces on AMD/RADV, and wgpu 30
+            // surfaces that as VULKAN_EXTERNAL_MEMORY_DMA_BUF. Ask for it only
+            // where the adapter has it, so a host without it still runs and
+            // gets welding's explicit refusal rather than a device-creation
+            // failure.
+            let dmabuf_import =
+                adapter.features() & wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF;
+            log::info!(
+                "adapter DMA-BUF import feature: {}",
+                !dmabuf_import.is_empty()
+            );
             let (device, queue) = adapter
                 .request_device(&wgpu::DeviceDescriptor {
                     label: Some("welding-demo"),
-                    required_features: wgpu::Features::empty(),
+                    required_features: dmabuf_import,
                     required_limits: wgpu::Limits::default(),
                     experimental_features: wgpu::ExperimentalFeatures::disabled(),
                     memory_hints: wgpu::MemoryHints::default(),
@@ -768,15 +806,32 @@ fn exit_after_seconds() -> Option<Duration> {
 /// Read a corner of the imported texture back and report what landed there.
 fn report(s: &mut DemoState) {
     match s.frame.as_ref() {
-        Some(frame) => match probe::sample(&s.host_ctx.device, &s.host_ctx.queue, &frame.texture) {
-            Ok(rb) if rb.looks_painted() => log::info!(
-                "VALIDATION PASS: {} frame(s) imported, {}/{} bytes non-zero, first pixels {:?}",
-                s.frames_imported, rb.non_zero_bytes, rb.total_bytes, rb.first_pixels
-            ),
-            Ok(rb) => log::error!(
-                "VALIDATION FAIL: imported but entirely zero ({} bytes)", rb.total_bytes
-            ),
-            Err(e) => log::error!("VALIDATION FAIL: readback failed: {e}"),
+        Some(frame) => {
+            if let Ok(path) = std::env::var("WELD_TEXTURE_DUMP") {
+                match probe::dump_ppm(
+                    &s.host_ctx.device,
+                    &s.host_ctx.queue,
+                    &frame.texture,
+                    &path,
+                ) {
+                    Ok(()) => log::info!("texture dump -> {path}"),
+                    Err(e) => log::error!("texture dump failed: {e}"),
+                }
+            }
+            match probe::sample(&s.host_ctx.device, &s.host_ctx.queue, &frame.texture) {
+                Ok(rb) if rb.looks_painted() => log::info!(
+                    "VALIDATION PASS: {} frame(s) imported, {}/{} bytes non-zero, first pixels {:?}",
+                    s.frames_imported,
+                    rb.non_zero_bytes,
+                    rb.total_bytes,
+                    rb.first_pixels
+                ),
+                Ok(rb) => log::error!(
+                    "VALIDATION FAIL: imported but entirely zero ({} bytes)",
+                    rb.total_bytes
+                ),
+                Err(e) => log::error!("VALIDATION FAIL: readback failed: {e}"),
+            }
         },
         None => log::error!("VALIDATION FAIL: no frame was ever imported"),
     }

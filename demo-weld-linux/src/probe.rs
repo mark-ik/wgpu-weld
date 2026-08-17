@@ -94,3 +94,83 @@ pub fn sample(
         first_pixels,
     })
 }
+
+/// Dump the whole imported texture as a binary PPM.
+///
+/// The corner sample answers "did any pixels arrive". It cannot answer "are
+/// they in the right places", which is the question whenever the DMA-BUF
+/// modifier had to be assumed rather than read from CEF. A whole-texture image
+/// answers that at a glance: a wrong tiling reads as visible scrambling.
+/// PPM keeps this dependency-free; convert with ImageMagick to view.
+pub fn dump_ppm(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    path: &str,
+) -> Result<(), String> {
+    let width = texture.width();
+    let height = texture.height();
+    let unpadded = width * 4;
+    // copy_texture_to_buffer wants 256-aligned rows; 1366*4 is not, so the
+    // buffer carries padding that has to be skipped when writing pixels out.
+    let padded = unpadded.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("weld-probe-dump"),
+        size: (padded * height) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("weld-probe-dump"),
+    });
+    enc.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    let submission = queue.submit([enc.finish()]);
+
+    let slice = buffer.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: Some(submission),
+            timeout: None,
+        })
+        .map_err(|err| format!("poll while mapping dump failed: {err}"))?;
+
+    let data = slice.get_mapped_range().expect("map range");
+    let mut out = Vec::with_capacity((width * height * 3) as usize + 32);
+    out.extend_from_slice(format!("P6\n{width} {height}\n255\n").as_bytes());
+    for row in 0..height {
+        let start = (row * padded) as usize;
+        for px in data[start..start + unpadded as usize].chunks_exact(4) {
+            // CEF hands over BGRA; PPM wants RGB.
+            out.push(px[2]);
+            out.push(px[1]);
+            out.push(px[0]);
+        }
+    }
+    drop(data);
+    buffer.unmap();
+
+    std::fs::write(path, &out).map_err(|err| format!("write {path}: {err}"))
+}

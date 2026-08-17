@@ -10,6 +10,28 @@ use super::*;
 /// `DRM_FORMAT_MOD_INVALID` from `drm_fourcc.h`: "no explicit modifier".
 const DRM_FORMAT_MOD_INVALID: u64 = 0x00ff_ffff_ffff_ffff;
 
+/// `DRM_FORMAT_MOD_LINEAR` from `drm_fourcc.h`: no tiling, row-major.
+const DRM_FORMAT_MOD_LINEAR: u64 = 0;
+
+/// Can the host's device import a buffer whose modifier CEF left implicit?
+///
+/// The capability is `VK_EXT_image_drm_format_modifier`, which wgpu 30 enables
+/// on the device whenever the adapter supports it and surfaces as
+/// [`wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF`]. The feature is the
+/// signal to gate on: it is absent from wgpu 28 and 29 entirely, so those rows
+/// answer `false` and keep the old refusal.
+#[cfg(feature = "wgpu-30")]
+fn host_can_import_implicit_modifier(device: &wgpu::Device) -> bool {
+    device
+        .features()
+        .contains(wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF)
+}
+
+#[cfg(not(feature = "wgpu-30"))]
+fn host_can_import_implicit_modifier(_device: &wgpu::Device) -> bool {
+    false
+}
+
 /// The Linux half of [`WgpuTextureImporter::import`] for
 /// [`NativeFrame::DmaBufImage`] frames.
 pub(super) fn import_vulkan(
@@ -40,31 +62,40 @@ pub(super) fn import_vulkan(
     // explicit modifier. AMD/RADV does this in practice; Intel/Mesa supplies a
     // real modifier, which is why the original Phase 4 verification passed.
     //
-    // Both ways of importing such a buffer are closed on a wgpu-created device,
-    // and this was established by trying them on real hardware rather than
-    // reasoned about:
+    // On wgpu 28 and 29 such a buffer could not be imported at all, and that
+    // was established on real hardware rather than reasoned about. The
+    // DRM_FORMAT_MODIFIER_EXT tiling this function uses needs
+    // VK_EXT_image_drm_format_modifier on the device, neither row enabled it,
+    // and vkCreateImage answered VK_ERROR_FORMAT_NOT_SUPPORTED, with the
+    // validation layer sometimes aborting the process while formatting its own
+    // error about it. Plain LINEAR tiling fared no better: the format query
+    // rejects DMA_BUF as a handle type for it (VUID-VkImageCreateInfo-pNext-
+    // 00990) and the resulting texture panicked inside wgpu on first use.
     //
-    // - `VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT` needs
-    //   `VK_EXT_image_drm_format_modifier` enabled on the device. wgpu does not
-    //   enable it, so vkCreateImage answers VK_ERROR_FORMAT_NOT_SUPPORTED and
-    //   the validation layer has been seen to abort the process while
-    //   formatting its own error about it.
-    // - Plain `VK_IMAGE_TILING_LINEAR` creates an image, but
-    //   vkGetPhysicalDeviceImageFormatProperties2 reports DMA_BUF as an
-    //   incompatible handle type for that combination (VUID-VkImageCreateInfo-
-    //   pNext-00990), and the resulting texture panics inside wgpu on first use.
+    // wgpu 30 changed the picture. It enables the extension whenever the
+    // adapter supports it, and exposes VULKAN_EXTERNAL_MEMORY_DMA_BUF as the
+    // capability signal. When the host device carries that feature, import the
+    // implicit-modifier buffer as DRM_FORMAT_MOD_LINEAR.
     //
-    // welding cannot route around it, because the texture has to live on the
-    // host's device, not one welding creates. The fix belongs upstream in wgpu:
-    // enable VK_EXT_image_drm_format_modifier, and this branch becomes the
-    // explicit-modifier path with DRM_FORMAT_MOD_LINEAR. Until then, refuse
-    // clearly.
-    if frame.modifier == DRM_FORMAT_MOD_INVALID {
-        return Err(ImportError::VulkanImport(
-            "CEF supplied DRM_FORMAT_MOD_INVALID (implicit modifier). Importing it needs VK_EXT_image_drm_format_modifier on the wgpu device, which wgpu does not enable; linear tiling is rejected for DMA_BUF by the format query. Seen on AMD/RADV; Intel/Mesa supplies an explicit modifier and works."
-                .into(),
-        ));
-    }
+    // That substitution is an assumption rather than something CEF told us,
+    // and on AMD an implicit layout may well be tiled. So a successful import
+    // is not proof of a correct one: the pixels have to be checked, which is
+    // what demo-weld-linux's readback probe is for.
+    let drm_modifier = if frame.modifier == DRM_FORMAT_MOD_INVALID {
+        if !host_can_import_implicit_modifier(&ctx.device) {
+            return Err(ImportError::VulkanImport(
+                "CEF supplied DRM_FORMAT_MOD_INVALID (implicit modifier). Importing it needs \
+                 VK_EXT_image_drm_format_modifier, which arrived in wgpu 30 together with \
+                 Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF. This host device does not carry that \
+                 feature, and wgpu 28/29 cannot provide it at all. Seen on AMD/RADV; Intel/Mesa \
+                 supplies an explicit modifier and needs none of this."
+                    .into(),
+            ));
+        }
+        DRM_FORMAT_MOD_LINEAR
+    } else {
+        frame.modifier
+    };
 
     let vk_format = match frame.format {
         wgpu::TextureFormat::Rgba8UnormSrgb => vk::Format::R8G8B8A8_SRGB,
@@ -86,7 +117,6 @@ pub(super) fn import_vulkan(
     let frame_size = frame.size;
     let frame_format = frame.format;
     let frame_generation = frame.generation;
-    let drm_modifier = frame.modifier;
 
     unsafe {
         let hal_device = ctx
@@ -121,7 +151,12 @@ pub(super) fn import_vulkan(
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
-            .usage(vk::ImageUsageFlags::SAMPLED)
+            // TRANSFER_SRC as well as SAMPLED: hosts read the imported texture
+            // back to check it, which the macOS path has always allowed and
+            // this one did not. Without it wgpu rejects the copy for missing
+            // COPY_SRC, and on Linux that rejection was invisible behind the
+            // implicit-modifier refusal above.
+            .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .push_next(&mut external_memory_info)
@@ -169,7 +204,7 @@ pub(super) fn import_vulkan(
                     dimension: wgpu::TextureDimension::D2,
                     mip_level_count: 1,
                     sample_count: 1,
-                    usage: wgpu::TextureUses::RESOURCE,
+                    usage: wgpu::TextureUses::RESOURCE | wgpu::TextureUses::COPY_SRC,
                     view_formats: Vec::new(),
                     memory_flags: wgpu_hal::MemoryFlags::empty(),
                 },
@@ -190,7 +225,7 @@ pub(super) fn import_vulkan(
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: frame_format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             },
             // The locally created image has not left UNDEFINED layout.
