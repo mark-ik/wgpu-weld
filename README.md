@@ -1,5 +1,34 @@
 # wgpu-weld
 
+First, a note:
+
+With the first release of this CEF webview embedder, I would like to quickly
+identify my goals.
+
+1) I was shocked this didn't exist, and that wgpu contexts didn't have an easy
+webview embedding/import solution. An attempt beats zero attempts, so I thought 
+I'd try it from a few angles: embedding servo (the first path), embedding 
+system webviews (the second path), and finally, embedding CEF. Ironically,
+weld's seen the first release of the stack.
+
+2) I wanna git gud with Rust, AI, and web technologies. This seemed a worthy project.
+
+3) I have a prototype browser in my stack called turnstone. I would like users
+to be able to switch between servo, chromium, the system webview, and the nascent 
+native genet web engine, provided they are willing to deal with the size.
+The real advantage is being able to choose the right engine for your platform!
+
+4) A big thing I'm pursuing is a unified wgpu device: same version, 
+same device, to make sharing textures easy. Controlling the embedding lib
+allows me to ensure that happens.
+
+The release notes and README both say "every desktop platform," 
+which really means every platform I could test. NVIDIA proprietary 
+and Wayland-native aren't covered by the CEF path. Now, the generated
+README, which, trust me, is a convenience for both you and me.
+
+---
+
 Weld Chromium Embedded Framework (CEF) rendered output into wgpu-importable
 GPU textures via CEF's accelerated off-screen rendering. The
 [`welding`](welding/) library bundles Chromium through CEF and routes its
