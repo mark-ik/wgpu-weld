@@ -59,9 +59,26 @@ loaded, the click landed, no popup surface was delivered and nothing reported
 an error. The battery cannot tell a documented platform difference from a
 fault, so it reports that as a failure and this note supplies the reading.
 
-Downloads and CDP ran clean but emit no receipt of their own, so the battery
-records them as live rather than passing. They are **unverified on 151, not
-known good**.
+Downloads and CDP were recorded live in the first pass because the battery
+asserted nothing for them. Both do emit receipts, and both work on 151:
+
+```
+CDP sent {"id":1,"method":"Browser.getVersion"}
+CDP <-   {"id":1,"result":{"protocolVersion":"1.3","product":"Chrome/151.0.7922.138",...}}
+
+DownloadStarted  { suggested_filename: "weld-probe.txt", total_bytes_expected: Some(28) }
+DownloadProgress { bytes_received: 28, total_bytes_expected: Some(28) }
+```
+
+**CDP matters more than the DevTools row above suggests.** It is
+`execute_dev_tools_method`, a different CEF call from the `show_dev_tools`
+window that crashes on 151, and it is the path a host uses to drive its own
+inspector pane. A host that never opens CEF's native window is unaffected by
+that regression.
+
+One open question on downloads: the transfer reports complete, 28 of 28 bytes,
+but no file appeared in `WELD_DOWNLOAD_DIR`. Whether the write lands after the
+demo exits or not at all has not been chased.
 
 Rows not covered by the battery (cookies, console, auth, permissions, the
 system print dialog) were last measured on 147 and have not been re-run.

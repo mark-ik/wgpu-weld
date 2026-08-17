@@ -154,7 +154,7 @@ run_case drag 'page drag finished as copy|title: "PAGE_DRAG:started"' \
   WELD_URL="$PROBES/weld_drag_touch_probe.html" \
   WELD_SCALE=1 WELD_PAGE_DRAG=520,370,620,420 WELD_FINISH_PAGE_DRAG=1
 
-run_case download - \
+run_case download 'DownloadProgress \{[^}]*bytes_received' \
   WELD_URL="$PROBES/weld_download_probe.html" \
   WELD_CLICK_AT=60,40 WELD_DOWNLOAD_DIR="$OUT/downloads"
 
@@ -164,7 +164,10 @@ run_case api 'print_to_pdf|title: "script:2"' \
   WELD_UA_PRODUCT=weld-battery \
   WELD_HISTORY=1
 
-run_case cdp - WELD_CDP=Browser.getVersion
+# CDP is execute_dev_tools_method, a different CEF call from the show_dev_tools
+# window that crashes on 151. Assert the response, not just that nothing broke:
+# a host building its own inspector pane depends on this path, not that one.
+run_case cdp 'CDP <- .*"result"' WELD_CDP=Browser.getVersion
 run_case visibility 'set_visible' WELD_HIDE_CYCLE=1
 run_case devtools 'open_devtools' WELD_DEVTOOLS=1
 run_case crash 'recovering from' WELD_CRASH_AFTER_SECS=4 WELD_RECOVER=1
