@@ -51,6 +51,13 @@ Intel/Mesa; AMD/RADV was refused until wgpu 30 supplied the extension that
 case needs. NVIDIA's proprietary driver and Wayland-native remain outside the
 CEF path.
 
+0.12.0 shipped against CEF 147. Main has since moved the pin to CEF 151, which
+also drops the last split in the dependency graph: `cef` carried its own
+`wgpu 29` for an importer `welding` never calls, so the demos resolved two
+wgpu majors at once. On 151 the whole workspace resolves a single row at 30.
+The library compiles unchanged on all three platforms, but the verification
+tables still describe 147 until the battery is re-run.
+
 A parity battery was run on all three platforms on 2026-08-12 (Windows 11,
 macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac, Fedora
 on an AMD ThinkPad). Input, cursor, HiDPI, navigation, console, cookies,
@@ -147,7 +154,7 @@ govern every consumer (details in [`welding/README.md`](welding/README.md)):
    the callback — a pixel copy on Windows, a `CFRetain`ed IOSurface wrapped
    zero-copy on macOS — and exposes only owned resources.
 3. CEF is not a system library: ship libcef with the app and point
-   `CEF_PATH` at a CEF 148 binary distribution.
+   `CEF_PATH` at a CEF 151 binary distribution, matching the `cef` crate.
 
 The library defaults to wgpu 30 and also carries `wgpu-29` and `wgpu-28`.
 Select 29 or 28 with default features disabled; combine `cef-runtime` with

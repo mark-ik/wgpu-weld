@@ -1120,9 +1120,12 @@ impl CefSurfaceProducer for MacosCefProducer {
     }
 
     fn open_devtools(&self) -> Result<(), WeldError> {
-        // Deliberately not calling show_dev_tools on macOS. CEF 148 crashes the
+        // Deliberately not calling show_dev_tools on macOS. CEF 148 crashed the
         // host process from inside the framework when a windowless browser
         // opens DevTools (EXC_BAD_ACCESS at null+0x150, on the host thread).
+        // Measured on 148 and not re-tested against 151; if it was fixed
+        // upstream this refusal is now stricter than it needs to be, but
+        // loosening it needs a run on real hardware, not an assumption.
         // Tried and ruled out: a NULL CefWindowInfo, a bounds-only one, and a
         // non-null `inspect_element_at` -- the last because CEF dereferences
         // its by-ref arguments without a null check, which is what made the

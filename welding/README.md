@@ -36,6 +36,12 @@ accelerated GPU import works on **every** desktop platform. Linux had only
 ever worked on Intel/Mesa; AMD/RADV was refused with a typed error until
 0.12.0, for reasons the `[^linux]` note below explains.
 
+**The table below was measured against CEF 147** (`cef` crate `148.1.0`), which
+is what 0.12.0 shipped. Main has since moved to CEF 151 (`cef` `151.6.0`),
+three Chromium majors newer; the library compiles unchanged on all three
+platforms, but compiling is not behaviour. Until the battery is re-run, read
+every row as a claim about 147.
+
 Every "verified" here was checked by running it on that platform's hardware,
 in one battery per machine: Windows 11 (this laptop), macOS 15.7 on an Intel
 iMac, macOS 26.5 on an Apple Silicon M4 iMac (at a native 2x scale factor),
@@ -143,10 +149,12 @@ embedder-owned `CefPrintHandler` to supply both the dialog and spooler, so
 `print()` returns an explained unsupported error there. `welding` does not
 silently select a default printer or invoke `lp`.
 
-[^macdevtools]: Opening DevTools for a windowless browser crashes CEF 148 on
+[^macdevtools]: Opening DevTools for a windowless browser crashed CEF 148 on
 macOS from inside the framework (`EXC_BAD_ACCESS` at null+0x150, on the host
 thread), with a NULL `CefWindowInfo`, with a bounds-only one, and with every
-by-ref argument supplied non-null including `inspect_element_at`. Rather
+by-ref argument supplied non-null including `inspect_element_at`. **Measured
+against CEF 148 and not re-tested since the move to 151**, so the refusal
+below may now be more conservative than it needs to be. Rather
 than segfault its embedder, the macOS producer refuses the call and `probe()`
 reports it unsupported there, so a host can grey the button out. Windows opens
 a real DevTools window; the window needs top-level style flags, because a

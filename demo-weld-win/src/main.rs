@@ -3,7 +3,7 @@
 //! # Running
 //!
 //! ```text
-//! set CEF_PATH=C:\path\to\cef_binary_148.x_windows64
+//! set CEF_PATH=C:\path\to\cef_binary_151.x_windows64
 //! cargo run -p demo-weld-win
 //! ```
 

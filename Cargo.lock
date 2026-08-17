@@ -382,9 +382,9 @@ dependencies = [
 
 [[package]]
 name = "cef"
-version = "148.1.0+147.0.14"
+version = "151.6.0+151.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f69f182b13a846048af7eb44b231c36ce316b2823ad0455e947f9ba955b2984f"
+checksum = "d32103b77f9619e6eefdf6d4cad5c9562646777c38b4cd9ed43590103e504bdd"
 dependencies = [
  "anyhow",
  "ash",
@@ -403,16 +403,16 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tracing",
- "wgpu 29.0.3",
+ "wgpu 30.0.0",
  "windows",
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "cef-dll-sys"
-version = "148.1.0+147.0.14"
+version = "151.6.0+151.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e528ba9dfc0c7a28c820a6bb3f7c80611eaaa11e6b4f8d13913b2c527edf559d"
+checksum = "ac9dc634813322bb1aecdb4e881a8976b40216d393e63ad310c61621dcbe5484"
 dependencies = [
  "anyhow",
  "cmake",

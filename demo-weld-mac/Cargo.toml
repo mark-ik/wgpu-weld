@@ -35,6 +35,6 @@ log = "0.4"
 env_logger = "0.11"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-cef = { version = "148", features = ["accelerated_osr"] }
+cef = { version = "151", features = ["accelerated_osr"] }
 # For the bundler's BundleInfo version field.
 semver = "1"
