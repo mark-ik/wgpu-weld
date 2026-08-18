@@ -59,8 +59,9 @@ loaded, the click landed, no popup surface was delivered and nothing reported
 an error. The battery cannot tell a documented platform difference from a
 fault, so it reports that as a failure and this note supplies the reading.
 
-Downloads and CDP were recorded live in the first pass because the battery
-asserted nothing for them. Both do emit receipts, and both work on 151:
+CDP was recorded live in the first pass because the battery asserted nothing
+for it. It emits a receipt and it works on 151. **Downloads emit a receipt too,
+and that receipt is misleading:**
 
 ```
 CDP sent {"id":1,"method":"Browser.getVersion"}
@@ -76,9 +77,27 @@ window that crashes on 151, and it is the path a host uses to drive its own
 inspector pane. A host that never opens CEF's native window is unaffected by
 that regression.
 
-One open question on downloads: the transfer reports complete, 28 of 28 bytes,
-but no file appeared in `WELD_DOWNLOAD_DIR`. Whether the write lands after the
-demo exits or not at all has not been chased.
+**Downloads do not write a file on CEF 151 / Windows.** Chased 2026-08-17 by
+instrumenting `on_download_updated`, and the byte count is a lie of omission:
+
+```
+DLPROBE id=1 complete=false canceled=false received=28 total=28 full_path=""
+```
+
+`full_path` stays empty for the whole run and `complete` never becomes true,
+even at 28 of 28 bytes. CEF never accepts the destination `welding` passes to
+`callback.cont()`, so the transfer runs, reports every byte, and is abandoned.
+Nothing lands in `WELD_DOWNLOAD_DIR`, nothing lands in the default Downloads
+folder, and there is no `.crdownload` partial anywhere. It is not a timing
+artefact: the probe fired repeatedly across a 25s window and never changed.
+
+Not yet known: whether 147 behaved the same. The row was marked verified
+against 147, but by a battery that asserted on the progress event rather than
+on a file, so the earlier pass does not rule this out.
+
+The battery now carries a separate `dl-file` row that asserts the file exists,
+because `DownloadProgress` demonstrably passes for a download that wrote
+nothing.
 
 Rows not covered by the battery (cookies, console, auth, permissions, the
 system print dialog) were last measured on 147 and have not been re-run.
@@ -105,7 +124,7 @@ and Fedora 44 on a ThinkPad (AMD Renoir/RADV, Mesa 26.1.5).
 | Visibility (`set_visible`) | verified | verified | wired |
 | DevTools window | **crashes CEF 151** [^devtools] | refused by design [^devtools] | **crashes CEF 151** [^devtools] |
 | IME composition | verified | verified | verified |
-| Downloads | verified | verified | verified |
+| Downloads | **no file written** [^dl] | untested on 151 | untested on 151 |
 | Auth challenges | **never fires** [^auth] | wired | wired |
 | Permission requests | verified | verified | verified |
 | Context menus | verified | verified [^macmenu] | verified |
@@ -189,6 +208,14 @@ Linux CEF provides no native printer dialog. It requires an
 embedder-owned `CefPrintHandler` to supply both the dialog and spooler, so
 `print()` returns an explained unsupported error there. `welding` does not
 silently select a default printer or invoke `lp`.
+
+[^dl]: The transfer reports every byte and then vanishes: `is_complete` stays
+false, `full_path` stays empty, and no file appears in the download directory,
+the default Downloads folder, or as a `.crdownload` partial. Detail and the
+instrumented output are in **State** above. macOS and Linux have not been
+re-measured on 151, and the earlier "verified" for all three was taken by a
+battery asserting on the progress event rather than on a file, so it does not
+clear them.
 
 [^devtools]: **On CEF 151, opening DevTools for a windowless browser crashes
 the host process on Windows and Linux too.** Measured 2026-08-17 by the parity

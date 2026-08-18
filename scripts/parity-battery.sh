@@ -158,6 +158,19 @@ run_case download 'DownloadProgress \{[^}]*bytes_received' \
   WELD_URL="$PROBES/weld_download_probe.html" \
   WELD_CLICK_AT=60,40 WELD_DOWNLOAD_DIR="$OUT/downloads"
 
+# The byte count is not the receipt; the file is. CEF reports 28 of 28 bytes
+# for a transfer it never completes and never assigns a path to, so a case
+# asserting only on DownloadProgress passes a download that wrote nothing.
+if ls "$OUT"/downloads/* >/dev/null 2>&1; then
+  pass=$((pass + 1))
+  printf '  %-11s PASS  %s
+' "dl-file" "$(ls "$OUT"/downloads | head -1)"
+else
+  fail=$((fail + 1))
+  printf '  %-11s FAIL  bytes arrived but no file was written
+' "dl-file"
+fi
+
 run_case api 'print_to_pdf|title: "script:2"' \
   WELD_SCRIPT='document.title = "script:" + (1 + 1)' \
   WELD_PDF="$OUT/api.pdf" \
