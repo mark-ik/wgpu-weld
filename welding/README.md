@@ -59,16 +59,12 @@ loaded, the click landed, no popup surface was delivered and nothing reported
 an error. The battery cannot tell a documented platform difference from a
 fault, so it reports that as a failure and this note supplies the reading.
 
-CDP was recorded live in the first pass because the battery asserted nothing
-for it. It emits a receipt and it works on 151. **Downloads emit a receipt too,
-and that receipt is misleading:**
+CDP and downloads were both recorded live in the first pass because the
+battery asserted nothing for them. Both work on 151:
 
 ```
 CDP sent {"id":1,"method":"Browser.getVersion"}
 CDP <-   {"id":1,"result":{"protocolVersion":"1.3","product":"Chrome/151.0.7922.138",...}}
-
-DownloadStarted  { suggested_filename: "weld-probe.txt", total_bytes_expected: Some(28) }
-DownloadProgress { bytes_received: 28, total_bytes_expected: Some(28) }
 ```
 
 **CDP matters more than the DevTools row above suggests.** It is
@@ -77,27 +73,30 @@ window that crashes on 151, and it is the path a host uses to drive its own
 inspector pane. A host that never opens CEF's native window is unaffected by
 that regression.
 
-**Downloads do not write a file on CEF 151 / Windows.** Chased 2026-08-17 by
-instrumenting `on_download_updated`, and the byte count is a lie of omission:
+**Downloads work on 151. The earlier failure was a path format, and CEF hides
+it.** Chased 2026-08-17. CEF on Windows **silently discards** a download whose
+destination contains forward slashes: `on_before_download` is answered, the
+transfer runs to completion and reports every byte, and then nothing is
+written. No file, no `.crdownload` partial, `is_complete` never true and
+`full_path` empty for the life of the item:
 
 ```
 DLPROBE id=1 complete=false canceled=false received=28 total=28 full_path=""
 ```
 
-`full_path` stays empty for the whole run and `complete` never becomes true,
-even at 28 of 28 bytes. CEF never accepts the destination `welding` passes to
-`callback.cont()`, so the transfer runs, reports every byte, and is abandoned.
-Nothing lands in `WELD_DOWNLOAD_DIR`, nothing lands in the default Downloads
-folder, and there is no `.crdownload` partial anywhere. It is not a timing
-artefact: the probe fired repeatedly across a 25s window and never changed.
+Handing the same download a native `C:\...` destination writes the file
+immediately, with the expected payload. It was never blob-specific and never a
+151 regression: a `data:` URL failed the same way, and both succeed once the
+path is native.
 
-Not yet known: whether 147 behaved the same. The row was marked verified
-against 147, but by a battery that asserted on the progress event rather than
-on a file, so the earlier pass does not rule this out.
+`welding` now normalises the destination to the platform's separators, because
+a host is well within its rights to configure `C:/downloads`, and one under
+Git Bash or any POSIX-shaped config will. The old behaviour had no symptom
+except a file that never appeared.
 
-The battery now carries a separate `dl-file` row that asserts the file exists,
-because `DownloadProgress` demonstrably passes for a download that wrote
-nothing.
+The battery also grew a `dl-file` row asserting the file exists on disk. The
+original case asserted on `DownloadProgress`, which reported 28 of 28 bytes for
+a transfer that wrote nothing, so the row passed throughout.
 
 Rows not covered by the battery (cookies, console, auth, permissions, the
 system print dialog) were last measured on 147 and have not been re-run.
@@ -124,7 +123,7 @@ and Fedora 44 on a ThinkPad (AMD Renoir/RADV, Mesa 26.1.5).
 | Visibility (`set_visible`) | verified | verified | wired |
 | DevTools window | **crashes CEF 151** [^devtools] | refused by design [^devtools] | **crashes CEF 151** [^devtools] |
 | IME composition | verified | verified | verified |
-| Downloads | **no file written** [^dl] | untested on 151 | untested on 151 |
+| Downloads | verified [^dl] | untested on 151 | untested on 151 |
 | Auth challenges | **never fires** [^auth] | wired | wired |
 | Permission requests | verified | verified | verified |
 | Context menus | verified | verified [^macmenu] | verified |
@@ -209,13 +208,11 @@ embedder-owned `CefPrintHandler` to supply both the dialog and spooler, so
 `print()` returns an explained unsupported error there. `welding` does not
 silently select a default printer or invoke `lp`.
 
-[^dl]: The transfer reports every byte and then vanishes: `is_complete` stays
-false, `full_path` stays empty, and no file appears in the download directory,
-the default Downloads folder, or as a `.crdownload` partial. Detail and the
-instrumented output are in **State** above. macOS and Linux have not been
-re-measured on 151, and the earlier "verified" for all three was taken by a
-battery asserting on the progress event rather than on a file, so it does not
-clear them.
+[^dl]: CEF silently discards a download whose destination has forward
+slashes: every byte arrives, `is_complete` stays false, `full_path` stays
+empty, and no file is written. `welding` normalises to native separators
+so a host configuring `C:/downloads` is not quietly broken. macOS and Linux
+have not been re-measured on 151.
 
 [^devtools]: **On CEF 151, opening DevTools for a windowless browser crashes
 the host process on Windows and Linux too.** Measured 2026-08-17 by the parity
