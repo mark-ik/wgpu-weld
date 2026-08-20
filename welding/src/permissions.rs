@@ -176,6 +176,9 @@ impl Permissions {
         self.inner.lock().unwrap().pending.remove(&id)
     }
 
+    // Diagnostic accessor: exercised by unit tests today, kept for host-side
+    // leak checks.
+    #[allow(dead_code)]
     pub(crate) fn outstanding(&self) -> usize {
         self.inner.lock().unwrap().pending.len()
     }
@@ -209,7 +212,11 @@ mod tests {
         assert_eq!(decode(odd), vec![PermissionKind::Other(odd)]);
         // and alongside a known one
         let got = decode(GEOLOCATION | odd);
-        assert_eq!(got.len(), 2, "a known bit swallowed the unknown one: {got:?}");
+        assert_eq!(
+            got.len(),
+            2,
+            "a known bit swallowed the unknown one: {got:?}"
+        );
         assert!(got.contains(&PermissionKind::Other(odd)));
     }
 

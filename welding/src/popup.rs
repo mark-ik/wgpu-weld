@@ -11,8 +11,8 @@
 //! frame across to `acquire_popup`.
 
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 
 use crate::surface::PopupRect;

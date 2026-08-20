@@ -3,9 +3,9 @@ use dpi::PhysicalSize;
 use crate::{
     auth::AuthId,
     downloads::DownloadId,
-    permissions::{PermissionId, PermissionKind},
     error::WeldError,
     native_frame::{HostWgpuContext, ImportedTexture},
+    permissions::{PermissionId, PermissionKind},
 };
 
 /// How CEF can participate in a host compositor on the current platform.
@@ -198,7 +198,10 @@ mod capability_tests {
         #[cfg(not(target_os = "macos"))]
         assert_eq!(caps.devtools, BrowserFeatureStatus::Supported);
         #[cfg(target_os = "macos")]
-        assert!(matches!(caps.devtools, BrowserFeatureStatus::Unsupported(_)));
+        assert!(matches!(
+            caps.devtools,
+            BrowserFeatureStatus::Unsupported(_)
+        ));
         assert_eq!(caps.console_messages, BrowserFeatureStatus::Supported);
         // Cookies went from a trait default that errored to real producer
         // implementations over CEF's global cookie manager.
@@ -225,19 +228,21 @@ mod capability_tests {
         assert_eq!(caps.png_snapshot, BrowserFeatureStatus::Supported);
         assert_eq!(caps.profile_isolation, BrowserFeatureStatus::Supported);
 
-        for status in [caps.cookie_change_events] {
-            assert!(
-                matches!(status, BrowserFeatureStatus::Unsupported(reason) if !reason.is_empty()),
-                "expected an explained Unsupported, got {status:?}"
-            );
-        }
+        let status = caps.cookie_change_events;
+        assert!(
+            matches!(status, BrowserFeatureStatus::Unsupported(reason) if !reason.is_empty()),
+            "expected an explained Unsupported, got {status:?}"
+        );
 
         assert_eq!(caps.permission_requests, BrowserFeatureStatus::Supported);
         assert_eq!(caps.devtools_protocol, BrowserFeatureStatus::Supported);
 
         // Auth is the other split case: implemented and registered, never
         // seen to fire.
-        assert!(matches!(caps.auth_challenges, BrowserFeatureStatus::Partial(_)));
+        assert!(matches!(
+            caps.auth_challenges,
+            BrowserFeatureStatus::Partial(_)
+        ));
 
         // Popups are the split case: creation is handled, rendering is not.
         assert!(matches!(caps.popups, BrowserFeatureStatus::Partial(_)));
@@ -500,10 +505,7 @@ pub trait CefSurfaceProducer: Send {
     /// view for as long as [`popup_rect`](Self::popup_rect) returns `Some`;
     /// like [`acquire_frame`](Self::acquire_frame), this only yields on a new
     /// paint. Drop the cached surface when `popup_rect` goes to `None`.
-    fn acquire_popup(
-        &mut self,
-        _ctx: &HostWgpuContext,
-    ) -> Result<Option<PopupSurface>, WeldError> {
+    fn acquire_popup(&mut self, _ctx: &HostWgpuContext) -> Result<Option<PopupSurface>, WeldError> {
         Ok(None)
     }
 
@@ -523,7 +525,9 @@ pub trait CefSurfaceProducer: Send {
     /// work, so a host that never says otherwise can end up with a browser
     /// that paints but ignores input.
     fn set_visible(&mut self, _visible: bool) -> Result<(), WeldError> {
-        Err(WeldError::PlatformUnsupported("visibility is not wired for this producer"))
+        Err(WeldError::PlatformUnsupported(
+            "visibility is not wired for this producer",
+        ))
     }
 
     /// The cursor shape the page is asking for, if it changed since the last
@@ -548,22 +552,30 @@ pub trait CefSurfaceProducer: Send {
         _text: &str,
         _selection: (u32, u32),
     ) -> Result<(), WeldError> {
-        Err(WeldError::PlatformUnsupported("IME is not wired for this producer"))
+        Err(WeldError::PlatformUnsupported(
+            "IME is not wired for this producer",
+        ))
     }
 
     /// Commit the composition, or insert `text` directly when there is none.
     fn ime_commit_text(&mut self, _text: &str) -> Result<(), WeldError> {
-        Err(WeldError::PlatformUnsupported("IME is not wired for this producer"))
+        Err(WeldError::PlatformUnsupported(
+            "IME is not wired for this producer",
+        ))
     }
 
     /// Finish composing and keep what is there.
     fn ime_finish_composing(&mut self, _keep_selection: bool) -> Result<(), WeldError> {
-        Err(WeldError::PlatformUnsupported("IME is not wired for this producer"))
+        Err(WeldError::PlatformUnsupported(
+            "IME is not wired for this producer",
+        ))
     }
 
     /// Abandon the composition.
     fn ime_cancel_composition(&mut self) -> Result<(), WeldError> {
-        Err(WeldError::PlatformUnsupported("IME is not wired for this producer"))
+        Err(WeldError::PlatformUnsupported(
+            "IME is not wired for this producer",
+        ))
     }
 
     fn resize(&mut self, size: PhysicalSize<u32>) -> Result<(), WeldError>;
@@ -572,7 +584,9 @@ pub trait CefSurfaceProducer: Send {
     /// a 2x screen. Live rather than construction-time, because a window can
     /// cross displays without ever being recreated.
     fn set_scale_factor(&mut self, _scale: f32) -> Result<(), WeldError> {
-        Err(WeldError::PlatformUnsupported("scale factor is not wired for this producer"))
+        Err(WeldError::PlatformUnsupported(
+            "scale factor is not wired for this producer",
+        ))
     }
 
     /// The scale factor currently reported to CEF.
@@ -764,9 +778,13 @@ pub trait CefSurfaceProducer: Send {
     /// `find_next` steps through matches for the same text; passing `false`
     /// starts a new search. Stop with [`Self::stop_finding`], which also clears
     /// the highlight.
-    fn find(&mut self, _text: &str, _forward: bool, _match_case: bool, _find_next: bool)
-        -> Result<(), WeldError>
-    {
+    fn find(
+        &mut self,
+        _text: &str,
+        _forward: bool,
+        _match_case: bool,
+        _find_next: bool,
+    ) -> Result<(), WeldError> {
         Err(WeldError::PlatformUnsupported(
             "find is not wired for this producer",
         ))
@@ -848,7 +866,9 @@ pub trait CefSurfaceProducer: Send {
     /// quoted string, an object yields an object. A script that throws yields
     /// `Err` with the exception message.
     fn request_script_result(&mut self, _script: &str) -> Result<u32, WeldError> {
-        Err(WeldError::BrowserOp("script results are not wired for this producer".into()))
+        Err(WeldError::BrowserOp(
+            "script results are not wired for this producer".into(),
+        ))
     }
 
     /// The next finished [`request_script_result`](Self::request_script_result),
@@ -862,7 +882,9 @@ pub trait CefSurfaceProducer: Send {
     /// CEF validates the cookie's domain and path against `url` and rejects
     /// mismatches, so pass the URL the cookie belongs to rather than any URL.
     fn set_cookie(&mut self, _url: &str, _cookie: &Cookie) -> Result<(), WeldError> {
-        Err(WeldError::BrowserOp("cookies are not wired for this producer".into()))
+        Err(WeldError::BrowserOp(
+            "cookies are not wired for this producer".into(),
+        ))
     }
 
     /// Start reading cookies. `url` of `None` reads the whole store.
@@ -872,7 +894,9 @@ pub trait CefSurfaceProducer: Send {
     /// macOS the calling thread is CEF's own UI thread, so a blocking getter
     /// would wait on the loop that produces the answer.
     fn request_cookies(&mut self, _url: Option<&str>) -> Result<(), WeldError> {
-        Err(WeldError::BrowserOp("cookies are not wired for this producer".into()))
+        Err(WeldError::BrowserOp(
+            "cookies are not wired for this producer".into(),
+        ))
     }
 
     /// The result of a [`request_cookies`](Self::request_cookies), once the
@@ -885,7 +909,9 @@ pub trait CefSurfaceProducer: Send {
     /// Delete cookies. `url` of `None` means every URL, `name` of `None` means
     /// every name, so both `None` clears the store.
     fn delete_cookies(&mut self, _url: Option<&str>, _name: Option<&str>) -> Result<(), WeldError> {
-        Err(WeldError::BrowserOp("cookies are not wired for this producer".into()))
+        Err(WeldError::BrowserOp(
+            "cookies are not wired for this producer".into(),
+        ))
     }
 
     fn open_devtools(&self) -> Result<(), WeldError>;
@@ -1110,6 +1136,8 @@ pub enum ContextMenuTarget {
 }
 
 /// Split CEF's `cef_context_menu_type_flags_t` into named targets.
+// Consumed by the cef_backed handlers alone; unit-tested either way.
+#[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
 pub(crate) fn context_menu_targets(flags: u32) -> Vec<ContextMenuTarget> {
     let mut out = Vec::new();
     let mut seen = 0u32;
@@ -1362,7 +1390,10 @@ mod context_menu_tests {
     #[test]
     fn an_unnamed_flag_is_reported_not_dropped() {
         let odd = 1 << 20;
-        assert_eq!(context_menu_targets(odd), vec![ContextMenuTarget::Other(odd)]);
+        assert_eq!(
+            context_menu_targets(odd),
+            vec![ContextMenuTarget::Other(odd)]
+        );
     }
 
     #[test]

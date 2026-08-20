@@ -1,22 +1,23 @@
+//! Windows CEF producer: accelerated OSR via `OnAcceleratedPaint`.
+//!
+//! # Handle lifetime
+//!
+//! `CefAcceleratedPaintInfo::shared_texture_handle` is callback-scoped. Under
+//! `cef-runtime` the `on_accelerated_paint` callback calls `DuplicateHandle`
+//! and copies into an application-owned texture before returning. The copied
+//! shared handle crosses the callback boundary; callers may either let Weld
+//! import it or take it through [`WindowsCefProducer::acquire_native_frame`].
+//!
+//! # Threading
+//!
+//! CEF invokes `on_accelerated_paint` on the render thread. The host calls
+//! `acquire_frame` and browser-control methods from the winit/wgpu thread.
+//! The copied-frame and browser slots are protected by `Mutex`. On Windows,
+//! CEF owns its dedicated UI thread and proxies browser-control operations
+//! called from the host thread.
+
 #[cfg(feature = "cef-runtime")]
 use std::sync::atomic::{AtomicBool, AtomicU64};
-/// Windows CEF producer: accelerated OSR via `OnAcceleratedPaint`.
-///
-/// # Handle lifetime
-///
-/// `CefAcceleratedPaintInfo::shared_texture_handle` is callback-scoped. Under
-/// `cef-runtime` the `on_accelerated_paint` callback calls `DuplicateHandle`
-/// and copies into an application-owned texture before returning. The copied
-/// shared handle crosses the callback boundary; callers may either let Weld
-/// import it or take it through [`WindowsCefProducer::acquire_native_frame`].
-///
-/// # Threading
-///
-/// CEF invokes `on_accelerated_paint` on the render thread. The host calls
-/// `acquire_frame` and browser-control methods from the winit/wgpu thread.
-/// The copied-frame and browser slots are protected by `Mutex`. On Windows,
-/// CEF owns its dedicated UI thread and proxies browser-control operations
-/// called from the host thread.
 use std::{
     collections::VecDeque,
     sync::{
@@ -47,15 +48,9 @@ use cef::{
 
 // ── Public config ─────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct WindowsCefConfig {
     pub surface: CefSurfaceConfig,
-}
-impl Default for WindowsCefConfig {
-    fn default() -> Self {
-        Self {
-            surface: CefSurfaceConfig::default(),
-        }
-    }
 }
 
 // ── Shared callback state ─────────────────────────────────────────────────────
@@ -95,6 +90,9 @@ struct WeldLifeSpanState {
 
 // ── cef-runtime: render handler + client ─────────────────────────────────────
 
+// too_many_arguments: CEF vtable glue takes one argument per handler; the
+// signatures are dictated by CEF, and a params struct would carry the same names.
+#[allow(clippy::too_many_arguments)]
 #[cfg(feature = "cef-runtime")]
 mod cef_backed;
 
@@ -123,8 +121,11 @@ pub struct WindowsCefProducer {
     ime: Arc<crate::ime::LatestComposition>,
     #[cfg(feature = "cef-runtime")]
     downloads: Arc<crate::downloads::Downloads>,
+    #[cfg(feature = "cef-runtime")]
     auth: Arc<crate::auth::AuthChallenges>,
+    #[cfg(feature = "cef-runtime")]
     permissions: Arc<crate::permissions::Permissions>,
+    #[cfg(feature = "cef-runtime")]
     devtools: Arc<crate::devtools::DevToolsChannel>,
     #[cfg(feature = "cef-runtime")]
     snapshots: Arc<crate::snapshot::SnapshotChannel>,
@@ -150,6 +151,10 @@ pub struct WindowsCefProducer {
 #[cfg(feature = "cef-runtime")]
 unsafe impl Send for WindowsCefProducer {}
 
+// needless_return: cfg-dispatch bodies end in `return X;` because a cfg-gated
+// scaffold block follows; when the runtime arm is the only one compiled the
+// return looks needless to clippy but the idiom requires it.
+#[allow(clippy::needless_return)]
 impl WindowsCefProducer {
     /// Create a CEF browser in OSR (windowless + shared-texture) mode.
     ///
@@ -346,7 +351,13 @@ impl WindowsCefProducer {
 
 // unreachable_code: cfg-gated fallback Errs are unreachable on the cef-runtime path.
 // unused_variables/mut: parameters used only in cfg(cef-runtime) branches appear unused on scaffold path.
-#[allow(unreachable_code, unused_mut, unused_variables)]
+// needless_return: cfg-dispatch bodies end in `return X;` so the scaffold block can follow.
+#[allow(
+    unreachable_code,
+    unused_mut,
+    unused_variables,
+    clippy::needless_return
+)]
 impl WindowsCefProducer {
     /// Answer a held permission request. Media hands back the subset being
     /// granted, everything else an accept/deny result.
@@ -439,6 +450,10 @@ impl WindowsCefProducer {
     }
 }
 
+// unreachable_code: shared fallback tails are unreachable on the cef-runtime path.
+// unused_variables: parameters used only in cfg(cef-runtime) branches appear unused on scaffold path.
+// needless_return: cfg-dispatch bodies end in `return X;` so the scaffold block can follow.
+#[allow(unreachable_code, unused_variables, clippy::needless_return)]
 impl CefSurfaceProducer for WindowsCefProducer {
     fn surface_mode(&self) -> CefSurfaceMode {
         CefSurfaceMode::AcceleratedPaint
@@ -497,7 +512,7 @@ impl CefSurfaceProducer for WindowsCefProducer {
         #[cfg(feature = "cef-runtime")]
         {
             self.metrics.lock().unwrap().set_size(size);
-            if let Some(mut host) = self.browser().and_then(|browser| browser.host()) {
+            if let Some(host) = self.browser().and_then(|browser| browser.host()) {
                 host.was_resized();
                 // Force a fresh paint for newly exposed regions after resize.
                 host.invalidate(cef::PaintElementType::default());
@@ -719,7 +734,7 @@ impl CefSurfaceProducer for WindowsCefProducer {
             // CEF only re-reads GetViewRect / GetScreenInfo when told the view
             // changed, so a scale change has to be announced like a resize or
             // nothing repaints at the new density.
-            if let Some(mut host) = self.browser().and_then(|browser| browser.host()) {
+            if let Some(host) = self.browser().and_then(|browser| browser.host()) {
                 host.notify_screen_info_changed();
                 host.was_resized();
                 host.invalidate(cef::PaintElementType::default());
@@ -748,7 +763,7 @@ impl CefSurfaceProducer for WindowsCefProducer {
 
     fn navigate_to_url(&mut self, url: &str) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        if let Some(mut frame) = self.browser().and_then(|browser| browser.main_frame()) {
+        if let Some(frame) = self.browser().and_then(|browser| browser.main_frame()) {
             frame.load_url(Some(&url.into()));
             return Ok(());
         }
@@ -757,7 +772,7 @@ impl CefSurfaceProducer for WindowsCefProducer {
 
     fn navigate_to_string(&mut self, content: &str, _mime_type: &str) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        if let Some(mut frame) = self.browser().and_then(|browser| browser.main_frame()) {
+        if let Some(frame) = self.browser().and_then(|browser| browser.main_frame()) {
             frame.load_url(Some(&content.into()));
             return Ok(());
         }
@@ -767,7 +782,7 @@ impl CefSurfaceProducer for WindowsCefProducer {
     fn request_repaint(&mut self) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
-            if let Some(mut host) = self.browser().and_then(|browser| browser.host()) {
+            if let Some(host) = self.browser().and_then(|browser| browser.host()) {
                 // The same pair `resize` uses: was_resized makes CEF re-query
                 // the view rect, invalidate asks for the paint itself.
                 host.was_resized();
@@ -1210,11 +1225,11 @@ impl CefSurfaceProducer for WindowsCefProducer {
         {
             self.closed.store(false, Ordering::Release);
             self.close_requested.store(true, Ordering::Release);
-            if let Some(mut host) = self.browser().and_then(|browser| browser.host()) {
-                eprintln!("weld: requesting CEF browser close");
+            if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+                log::debug!("requesting CEF browser close");
                 host.close_browser(true as _);
             } else {
-                eprintln!("weld: browser close queued until CEF on_after_created");
+                log::debug!("browser close queued until CEF on_after_created");
             }
             return Ok(());
         }

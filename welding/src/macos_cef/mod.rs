@@ -1,18 +1,19 @@
-/// macOS CEF producer: accelerated OSR via `OnAcceleratedPaint` / `IOSurfaceRef`.
-///
-/// # IOSurface retain / release contract
-///
-/// `CefAcceleratedPaintInfo::shared_texture_handle` on macOS is an
-/// `IOSurfaceRef` (`*mut c_void`). Under `cef-runtime` the `on_accelerated_paint`
-/// callback retains the surface via `CFRetain` before returning, and the Metal
-/// importer releases it after wrapping it in a `MTLTexture`.
+//! macOS CEF producer: accelerated OSR via `OnAcceleratedPaint` / `IOSurfaceRef`.
+//!
+//! # IOSurface retain / release contract
+//!
+//! `CefAcceleratedPaintInfo::shared_texture_handle` on macOS is an
+//! `IOSurfaceRef` (`*mut c_void`). Under `cef-runtime` the `on_accelerated_paint`
+//! callback retains the surface via `CFRetain` before returning, and the Metal
+//! importer releases it after wrapping it in a `MTLTexture`.
+
 use std::{
     collections::VecDeque,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
 };
+
+#[cfg(feature = "cef-runtime")]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use dpi::PhysicalSize;
 
@@ -37,16 +38,9 @@ use cef::{
 
 // ── Public config ─────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct MacosCefConfig {
     pub surface: CefSurfaceConfig,
-}
-
-impl Default for MacosCefConfig {
-    fn default() -> Self {
-        Self {
-            surface: CefSurfaceConfig::default(),
-        }
-    }
 }
 
 // ── Shared callback state ─────────────────────────────────────────────────────
@@ -84,6 +78,9 @@ cef::wrap_request_context_handler! {
 
 // ── cef-runtime: render handler + client ─────────────────────────────────────
 
+// too_many_arguments: CEF vtable glue takes one argument per handler; the
+// signatures are dictated by CEF, and a params struct would carry the same names.
+#[allow(clippy::too_many_arguments)]
 #[cfg(feature = "cef-runtime")]
 mod cef_backed;
 
@@ -106,9 +103,13 @@ pub struct MacosCefProducer {
     ime: Arc<crate::ime::LatestComposition>,
     #[cfg(feature = "cef-runtime")]
     cookies: Arc<crate::cookies::CookieJar>,
+    #[cfg(feature = "cef-runtime")]
     downloads: Arc<crate::downloads::Downloads>,
+    #[cfg(feature = "cef-runtime")]
     auth: Arc<crate::auth::AuthChallenges>,
+    #[cfg(feature = "cef-runtime")]
     permissions: Arc<crate::permissions::Permissions>,
+    #[cfg(feature = "cef-runtime")]
     devtools: Arc<crate::devtools::DevToolsChannel>,
     #[cfg(feature = "cef-runtime")]
     snapshots: Arc<crate::snapshot::SnapshotChannel>,
@@ -142,6 +143,10 @@ pub struct PreparedMacosCefProfile {
 #[cfg(feature = "cef-runtime")]
 unsafe impl Send for MacosCefProducer {}
 
+// needless_return: cfg-dispatch bodies end in `return X;` because a cfg-gated
+// scaffold block follows; when the runtime arm is the only one compiled the
+// return looks needless to clippy but the idiom requires it.
+#[allow(clippy::needless_return)]
 impl MacosCefProducer {
     pub fn new(_runtime: &CefRuntime, config: MacosCefConfig) -> Result<Self, WeldError> {
         #[cfg(feature = "cef-runtime")]
@@ -338,7 +343,15 @@ impl MacosCefProducer {
 
 // ── CefSurfaceProducer impl ───────────────────────────────────────────────────
 
-#[allow(unreachable_code, unused_mut, unused_variables)]
+// unreachable_code: cfg-gated fallback Errs are unreachable on the cef-runtime path.
+// unused_variables/mut: parameters used only in cfg(cef-runtime) branches appear unused on scaffold path.
+// needless_return: cfg-dispatch bodies end in `return X;` so the scaffold block can follow.
+#[allow(
+    unreachable_code,
+    unused_mut,
+    unused_variables,
+    clippy::needless_return
+)]
 impl MacosCefProducer {
     /// Answer a held permission request. Media hands back the subset being
     /// granted, everything else an accept/deny result.
@@ -431,6 +444,10 @@ impl MacosCefProducer {
     }
 }
 
+// unreachable_code: shared fallback tails are unreachable on the cef-runtime path.
+// unused_variables: parameters used only in cfg(cef-runtime) branches appear unused on scaffold path.
+// needless_return: cfg-dispatch bodies end in `return X;` so the scaffold block can follow.
+#[allow(unreachable_code, unused_variables, clippy::needless_return)]
 impl CefSurfaceProducer for MacosCefProducer {
     fn surface_mode(&self) -> CefSurfaceMode {
         CefSurfaceMode::AcceleratedPaint
@@ -490,7 +507,7 @@ impl CefSurfaceProducer for MacosCefProducer {
         #[cfg(feature = "cef-runtime")]
         {
             self.metrics.lock().unwrap().set_size(size);
-            if let Some(mut host) = self.browser.host() {
+            if let Some(host) = self.browser.host() {
                 host.was_resized();
             }
             return Ok(());
@@ -700,7 +717,7 @@ impl CefSurfaceProducer for MacosCefProducer {
             // CEF only re-reads GetViewRect / GetScreenInfo when told the view
             // changed, so a scale change has to be announced like a resize or
             // nothing repaints at the new density.
-            if let Some(mut host) = self.browser.host() {
+            if let Some(host) = self.browser.host() {
                 host.notify_screen_info_changed();
                 host.was_resized();
                 host.invalidate(cef::PaintElementType::default());
@@ -729,7 +746,7 @@ impl CefSurfaceProducer for MacosCefProducer {
 
     fn navigate_to_url(&mut self, url: &str) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        if let Some(mut frame) = self.browser.main_frame() {
+        if let Some(frame) = self.browser.main_frame() {
             frame.load_url(Some(&url.into()));
             return Ok(());
         }
@@ -738,7 +755,7 @@ impl CefSurfaceProducer for MacosCefProducer {
 
     fn navigate_to_string(&mut self, content: &str, _mime_type: &str) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
-        if let Some(mut frame) = self.browser.main_frame() {
+        if let Some(frame) = self.browser.main_frame() {
             frame.load_url(Some(&content.into()));
             return Ok(());
         }
@@ -748,7 +765,7 @@ impl CefSurfaceProducer for MacosCefProducer {
     fn request_repaint(&mut self) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
-            if let Some(mut host) = self.browser.host() {
+            if let Some(host) = self.browser.host() {
                 // The same pair `resize` uses: was_resized makes CEF re-query
                 // the view rect, invalidate asks for the paint itself.
                 host.was_resized();
@@ -1146,7 +1163,7 @@ impl CefSurfaceProducer for MacosCefProducer {
     fn close(&mut self) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
-            if let Some(mut host) = self.browser.host() {
+            if let Some(host) = self.browser.host() {
                 host.close_browser(true as _);
             }
             self.browser_id = 0;

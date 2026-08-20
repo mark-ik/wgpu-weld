@@ -62,7 +62,7 @@ fault, so it reports that as a failure and this note supplies the reading.
 CDP and downloads were both recorded live in the first pass because the
 battery asserted nothing for them. Both work on 151:
 
-```
+```text
 CDP sent {"id":1,"method":"Browser.getVersion"}
 CDP <-   {"id":1,"result":{"protocolVersion":"1.3","product":"Chrome/151.0.7922.138",...}}
 ```
@@ -80,7 +80,7 @@ transfer runs to completion and reports every byte, and then nothing is
 written. No file, no `.crdownload` partial, `is_complete` never true and
 `full_path` empty for the life of the item:
 
-```
+```text
 DLPROBE id=1 complete=false canceled=false received=28 total=28 full_path=""
 ```
 

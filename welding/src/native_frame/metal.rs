@@ -12,9 +12,7 @@ pub(super) fn import_metal(
     ctx: &HostWgpuContext,
 ) -> Result<ImportedTexture, ImportError> {
     use objc2_io_surface::IOSurfaceRef;
-    use objc2_metal::{
-        MTLDevice, MTLStorageMode, MTLTextureDescriptor, MTLTextureUsage,
-    };
+    use objc2_metal::{MTLDevice, MTLStorageMode, MTLTextureDescriptor, MTLTextureUsage};
     use std::ffi::c_void;
 
     if frame.io_surface.is_null() {
@@ -42,8 +40,8 @@ pub(super) fn import_metal(
     }
 
     let texture = unsafe {
-        let mtl_device = crate::wgpu_compat::metal_device(&ctx.device)
-            .ok_or_else(|| ImportError::BackendMismatch {
+        let mtl_device =
+            crate::wgpu_compat::metal_device(&ctx.device).ok_or(ImportError::BackendMismatch {
                 frame: NativeFrameKind::MetalTextureRef,
                 wgpu: ctx.backend,
             })?;
@@ -61,8 +59,7 @@ pub(super) fn import_metal(
         desc.setStorageMode(MTLStorageMode::Shared);
         desc.setUsage(MTLTextureUsage::ShaderRead);
 
-        let create_result =
-            mtl_device.newTextureWithDescriptor_iosurface_plane(&desc, io_surf, 0);
+        let create_result = mtl_device.newTextureWithDescriptor_iosurface_plane(&desc, io_surf, 0);
         // Release our retain; Metal holds its own reference after create.
         CFRelease(frame.io_surface);
         let mtl_texture = create_result.ok_or_else(|| {
@@ -132,8 +129,7 @@ pub(super) fn import_metal(
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: frame.format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_SRC,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             },
             // Metal has no explicit image layout; this imported frame enters

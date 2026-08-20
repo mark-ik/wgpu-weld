@@ -2,7 +2,7 @@
 //!
 //! Split out of `main.rs` to stay under the 600-line ceiling.
 
-use crate::{probe, DemoState};
+use crate::{DemoState, probe};
 
 pub(crate) fn render(s: &mut DemoState) {
     let output = match s.surface.get_current_texture() {
@@ -103,8 +103,8 @@ pub(crate) fn render(s: &mut DemoState) {
     }
 
     s.host_ctx.queue.submit([enc.finish()]);
-            // wgpu 30 moved presentation from SurfaceTexture to Queue.
-            s.host_ctx.queue.present(output);
+    // wgpu 30 moved presentation from SurfaceTexture to Queue.
+    s.host_ctx.queue.present(output);
     s.window.request_redraw();
 }
 
@@ -141,7 +141,11 @@ pub(crate) fn report(s: &mut DemoState) {
     if s.popups_imported > 0 {
         match s.popup.as_ref() {
             Some(popup) => {
-                match probe::sample(&s.host_ctx.device, &s.host_ctx.queue, &popup.texture.texture) {
+                match probe::sample(
+                    &s.host_ctx.device,
+                    &s.host_ctx.queue,
+                    &popup.texture.texture,
+                ) {
                     Ok(rb) if rb.looks_painted() => log::info!(
                         "POPUP PASS: {} popup surface(s), {}x{} at {},{}, {}/{} bytes non-zero, \
                          first pixels {:?}",
@@ -168,7 +172,6 @@ pub(crate) fn report(s: &mut DemoState) {
         }
     }
 }
-
 
 /// Shared vocabulary to winit's icons.
 pub(crate) fn winit_cursor(shape: &welding::CursorShape) -> winit::window::Cursor {

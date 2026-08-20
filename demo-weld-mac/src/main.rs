@@ -566,7 +566,9 @@ impl DemoApp {
             let back = s.producer.can_go_back();
             let forward = s.producer.can_go_forward();
             eprintln!("weld demo: can_go_back={back} can_go_forward={forward}");
-            receipt(format_args!("history: can_go_back={back} can_go_forward={forward}"));
+            receipt(format_args!(
+                "history: can_go_back={back} can_go_forward={forward}"
+            ));
         }
         // The normal snapshot is an early compositor receipt. A scripted
         // battery can opt into waiting until its last input has crossed into
@@ -855,7 +857,11 @@ fn receipt(line: std::fmt::Arguments<'_>) {
     let Some(path) = std::env::var_os("WELD_RECEIPT") else {
         return;
     };
-    let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) else {
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
         return;
     };
     let _ = writeln!(file, "{line}");

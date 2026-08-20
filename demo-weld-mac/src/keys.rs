@@ -2,6 +2,7 @@
 
 use winit::keyboard::KeyCode;
 
+#[rustfmt::skip]
 pub fn keycode_to_vk(kc: KeyCode) -> i32 {
     match kc {
         KeyCode::Backspace                             => 0x08,

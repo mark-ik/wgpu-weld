@@ -137,6 +137,32 @@ fn safe_file_name(name: &str) -> String {
     }
 }
 
+/// Give CEF the platform's own separators.
+///
+/// CEF on Windows **silently discards** a download whose destination contains
+/// forward slashes. `on_before_download` is answered, the transfer runs to
+/// completion and reports every byte, and then nothing is written: no file, no
+/// `.crdownload` partial, `is_complete` never true and `full_path` empty for
+/// the life of the item. There is no error anywhere to notice.
+///
+/// A host is well within its rights to hand over `C:/downloads`, and one under
+/// Git Bash or any POSIX-shaped config will. Normalising here costs nothing and
+/// removes a failure mode whose only symptom is a file that never appears.
+#[cfg(windows)]
+fn native_path(path: PathBuf) -> PathBuf {
+    let s = path.to_string_lossy();
+    if s.contains('/') {
+        PathBuf::from(s.replace('/', "\\"))
+    } else {
+        path
+    }
+}
+
+#[cfg(not(windows))]
+fn native_path(path: PathBuf) -> PathBuf {
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,30 +264,4 @@ mod tests {
         assert_eq!(d.take_pending(3), None);
         assert!(d.mark_started(3), "state survived forget()");
     }
-}
-
-/// Give CEF the platform's own separators.
-///
-/// CEF on Windows **silently discards** a download whose destination contains
-/// forward slashes. `on_before_download` is answered, the transfer runs to
-/// completion and reports every byte, and then nothing is written: no file, no
-/// `.crdownload` partial, `is_complete` never true and `full_path` empty for
-/// the life of the item. There is no error anywhere to notice.
-///
-/// A host is well within its rights to hand over `C:/downloads`, and one under
-/// Git Bash or any POSIX-shaped config will. Normalising here costs nothing and
-/// removes a failure mode whose only symptom is a file that never appears.
-#[cfg(windows)]
-fn native_path(path: PathBuf) -> PathBuf {
-    let s = path.to_string_lossy();
-    if s.contains('/') {
-        PathBuf::from(s.replace('/', "\\"))
-    } else {
-        path
-    }
-}
-
-#[cfg(not(windows))]
-fn native_path(path: PathBuf) -> PathBuf {
-    path
 }

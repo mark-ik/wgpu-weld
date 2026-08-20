@@ -343,6 +343,10 @@ pub use dx12::D3d11CallbackFrameCopier;
 /// the arms for other platforms return a typed error rather than compiling out.
 pub struct WgpuTextureImporter;
 
+// needless_return: platform-dispatch bodies end in `return X;` because a
+// cfg-gated other-platform arm follows; on the matching platform the return
+// looks needless to clippy but the idiom requires it.
+#[allow(clippy::needless_return)]
 impl WgpuTextureImporter {
     pub fn import(
         frame: NativeFrame,

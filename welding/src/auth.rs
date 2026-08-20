@@ -16,6 +16,7 @@
 //! Nothing here logs a username or a password, and no event carries one. The
 //! credentials the host supplies go straight to CEF.
 
+#[cfg(feature = "cef-runtime")]
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -65,6 +66,9 @@ impl AuthChallenges {
 
     /// How many challenges are waiting on the host. A number that only grows
     /// means the host is being told about challenges and never answering.
+    // Diagnostic accessor: exercised by unit tests today, kept for host-side
+    // leak checks.
+    #[allow(dead_code)]
     pub(crate) fn outstanding(&self) -> usize {
         #[cfg(feature = "cef-runtime")]
         {

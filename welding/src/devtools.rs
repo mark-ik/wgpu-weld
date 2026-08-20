@@ -67,7 +67,10 @@ mod tests {
     #[test]
     fn the_protocol_is_off_until_asked_for() {
         let c = DevToolsChannel::default();
-        assert!(!c.is_enabled(), "CDP is chatty; do not subscribe by default");
+        assert!(
+            !c.is_enabled(),
+            "CDP is chatty; do not subscribe by default"
+        );
         c.set_enabled(true);
         assert!(c.is_enabled());
     }

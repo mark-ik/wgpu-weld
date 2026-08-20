@@ -15,7 +15,7 @@
 
 #[cfg(target_os = "macos")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use cef::build_util::mac::{build_bundle, BundleInfo};
+    use cef::build_util::mac::{BundleInfo, build_bundle};
 
     let output = std::path::PathBuf::from(
         std::env::args()

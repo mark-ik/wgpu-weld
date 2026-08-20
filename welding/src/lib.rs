@@ -1,4 +1,7 @@
 #![doc = include_str!("../README.md")]
+// The subprocess-tax doc examples exist to show WHERE in `main` the call must
+// sit, so their `fn main` wrapper is the point, not boilerplate.
+#![allow(clippy::needless_doctest_main)]
 
 // Alias the feature-selected wgpu family back to the plain crate names. Public
 // re-exports let hosts name the exact Device/Texture types welding expects.
@@ -41,21 +44,25 @@ mod wgpu_compat;
 // Only the producers consume this, and they are cef-runtime-only. The logic is
 // worth unit-testing either way, so allow rather than cfg the module out.
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
-mod popup;
+pub mod app;
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
-mod view;
+mod auth;
+#[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
+mod cookies;
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
 mod cursor;
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
+mod devtools;
+#[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
+mod downloads;
+#[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
 mod ime;
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
-mod auth;
-mod cookies;
-mod devtools;
-mod downloads;
 mod permissions;
 #[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
-pub mod app;
+mod popup;
+#[cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
+mod view;
 
 #[cfg(feature = "cef-runtime")]
 mod cef_input;
@@ -90,20 +97,21 @@ pub use linux_cef::{LinuxCefConfig as PlatformCefConfig, LinuxCefProducer as Pla
 
 // ── Flat re-exports ───────────────────────────────────────────────────────────
 
+pub use app::ScriptResult;
+pub use auth::AuthId;
+pub use downloads::DownloadId;
 pub use error::WeldError;
 pub use native_frame::{
     HostWgpuContext, ImportError, ImportedTexture, InteropBackend, NativeFrame, NativeFrameKind,
     WgpuTextureImporter,
 };
-pub use app::ScriptResult;
+pub use permissions::{PermissionId, PermissionKind};
 pub use runtime::{CefLogSeverity, CefRuntime, CefRuntimeConfig};
 pub use surface::{
     BrowserFeatureStatus, CefSurfaceCapabilities, CefSurfaceConfig, CefSurfaceMode,
-    CefSurfaceProducer, Cookie, EventModifiers, FocusDirection, KeyEvent, KeyEventKind,
-    CursorShape, ImeComposition, MouseAction, MouseButton, MouseEvent, NavigationEvent, PopupRect,
-    ContextMenuTarget, PopupSurface, ProcessTerminationStatus, SameSite, ZoomCommand, DragEventKind,
-    ContactDevice, DragFile, DragInput, DragOperations, DragPayload, TouchInput, TouchPhase,
+    CefSurfaceProducer, ContactDevice, ContextMenuTarget, Cookie, CursorShape, DragEventKind,
+    DragFile, DragInput, DragOperations, DragPayload, EventModifiers, FocusDirection,
+    ImeComposition, KeyEvent, KeyEventKind, MouseAction, MouseButton, MouseEvent, NavigationEvent,
+    PopupRect, PopupSurface, ProcessTerminationStatus, SameSite, TouchInput, TouchPhase,
+    ZoomCommand,
 };
-pub use auth::AuthId;
-pub use downloads::DownloadId;
-pub use permissions::{PermissionId, PermissionKind};

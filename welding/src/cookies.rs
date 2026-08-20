@@ -73,7 +73,7 @@ impl FinishOnDrop {
     }
 
     pub(crate) fn jar(&self) -> &CookieJar {
-        &self.0 .0
+        &self.0.0
     }
 }
 
@@ -176,7 +176,11 @@ mod tests {
         let copy = guard.clone();
         assert_eq!(jar.take(), None);
         drop(guard);
-        assert_eq!(jar.take(), None, "a surviving handle means the read is still open");
+        assert_eq!(
+            jar.take(),
+            None,
+            "a surviving handle means the read is still open"
+        );
         drop(copy);
         assert_eq!(jar.take(), Some(Vec::new()));
     }

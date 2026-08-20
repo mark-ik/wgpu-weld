@@ -22,10 +22,10 @@ use winit::{
 };
 
 use welding::{
-    windows_cef::{WindowsCefConfig, WindowsCefProducer},
     CefRuntime, CefRuntimeConfig, CefSurfaceConfig, CefSurfaceProducer, EventModifiers,
     FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent, KeyEventKind, MouseAction,
     MouseButton, MouseEvent, PopupSurface,
+    windows_cef::{WindowsCefConfig, WindowsCefProducer},
 };
 
 mod blit;
@@ -246,7 +246,9 @@ impl ApplicationHandler for DemoApp {
                 // A forced WELD_SCALE outranks it: on a 1x panel winit reports
                 // 1.0 here and would undo the very override being tested.
                 if forced_scale().is_some() {
-                    log::info!("ScaleFactorChanged({scale_factor}) ignored: WELD_SCALE pins the scale");
+                    log::info!(
+                        "ScaleFactorChanged({scale_factor}) ignored: WELD_SCALE pins the scale"
+                    );
                 } else if let Err(err) = s.producer.set_scale_factor(scale_factor as f32) {
                     log_scale_err(err);
                 }
@@ -291,18 +293,16 @@ impl ApplicationHandler for DemoApp {
                         eprintln!("weld demo: send RawKeyDown failed: {err}");
                     }
                     // Char for printable text — winit's .text field includes Shift
-                    if let Some(ch) =
-                        ke.text.as_ref().and_then(|t| t.chars().next())
-                    {
-                        if let Err(err) = s.producer.send_keyboard_input(KeyEvent {
+                    if let Some(ch) = ke.text.as_ref().and_then(|t| t.chars().next())
+                        && let Err(err) = s.producer.send_keyboard_input(KeyEvent {
                             kind: KeyEventKind::Char,
                             windows_key_code: vk,
                             native_key_code: 0,
                             character: Some(ch),
                             modifiers: s.mods,
-                        }) {
-                            eprintln!("weld demo: send Char failed: {err}");
-                        }
+                        })
+                    {
+                        eprintln!("weld demo: send Char failed: {err}");
                     }
                 } else {
                     if let Err(err) = s.producer.send_keyboard_input(KeyEvent {
@@ -344,8 +344,12 @@ impl ApplicationHandler for DemoApp {
                 };
                 match mb {
                     MouseButton::Left => s.mods.left_mouse_button = state == ElementState::Pressed,
-                    MouseButton::Middle => s.mods.middle_mouse_button = state == ElementState::Pressed,
-                    MouseButton::Right => s.mods.right_mouse_button = state == ElementState::Pressed,
+                    MouseButton::Middle => {
+                        s.mods.middle_mouse_button = state == ElementState::Pressed
+                    }
+                    MouseButton::Right => {
+                        s.mods.right_mouse_button = state == ElementState::Pressed
+                    }
                 }
                 if let Err(err) = s.producer.send_mouse_input(MouseEvent {
                     x: s.cursor.0 as i32,
@@ -360,16 +364,17 @@ impl ApplicationHandler for DemoApp {
 
             WindowEvent::MouseWheel { delta, .. } => {
                 let (dx, dy) = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => {
-                        ((x * 20.0) as i32, (y * 20.0) as i32)
-                    }
+                    MouseScrollDelta::LineDelta(x, y) => ((x * 20.0) as i32, (y * 20.0) as i32),
                     MouseScrollDelta::PixelDelta(d) => (d.x as i32, d.y as i32),
                 };
                 if let Err(err) = s.producer.send_mouse_input(MouseEvent {
                     x: s.cursor.0 as i32,
                     y: s.cursor.1 as i32,
                     button: MouseButton::Left,
-                    action: MouseAction::WheelScrolled { delta_x: dx, delta_y: dy },
+                    action: MouseAction::WheelScrolled {
+                        delta_x: dx,
+                        delta_y: dy,
+                    },
                     modifiers: s.mods,
                 }) {
                     eprintln!("weld demo: mouse wheel failed: {err}");
@@ -422,37 +427,39 @@ impl ApplicationHandler for DemoApp {
 
                 // WELD_COOKIE_URL: request the store once a page has loaded,
                 // then print whatever comes back. Proves the async read.
-                if !s.cookies_requested && s.frames_drawn > 90 {
-                    if let Ok(url) = std::env::var("WELD_COOKIE_URL") {
-                        s.cookies_requested = true;
-                        // Write one first, so the read has something to find
-                        // even on a site that sets none.
-                        let probe = welding::Cookie {
-                            name: "weld_probe".into(),
-                            value: "w5".into(),
-                            domain: "example.com".into(),
-                            path: "/".into(),
-                            ..Default::default()
-                        };
-                        match s.producer.set_cookie(&url, &probe) {
-                            Ok(()) => eprintln!("weld demo: set_cookie accepted"),
-                            Err(e) => eprintln!("weld demo: set_cookie failed: {e}"),
-                        }
-                        match s.producer.request_cookies(Some(&url)) {
-                            Ok(()) => eprintln!("weld demo: requested cookies for {url}"),
-                            Err(e) => eprintln!("weld demo: request_cookies failed: {e}"),
-                        }
+                if !s.cookies_requested
+                    && s.frames_drawn > 90
+                    && let Ok(url) = std::env::var("WELD_COOKIE_URL")
+                {
+                    s.cookies_requested = true;
+                    // Write one first, so the read has something to find
+                    // even on a site that sets none.
+                    let probe = welding::Cookie {
+                        name: "weld_probe".into(),
+                        value: "w5".into(),
+                        domain: "example.com".into(),
+                        path: "/".into(),
+                        ..Default::default()
+                    };
+                    match s.producer.set_cookie(&url, &probe) {
+                        Ok(()) => eprintln!("weld demo: set_cookie accepted"),
+                        Err(e) => eprintln!("weld demo: set_cookie failed: {e}"),
+                    }
+                    match s.producer.request_cookies(Some(&url)) {
+                        Ok(()) => eprintln!("weld demo: requested cookies for {url}"),
+                        Err(e) => eprintln!("weld demo: request_cookies failed: {e}"),
                     }
                 }
                 // WELD_SCRIPT: evaluate once the page is up, then print the
                 // value the renderer sent back.
-                if !s.script_requested && s.frames_drawn > 90 {
-                    if let Ok(script) = std::env::var("WELD_SCRIPT") {
-                        s.script_requested = true;
-                        match s.producer.request_script_result(&script) {
-                            Ok(id) => eprintln!("weld demo: script request #{id}: {script}"),
-                            Err(e) => eprintln!("weld demo: request_script_result failed: {e}"),
-                        }
+                if !s.script_requested
+                    && s.frames_drawn > 90
+                    && let Ok(script) = std::env::var("WELD_SCRIPT")
+                {
+                    s.script_requested = true;
+                    match s.producer.request_script_result(&script) {
+                        Ok(id) => eprintln!("weld demo: script request #{id}: {script}"),
+                        Err(e) => eprintln!("weld demo: request_script_result failed: {e}"),
                     }
                 }
                 if let Some(result) = s.producer.poll_script_result() {
@@ -468,7 +475,11 @@ impl ApplicationHandler for DemoApp {
                             if let Some(path) = s.snapshot_path.as_ref() {
                                 match std::fs::write(path, &bytes) {
                                     Ok(()) if bytes.starts_with(b"\x89PNG\r\n\x1a\n") => {
-                                        eprintln!("weld demo: PNG snapshot {} bytes -> {}", bytes.len(), path.display());
+                                        eprintln!(
+                                            "weld demo: PNG snapshot {} bytes -> {}",
+                                            bytes.len(),
+                                            path.display()
+                                        );
                                     }
                                     Ok(()) => eprintln!("weld demo: snapshot was not a PNG"),
                                     Err(e) => eprintln!("weld demo: could not write snapshot: {e}"),
@@ -491,11 +502,7 @@ impl ApplicationHandler for DemoApp {
 
                 while let Some(event) = s.producer.poll_navigation_event() {
                     eprintln!("weld demo: navigation event: {event:?}");
-                    scripted::recover_if_crashed(
-                        &mut s.producer,
-                        &s.recover_url,
-                        &event,
-                    );
+                    scripted::recover_if_crashed(&mut s.producer, &s.recover_url, &event);
                     scripted::answer_auth_if_challenged(&mut s.producer, &event);
                     scripted::answer_permission_if_asked(&mut s.producer, &event);
                     scripted::finish_page_drag_if_started(&mut s.producer, &event);
@@ -563,8 +570,7 @@ impl ApplicationHandler for DemoApp {
                 let output = match s.surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(t)
                     | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-                    wgpu::CurrentSurfaceTexture::Lost
-                    | wgpu::CurrentSurfaceTexture::Outdated => {
+                    wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                         s.surface.configure(&s.host_ctx.device, &s.surface_config);
                         s.window.request_redraw();
                         return;
@@ -580,26 +586,33 @@ impl ApplicationHandler for DemoApp {
                     }
                 };
 
-                let target = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-                let mut enc = s.host_ctx.device.create_command_encoder(
-                    &wgpu::CommandEncoderDescriptor { label: Some("blit") },
-                );
+                let target = output
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+                let mut enc =
+                    s.host_ctx
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("blit"),
+                        });
 
                 let make_bg = |view: &wgpu::TextureView| {
-                    s.host_ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: None,
-                        layout: &s.bg_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::Sampler(&s.sampler),
-                            },
-                        ],
-                    })
+                    s.host_ctx
+                        .device
+                        .create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: None,
+                            layout: &s.bg_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::TextureView(view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::Sampler(&s.sampler),
+                                },
+                            ],
+                        })
                 };
                 let bg = s.frame.as_ref().map(|f| make_bg(&f.view));
                 let popup_bg = s.popup.as_ref().map(|p| make_bg(&p.texture.view));
@@ -608,7 +621,12 @@ impl ApplicationHandler for DemoApp {
                     let clear_color = if bg.is_some() {
                         wgpu::Color::BLACK
                     } else {
-                        wgpu::Color { r: 0.1, g: 0.1, b: 0.1, a: 1.0 }
+                        wgpu::Color {
+                            r: 0.1,
+                            g: 0.1,
+                            b: 0.1,
+                            a: 1.0,
+                        }
                     };
                     let mut rpass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("blit"),
@@ -649,15 +667,15 @@ impl ApplicationHandler for DemoApp {
                 }
 
                 s.host_ctx.queue.submit([enc.finish()]);
-            // wgpu 30 moved presentation from SurfaceTexture to Queue.
-            s.host_ctx.queue.present(output);
+                // wgpu 30 moved presentation from SurfaceTexture to Queue.
+                s.host_ctx.queue.present(output);
                 // WELD_EXIT_AFTER_FRAMES makes an unattended probe finite.
                 // This counts presentation ticks, not imported frames: a
                 // static accelerated browser may paint only once.
                 let frame_limit_reached = std::env::var("WELD_EXIT_AFTER_FRAMES")
-                        .ok()
-                        .and_then(|n| n.parse::<u32>().ok())
-                        .is_some_and(|n| s.frames_drawn >= n);
+                    .ok()
+                    .and_then(|n| n.parse::<u32>().ok())
+                    .is_some_and(|n| s.frames_drawn >= n);
                 let timeout_reached = self
                     .timeout
                     .is_some_and(|timeout| self.started_at.elapsed() >= timeout);
@@ -702,7 +720,6 @@ impl ApplicationHandler for DemoApp {
     }
 }
 
-
 // ── main ──────────────────────────────────────────────────────────────────────
 
 fn main() {
@@ -731,7 +748,10 @@ fn main() {
                 None => (s.to_owned(), None),
             })
             .collect();
-        eprintln!("weld demo: switches {:?}", runtime_config.command_line_switches);
+        eprintln!(
+            "weld demo: switches {:?}",
+            runtime_config.command_line_switches
+        );
     }
     // WELD_CACHE_ROOT is the CEF root cache. A WELD_PROFILE directory must
     // live inside it; this is CEF's process-wide RequestContext invariant.
@@ -741,8 +761,7 @@ fn main() {
     // WELD_UA replaces the whole User-Agent; WELD_UA_PRODUCT only the token.
     runtime_config.user_agent = std::env::var("WELD_UA").ok();
     runtime_config.user_agent_product = std::env::var("WELD_UA_PRODUCT").ok();
-    let runtime = CefRuntime::initialize(runtime_config)
-        .expect("weld: CEF initialize failed");
+    let runtime = CefRuntime::initialize(runtime_config).expect("weld: CEF initialize failed");
 
     let event_loop = EventLoop::new().expect("event loop creation failed");
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -796,7 +815,6 @@ fn winit_cursor(shape: &welding::CursorShape) -> winit::window::Cursor {
 /// WELD_SCALE pins the scale factor for testing HiDPI on a 1x display. When it
 /// is set it has to survive winit's ScaleFactorChanged, which reports the real
 /// display density.
-
 fn forced_scale() -> Option<f64> {
     std::env::var("WELD_SCALE")
         .ok()

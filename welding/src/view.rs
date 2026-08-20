@@ -106,8 +106,18 @@ mod tests {
         assert_eq!(m.point_to_dip(1280, 800), (640, 400));
         // A popup CEF places at DIP 40,80 is drawn at physical 80,160.
         assert_eq!(
-            m.rect_to_physical(PopupRect { x: 40, y: 80, width: 200, height: 95 }),
-            PopupRect { x: 80, y: 160, width: 400, height: 190 }
+            m.rect_to_physical(PopupRect {
+                x: 40,
+                y: 80,
+                width: 200,
+                height: 95
+            }),
+            PopupRect {
+                x: 80,
+                y: 160,
+                width: 400,
+                height: 190
+            }
         );
     }
 
@@ -119,9 +129,18 @@ mod tests {
 
     #[test]
     fn nonsense_scales_are_clamped_not_fatal() {
-        assert_eq!(ViewMetrics::new(PhysicalSize::new(800, 600), 0.0).scale(), 0.25);
-        assert_eq!(ViewMetrics::new(PhysicalSize::new(800, 600), -3.0).scale(), 0.25);
-        assert_eq!(ViewMetrics::new(PhysicalSize::new(800, 600), f32::NAN).scale(), 1.0);
+        assert_eq!(
+            ViewMetrics::new(PhysicalSize::new(800, 600), 0.0).scale(),
+            0.25
+        );
+        assert_eq!(
+            ViewMetrics::new(PhysicalSize::new(800, 600), -3.0).scale(),
+            0.25
+        );
+        assert_eq!(
+            ViewMetrics::new(PhysicalSize::new(800, 600), f32::NAN).scale(),
+            1.0
+        );
         // A degenerate view still reports at least one DIP.
         let m = ViewMetrics::new(PhysicalSize::new(1, 1), 8.0);
         assert_eq!(m.logical(), (1, 1));

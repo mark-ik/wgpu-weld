@@ -5,7 +5,6 @@
 
 use super::*;
 use cef::*;
-use std::ffi::c_void;
 
 cef::wrap_render_handler! {
     pub(super) struct WeldRenderHandler {
@@ -82,7 +81,7 @@ cef::wrap_render_handler! {
                     GetCurrentProcess(),
                     &mut dup,
                     0,
-                    false.into(),
+                    false,
                     DUPLICATE_SAME_ACCESS,
                 )
                 .is_ok()
@@ -103,7 +102,7 @@ cef::wrap_render_handler! {
 
             let generation = self.handler.next_generation.fetch_add(1, Ordering::Relaxed) + 1;
             let frame = Dx12SharedTexture {
-                    handle: dup.0 as *mut c_void,
+                    handle: dup.0,
                     size: PhysicalSize::new(width, height),
                     format,
                     generation,
@@ -120,7 +119,7 @@ cef::wrap_render_handler! {
                     }
                 }
                 Err(err) => {
-                    eprintln!("weld: failed to copy CEF accelerated frame: {err}");
+                    log::error!("failed to copy CEF accelerated frame: {err}");
                 }
             }
         }
@@ -271,15 +270,15 @@ cef::wrap_life_span_handler! {
                     1
                 });
             }
-            if self.state.close_requested.load(Ordering::Acquire) {
-                if let Some(host) = browser.host() {
-                    host.close_browser(1);
-                }
+            if self.state.close_requested.load(Ordering::Acquire)
+                && let Some(host) = browser.host()
+            {
+                host.close_browser(1);
             }
         }
 
         fn on_before_close(&self, _browser: Option<&mut cef::Browser>) {
-            eprintln!("weld: CEF on_before_close");
+            log::debug!("CEF on_before_close");
             *self.state.browser.lock().unwrap() = None;
             self.state.browser_id.store(0, Ordering::Release);
             self.state.closed.store(true, Ordering::Release);

@@ -26,12 +26,15 @@
 //! `document.title` surfaces in the navigation events) and each one becomes a
 //! checkable claim rather than a hope.
 
-use std::{path::PathBuf, time::{Duration, Instant}};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use welding::{
     CefSurfaceProducer, DragEventKind, DragFile, DragInput, DragOperations, DragPayload,
-    EventModifiers, FocusDirection, KeyEvent, KeyEventKind, MouseAction, MouseButton,
-    MouseEvent, NavigationEvent, ProcessTerminationStatus, TouchInput, TouchPhase,
+    EventModifiers, FocusDirection, KeyEvent, KeyEventKind, MouseAction, MouseButton, MouseEvent,
+    NavigationEvent, ProcessTerminationStatus, TouchInput, TouchPhase,
 };
 
 /// Wait after the page is ready before acting: the first paint can land before
@@ -91,7 +94,12 @@ impl ScriptedInput {
         let drop_file = std::env::var_os("WELD_DROP_FILE").map(PathBuf::from);
         let page_drag = std::env::var("WELD_PAGE_DRAG").ok().and_then(|v| {
             let mut parts = v.split(',').map(|part| part.trim().parse::<i32>().ok());
-            Some((parts.next()??, parts.next()??, parts.next()??, parts.next()??))
+            Some((
+                parts.next()??,
+                parts.next()??,
+                parts.next()??,
+                parts.next()??,
+            ))
         });
         Self {
             click_at,
@@ -166,11 +174,18 @@ impl ScriptedInput {
 
     fn click<P: CefSurfaceProducer + ?Sized>(&self, producer: &mut P) {
         let Some((x, y)) = self.click_at else { return };
-        eprintln!("weld demo: scripted click at {x},{y} (scale {})", producer.scale_factor());
+        eprintln!(
+            "weld demo: scripted click at {x},{y} (scale {})",
+            producer.scale_factor()
+        );
         // A window launched without activation never sees Focused(true), and
         // CEF routes hover, cursor and key updates only to a focused browser.
         let _ = producer.move_focus(FocusDirection::Forward);
-        for action in [MouseAction::Moved, MouseAction::Pressed, MouseAction::Released] {
+        for action in [
+            MouseAction::Moved,
+            MouseAction::Pressed,
+            MouseAction::Released,
+        ] {
             let _ = producer.send_mouse_input(MouseEvent {
                 x,
                 y,
@@ -203,11 +218,19 @@ impl ScriptedInput {
     }
 
     fn drop_file<P: CefSurfaceProducer + ?Sized>(&self, producer: &mut P, kind: DragEventKind) {
-        let Some(path) = self.drop_file.as_ref() else { return };
+        let Some(path) = self.drop_file.as_ref() else {
+            return;
+        };
         let (x, y) = self.touch_at.unwrap_or((10, 10));
-        eprintln!("weld demo: scripted file {kind:?} {} at {x},{y}", path.display());
+        eprintln!(
+            "weld demo: scripted file {kind:?} {} at {x},{y}",
+            path.display()
+        );
         let payload = DragPayload {
-            files: vec![DragFile { path: path.clone(), display_name: None }],
+            files: vec![DragFile {
+                path: path.clone(),
+                display_name: None,
+            }],
             ..Default::default()
         };
         let payload = (kind == DragEventKind::Enter).then_some(payload);
@@ -224,7 +247,9 @@ impl ScriptedInput {
     }
 
     fn page_drag<P: CefSurfaceProducer + ?Sized>(&self, producer: &mut P) {
-        let Some((x0, y0, x1, y1)) = self.page_drag else { return };
+        let Some((x0, y0, x1, y1)) = self.page_drag else {
+            return;
+        };
         eprintln!("weld demo: scripted page drag {x0},{y0} -> {x1},{y1}");
         for (x, y, action) in [
             (x0, y0, MouseAction::Moved),
@@ -256,7 +281,10 @@ impl ScriptedInput {
             x,
             y,
             button: MouseButton::Left,
-            action: MouseAction::WheelScrolled { delta_x: 0, delta_y },
+            action: MouseAction::WheelScrolled {
+                delta_x: 0,
+                delta_y,
+            },
             modifiers: EventModifiers::default(),
         });
     }
@@ -267,7 +295,11 @@ impl ScriptedInput {
         // Chromium wants a Windows virtual-key code on every platform. For an
         // ASCII letter that is the uppercase codepoint.
         let vk = ch.to_ascii_uppercase() as i32;
-        for kind in [KeyEventKind::RawKeyDown, KeyEventKind::Char, KeyEventKind::KeyUp] {
+        for kind in [
+            KeyEventKind::RawKeyDown,
+            KeyEventKind::Char,
+            KeyEventKind::KeyUp,
+        ] {
             let _ = producer.send_keyboard_input(KeyEvent {
                 kind,
                 windows_key_code: vk,
@@ -279,7 +311,9 @@ impl ScriptedInput {
     }
 
     fn compose<P: CefSurfaceProducer + ?Sized>(&self, producer: &mut P) {
-        let Some(text) = self.ime.as_deref() else { return };
+        let Some(text) = self.ime.as_deref() else {
+            return;
+        };
         // WELD_IME_MODE picks which half of the IME path runs, so a failure can
         // be pinned to the composition or to the commit rather than to "IME".
         let mode = std::env::var("WELD_IME_MODE").unwrap_or_else(|_| "both".into());
@@ -327,9 +361,15 @@ impl ScriptedInput {
     }
 
     fn right_click<P: CefSurfaceProducer + ?Sized>(&self, producer: &mut P) {
-        let Some((x, y)) = self.right_click_at else { return };
+        let Some((x, y)) = self.right_click_at else {
+            return;
+        };
         eprintln!("weld demo: scripted right-click at {x},{y}");
-        for action in [MouseAction::Moved, MouseAction::Pressed, MouseAction::Released] {
+        for action in [
+            MouseAction::Moved,
+            MouseAction::Pressed,
+            MouseAction::Released,
+        ] {
             let _ = producer.send_mouse_input(MouseEvent {
                 x,
                 y,
@@ -360,13 +400,23 @@ pub fn answer_auth_if_challenged<P: CefSurfaceProducer + ?Sized>(
     producer: &mut P,
     event: &NavigationEvent,
 ) {
-    let NavigationEvent::AuthChallenged { id, host, realm, scheme, is_proxy, .. } = event else {
+    let NavigationEvent::AuthChallenged {
+        id,
+        host,
+        realm,
+        scheme,
+        is_proxy,
+        ..
+    } = event
+    else {
         return;
     };
     eprintln!(
         "weld demo: auth challenge #{id} host={host} realm={realm:?} scheme={scheme} proxy={is_proxy}"
     );
-    let Ok(spec) = std::env::var("WELD_AUTH") else { return };
+    let Ok(spec) = std::env::var("WELD_AUTH") else {
+        return;
+    };
     let (user, pass) = spec.split_once(':').unwrap_or((spec.as_str(), ""));
     match producer.answer_auth(*id, user, pass) {
         Ok(()) => eprintln!("weld demo: answered auth #{id}"),
@@ -379,11 +429,19 @@ pub fn answer_permission_if_asked<P: CefSurfaceProducer + ?Sized>(
     producer: &mut P,
     event: &NavigationEvent,
 ) {
-    let NavigationEvent::PermissionRequested { id, origin, permissions, raw } = event else {
+    let NavigationEvent::PermissionRequested {
+        id,
+        origin,
+        permissions,
+        raw,
+    } = event
+    else {
         return;
     };
     eprintln!("weld demo: permission #{id} from {origin} wants {permissions:?} ({raw:#x})");
-    let Ok(answer) = std::env::var("WELD_PERMISSIONS") else { return };
+    let Ok(answer) = std::env::var("WELD_PERMISSIONS") else {
+        return;
+    };
     let grant = answer == "grant";
     let result = if grant {
         producer.grant_permission(*id)
@@ -403,7 +461,13 @@ pub fn finish_page_drag_if_started<P: CefSurfaceProducer + ?Sized>(
     producer: &mut P,
     event: &NavigationEvent,
 ) {
-    let NavigationEvent::DragStarted { x, y, allowed_operations, .. } = event else {
+    let NavigationEvent::DragStarted {
+        x,
+        y,
+        allowed_operations,
+        ..
+    } = event
+    else {
         return;
     };
     eprintln!("weld demo: page drag started at {x},{y}, allowed={allowed_operations:?}");

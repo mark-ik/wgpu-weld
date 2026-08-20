@@ -29,10 +29,7 @@ pub(crate) fn bounds_union(rects: &[PopupRect]) -> Option<PopupRect> {
     let mut it = rects.iter().filter(|r| r.width > 0 && r.height > 0);
     let first = *it.next()?;
     let (mut x0, mut y0) = (first.x, first.y);
-    let (mut x1, mut y1) = (
-        first.x + first.width as i32,
-        first.y + first.height as i32,
-    );
+    let (mut x1, mut y1) = (first.x + first.width as i32, first.y + first.height as i32);
     for r in it {
         x0 = x0.min(r.x);
         y0 = y0.min(r.y);
@@ -52,7 +49,12 @@ mod tests {
     use super::*;
 
     fn r(x: i32, y: i32, w: u32, h: u32) -> PopupRect {
-        PopupRect { x, y, width: w, height: h }
+        PopupRect {
+            x,
+            y,
+            width: w,
+            height: h,
+        }
     }
 
     #[test]
@@ -65,7 +67,10 @@ mod tests {
     fn empty_rects_are_ignored_not_counted() {
         // CEF pads with zero-size rects; letting one in would drag the union
         // to the origin and put the candidate window in the corner.
-        assert_eq!(bounds_union(&[r(0, 0, 0, 0), r(40, 60, 10, 12)]), Some(r(40, 60, 10, 12)));
+        assert_eq!(
+            bounds_union(&[r(0, 0, 0, 0), r(40, 60, 10, 12)]),
+            Some(r(40, 60, 10, 12))
+        );
         assert_eq!(bounds_union(&[]), None);
         assert_eq!(bounds_union(&[r(0, 0, 0, 0)]), None);
     }

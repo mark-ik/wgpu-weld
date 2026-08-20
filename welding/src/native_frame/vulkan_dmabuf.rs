@@ -119,13 +119,13 @@ pub(super) fn import_vulkan(
     let frame_generation = frame.generation;
 
     unsafe {
-        let hal_device = ctx
-            .device
-            .as_hal::<wgpu::wgc::api::Vulkan>()
-            .ok_or(ImportError::BackendMismatch {
-                frame: NativeFrameKind::DmaBufImage,
-                wgpu: ctx.backend,
-            })?;
+        let hal_device =
+            ctx.device
+                .as_hal::<wgpu::wgc::api::Vulkan>()
+                .ok_or(ImportError::BackendMismatch {
+                    frame: NativeFrameKind::DmaBufImage,
+                    wgpu: ctx.backend,
+                })?;
         let vk_device = hal_device.raw_device().clone();
         let vk_instance = hal_device.shared_instance().raw_instance().clone();
         let physical_device = hal_device.raw_physical_device();
@@ -256,8 +256,7 @@ unsafe fn allocate_and_bind_dmabuf_memory(
 ) -> Result<ash::vk::DeviceMemory, ImportError> {
     use ash::vk;
 
-    let external_memory_fd_api =
-        ash::khr::external_memory_fd::Device::new(vk_instance, vk_device);
+    let external_memory_fd_api = ash::khr::external_memory_fd::Device::new(vk_instance, vk_device);
 
     let mut fd_properties = vk::MemoryFdPropertiesKHR::default();
     unsafe {
@@ -267,9 +266,7 @@ unsafe fn allocate_and_bind_dmabuf_memory(
                 dmabuf_fd,
                 &mut fd_properties,
             )
-            .map_err(|err| {
-                ImportError::VulkanImport(format!("get_memory_fd_properties: {err}"))
-            })?;
+            .map_err(|err| ImportError::VulkanImport(format!("get_memory_fd_properties: {err}")))?;
     }
 
     let memory_requirements = unsafe { vk_device.get_image_memory_requirements(vulkan_image) };

@@ -6,6 +6,16 @@ on:
   pull_request:
 
 jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
   check:
     name: ${{ matrix.os }} / ${{ matrix.wgpu }}
     runs-on: ${{ matrix.os }}
@@ -18,4 +28,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo check -p welding --lib --no-default-features --features ${{ matrix.wgpu }}
+        with:
+          components: clippy
+      - run: cargo clippy -p welding --lib --no-default-features --features ${{ matrix.wgpu }} -- -D warnings
+      # The scaffold (non-cef-runtime) tests cover the version-independent
+      # logic; one wgpu row per OS is enough to run them.
+      - run: cargo test -p welding --no-default-features --features ${{ matrix.wgpu }}
+        if: matrix.wgpu == 'wgpu-30'

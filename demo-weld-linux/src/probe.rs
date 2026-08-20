@@ -113,8 +113,8 @@ pub fn dump_ppm(
     let unpadded = width * 4;
     // copy_texture_to_buffer wants 256-aligned rows; 1366*4 is not, so the
     // buffer carries padding that has to be skipped when writing pixels out.
-    let padded = unpadded.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
-        * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let padded =
+        unpadded.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
 
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("weld-probe-dump"),

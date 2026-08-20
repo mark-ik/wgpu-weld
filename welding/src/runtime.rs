@@ -96,8 +96,8 @@ pub enum CefLogSeverity {
 #[cfg(feature = "cef-runtime")]
 mod cef_backed {
     use super::*;
-    use cef::*;
     use cef::args::Args;
+    use cef::*;
 
     // Minimal no-op App impl: CEF requires an App on all initialize paths; this
     // satisfies that without requiring callers to depend on the cef crate.
@@ -116,9 +116,7 @@ mod cef_backed {
         /// Returns `Ok(Some(exit_code))` for CEF subprocesses — the caller must
         /// `std::process::exit(exit_code)`. Returns `Ok(None)` for the browser
         /// (host) process.
-        pub fn execute_process_from(
-            cef_path: &std::path::Path,
-        ) -> Result<Option<i32>, WeldError> {
+        pub fn execute_process_from(cef_path: &std::path::Path) -> Result<Option<i32>, WeldError> {
             maybe_load_library(cef_path)?;
             pin_cef_api_version();
             let args = Args::new();
@@ -156,8 +154,9 @@ mod cef_backed {
             maybe_load_library(&config.cef_path)?;
             pin_cef_api_version();
             let args = Args::new();
-            let mut app =
-                crate::app::WeldApp::build(std::sync::Arc::new(config.command_line_switches.clone()));
+            let mut app = crate::app::WeldApp::build(std::sync::Arc::new(
+                config.command_line_switches.clone(),
+            ));
             let settings = build_settings(&config);
             let code = cef::initialize(
                 Some(args.as_main_args()),
@@ -227,10 +226,10 @@ mod cef_backed {
             log_severity: match config.log_severity {
                 CefLogSeverity::Default => LogSeverity::DEFAULT,
                 CefLogSeverity::Verbose => LogSeverity::VERBOSE,
-                CefLogSeverity::Info    => LogSeverity::INFO,
+                CefLogSeverity::Info => LogSeverity::INFO,
                 CefLogSeverity::Warning => LogSeverity::WARNING,
-                CefLogSeverity::Error   => LogSeverity::ERROR,
-                CefLogSeverity::Fatal   => LogSeverity::FATAL,
+                CefLogSeverity::Error => LogSeverity::ERROR,
+                CefLogSeverity::Fatal => LogSeverity::FATAL,
                 CefLogSeverity::Disable => LogSeverity::DISABLE,
             },
             ..Default::default()
@@ -289,7 +288,9 @@ mod cef_backed {
             let wide = HSTRING::from(cef_path.as_os_str());
             // Ignore failure: if libcef.dll is already in the search path this is
             // a no-op.
-            unsafe { let _ = SetDllDirectoryW(&wide); }
+            unsafe {
+                let _ = SetDllDirectoryW(&wide);
+            }
         }
         let _ = cef_path;
         Ok(())
@@ -317,9 +318,7 @@ mod stub {
     }
 
     impl CefRuntime {
-        pub fn execute_process_from(
-            _cef_path: &std::path::Path,
-        ) -> Result<Option<i32>, WeldError> {
+        pub fn execute_process_from(_cef_path: &std::path::Path) -> Result<Option<i32>, WeldError> {
             Err(WeldError::FeatureRequired("cef-runtime"))
         }
 
