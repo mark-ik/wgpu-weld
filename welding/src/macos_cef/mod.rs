@@ -935,6 +935,17 @@ impl CefSurfaceProducer for MacosCefProducer {
         Err(pending("cef_browser_host_t::zoom"))
     }
 
+    fn set_zoom_level(&mut self, level: f64) -> Result<(), WeldError> {
+        #[cfg(feature = "cef-runtime")]
+        if let Some(host) = self.browser.host() {
+            host.set_zoom_level(level);
+            return Ok(());
+        }
+        #[cfg(not(feature = "cef-runtime"))]
+        let _ = level;
+        Err(pending("cef_browser_host_t::set_zoom_level"))
+    }
+
     fn zoom_level(&self) -> f64 {
         #[cfg(feature = "cef-runtime")]
         {

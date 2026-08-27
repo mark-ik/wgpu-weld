@@ -717,6 +717,22 @@ pub trait CefSurfaceProducer: Send {
         ))
     }
 
+    /// Set the zoom to an absolute level instead of stepping it.
+    ///
+    /// The argument is a CEF zoom *level*, not a scale factor: 0.0 is the
+    /// default and the page scale is `1.2^level`, so 120% is level 1.0. A host
+    /// holding a factor converts with `factor.ln() / 1.2_f64.ln()`.
+    ///
+    /// Unlike [`Self::zoom`], which walks Chromium's preset ladder, any level
+    /// is accepted. Works everywhere: CEF applies the change immediately when
+    /// called on its own UI thread and asynchronously otherwise, which is the
+    /// Windows case.
+    fn set_zoom_level(&mut self, _level: f64) -> Result<(), WeldError> {
+        Err(WeldError::PlatformUnsupported(
+            "zoom is not wired for this producer",
+        ))
+    }
+
     /// The current zoom level. 0.0 is the default and each notch steps
     /// Chromium's ladder — two steps in is 125%, not 120%.
     ///

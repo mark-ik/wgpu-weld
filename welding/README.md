@@ -180,6 +180,9 @@ a known limit.
 truly where the host thread is CEF's UI thread — Linux and macOS here. CEF
 documents `GetZoomLevel` as UI-thread-only and Windows runs CEF's UI thread
 separately, so it reads 0.0 there however the page is actually zoomed.
+`set_zoom_level`, the absolute setter, is wired on all three platforms but
+not yet measured by a headed receipt on any of them; this row's grades cover
+the stepping command only.
 
 [^macmenu]: macOS reports an extra `Selection` target, because a right-click
 there selects the word under the cursor first. The event is otherwise identical
