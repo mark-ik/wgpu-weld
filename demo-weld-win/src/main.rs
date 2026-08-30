@@ -469,14 +469,15 @@ impl ApplicationHandler for DemoApp {
                     }
                 }
 
-                if let Some(result) = s.producer.poll_snapshot_png() {
-                    match result {
+                if let Some(completion) = s.producer.poll_snapshot_png() {
+                    let snapshot_id = completion.id;
+                    match completion.result {
                         Ok(bytes) => {
                             if let Some(path) = s.snapshot_path.as_ref() {
                                 match std::fs::write(path, &bytes) {
                                     Ok(()) if bytes.starts_with(b"\x89PNG\r\n\x1a\n") => {
                                         eprintln!(
-                                            "weld demo: PNG snapshot {} bytes -> {}",
+                                            "weld demo: PNG snapshot #{snapshot_id} {} bytes -> {}",
                                             bytes.len(),
                                             path.display()
                                         );
@@ -486,7 +487,7 @@ impl ApplicationHandler for DemoApp {
                                 }
                             }
                         }
-                        Err(e) => eprintln!("weld demo: snapshot failed: {e}"),
+                        Err(e) => eprintln!("weld demo: snapshot #{snapshot_id} failed: {e}"),
                     }
                 }
 
@@ -547,7 +548,7 @@ impl ApplicationHandler for DemoApp {
                 if !s.snapshot_requested && s.frames_drawn > 90 && s.snapshot_path.is_some() {
                     s.snapshot_requested = true;
                     match s.producer.request_snapshot_png() {
-                        Ok(()) => eprintln!("weld demo: PNG snapshot requested"),
+                        Ok(id) => eprintln!("weld demo: PNG snapshot #{id} requested"),
                         Err(e) => eprintln!("weld demo: snapshot request failed: {e}"),
                     }
                 }

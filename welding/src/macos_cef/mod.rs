@@ -980,7 +980,7 @@ impl CefSurfaceProducer for MacosCefProducer {
         Err(pending("cef_browser_host_t::print"))
     }
 
-    fn request_snapshot_png(&mut self) -> Result<(), WeldError> {
+    fn request_snapshot_png(&mut self) -> Result<crate::SnapshotRequestId, WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
             self.ensure_devtools_observer()?;
@@ -989,17 +989,17 @@ impl CefSurfaceProducer for MacosCefProducer {
                     "the browser is not ready yet",
                 ));
             };
-            let id = self.next_snapshot_id;
+            let id = crate::SnapshotRequestId::from_cef_message_id(self.next_snapshot_id);
             self.next_snapshot_id = self.next_snapshot_id.checked_add(1).unwrap_or(1);
             self.snapshots.begin(id)?;
             let method: cef::CefString = "Page.captureScreenshot".into();
-            let _ = host.execute_dev_tools_method(id, Some(&method), None);
-            return Ok(());
+            let _ = host.execute_dev_tools_method(id.cef_message_id(), Some(&method), None);
+            return Ok(id);
         }
         Err(pending("cef_browser_host_t::execute_dev_tools_method"))
     }
 
-    fn poll_snapshot_png(&mut self) -> Option<Result<Vec<u8>, WeldError>> {
+    fn poll_snapshot_png(&mut self) -> Option<crate::SnapshotPngCompletion> {
         #[cfg(feature = "cef-runtime")]
         {
             return self.snapshots.take();

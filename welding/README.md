@@ -146,7 +146,10 @@ The W8 tail now has concrete API shapes rather than prospective rows.
 `DragInput` drives an OS-originated drag into the page and `DragStarted` hands
 a page-originated payload to the host's toolkit drag loop; `TouchInput` keeps
 contact identifiers and phases intact; `request_snapshot_png` /
-`poll_snapshot_png` returns compositor PNG bytes asynchronously; every
+`poll_snapshot_png` return an ID-correlated compositor PNG completion
+asynchronously. Welding admits at most 16 captures awaiting completion or
+polling, and rejects a further request rather than discarding an admitted
+completion; every
 producer owns a CEF `RequestContext`. Pointer and pen remain unmodelled.
 
 On macOS, a disk-backed child context becomes ready asynchronously. Create it
@@ -366,9 +369,10 @@ producer.send_drag_input(DragInput {
     allowed_operations: DragOperations::COPY,
 })?;
 
-producer.request_snapshot_png()?;
-if let Some(Ok(png)) = producer.poll_snapshot_png() {
-    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+let requested = producer.request_snapshot_png()?;
+if let Some(completion) = producer.poll_snapshot_png() {
+    assert_eq!(completion.id, requested);
+    assert!(completion.result?.starts_with(b"\x89PNG\r\n\x1a\n"));
 }
 ```
 

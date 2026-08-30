@@ -1,8 +1,9 @@
 # Producer Parity Plan: welding / scrying / grafting
 
 **Date:** 2026-08-10
-**Status:** W1-W6 landed and published (welding 0.4.1). W7-W9 open; see the
-phase list. Every "verified" claim below names the machine it was verified on.
+**Status:** W1-W9 landed. The 2026-08-30 snapshot-provenance follow-up is
+landed with focused local test and Windows consumer-check receipts. Every
+"verified" claim below names the machine it was verified on.
 A three-platform parity battery was run on 2026-08-12; results under
 "Parity battery, 2026-08-12" below.
 **Scope:** cross-repo. This doc lives in wgpu-weld because welding carries most
@@ -833,8 +834,11 @@ a wgpu major without asking. The README now says so and gives the pin.
   receipts passed through that path.
 
   Snapshot capture is intentionally asynchronous and private to the producer:
-  `request_snapshot_png` starts Chromium `Page.captureScreenshot`, and
-  `poll_snapshot_png` supplies validated PNG bytes. Drag keeps the two system
+  `request_snapshot_png` starts Chromium `Page.captureScreenshot` and returns
+  a typed request ID; `poll_snapshot_png` supplies that same ID with validated
+  PNG bytes or a capture error. The channel admits at most 16 requests across
+  waiting and completed slots, rejects a new request at that bound, and never
+  evicts an admitted completion before polling. Drag keeps the two system
   ownership directions distinct: `DragInput` is host-to-page, while a
   page-originated `DragStarted` event gives the host a copied payload for its
   native drag loop and `finish_drag_source` closes it. Touch preserves contact
@@ -914,6 +918,16 @@ re-verifying on the iMac and the Fedora box per phase (the readback-verdict
 pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
 
 ## Progress
+
+- 2026-08-30: **snapshot correlation landed in source.** PNG snapshot requests
+  now return `SnapshotRequestId`; polling returns `SnapshotPngCompletion` with
+  the identical ID and `Result<Vec<u8>, WeldError>`. The shared channel's
+  16-slot bound covers both pending requests and unpolled completions, so a
+  host receives a visible admission error rather than silently losing a
+  completed capture. Windows, Linux, and macOS forward the CEF message ID
+  through this same contract. Focused CEF tests passed (3/3) and the Windows
+  demo compiled as a public caller; this is source and compile coverage, not a
+  new three-platform runtime screenshot receipt.
 
 - 2026-08-10: surfaces of all three repos read; matrix and phases drafted.
   Same-day context: module split, macOS Phase 3 closed end to end, grafting

@@ -8,6 +8,40 @@ use crate::{
     permissions::{PermissionId, PermissionKind},
 };
 
+/// Opaque identity for one Chromium PNG snapshot request.
+///
+/// A request ID is minted by [`CefSurfaceProducer::request_snapshot_png`] and
+/// returned unchanged by [`CefSurfaceProducer::poll_snapshot_png`]. Keep it
+/// with host-side capture context rather than inferring provenance from the
+/// order Chromium happened to finish captures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SnapshotRequestId(i32);
+
+impl SnapshotRequestId {
+    pub(crate) const fn from_cef_message_id(id: i32) -> Self {
+        Self(id)
+    }
+
+    pub(crate) const fn cef_message_id(self) -> i32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for SnapshotRequestId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// A completed PNG snapshot, paired with the request that caused it.
+#[derive(Debug)]
+pub struct SnapshotPngCompletion {
+    /// The request identity returned when Chromium accepted the capture.
+    pub id: SnapshotRequestId,
+    /// Validated PNG bytes, or Chromium's capture/encoding error.
+    pub result: Result<Vec<u8>, WeldError>,
+}
+
 /// How CEF can participate in a host compositor on the current platform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -777,15 +811,20 @@ pub trait CefSurfaceProducer: Send {
     /// The result arrives later from [`Self::poll_snapshot_png`]. It is a
     /// thumbnail/preview/diagnostic helper, not the live frame transport: it
     /// encodes and copies pixels through Chromium's DevTools screenshot path.
-    fn request_snapshot_png(&mut self) -> Result<(), WeldError> {
+    ///
+    /// The returned ID is retained in the later completion. Welding admits at
+    /// most 16 captures awaiting completion or polling; it rejects another
+    /// request once that bound is full instead of dropping an admitted result.
+    fn request_snapshot_png(&mut self) -> Result<SnapshotRequestId, WeldError> {
         Err(WeldError::PlatformUnsupported(
             "PNG snapshots are not wired for this producer",
         ))
     }
 
-    /// Take the next completed PNG capture. `Some(Err(_))` means Chromium
-    /// answered the request but could not capture or encode the page.
-    fn poll_snapshot_png(&mut self) -> Option<Result<Vec<u8>, WeldError>> {
+    /// Take the next completed PNG capture. The completion retains the ID from
+    /// [`Self::request_snapshot_png`]; `completion.result` is `Err(_)` when
+    /// Chromium answered but could not capture or encode the page.
+    fn poll_snapshot_png(&mut self) -> Option<SnapshotPngCompletion> {
         None
     }
 

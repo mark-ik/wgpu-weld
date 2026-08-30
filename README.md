@@ -135,8 +135,8 @@ Current plan (`design_docs/`, 2026-08-10 parity plan): W1 through W6 have
 landed. W7 is done bar one row: downloads, permission requests, and context
 menus are verified on all three platforms; `GetAuthCredentials` is wired and
 answerable but CEF has never been observed to call it. W8's code is complete:
-host/page drag-drop, direct touch, PNG snapshots, and one CEF `RequestContext`
-per producer are verified on all three. System printing reaches CEF's native
+host/page drag-drop, direct touch, correlated PNG snapshots, and one CEF
+`RequestContext` per producer are verified on all three. System printing reaches CEF's native
 dialog on Windows, is wired on macOS, and explicitly reports unavailable on
 Linux, where CEF requires an embedder-owned printer UI and spooler. W9, the
 Chrome DevTools Protocol, is done and verified on all three: its unwrapped JSON wire format lets

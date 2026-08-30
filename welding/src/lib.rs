@@ -112,6 +112,6 @@ pub use surface::{
     CefSurfaceProducer, ContactDevice, ContextMenuTarget, Cookie, CursorShape, DragEventKind,
     DragFile, DragInput, DragOperations, DragPayload, EventModifiers, FocusDirection,
     ImeComposition, KeyEvent, KeyEventKind, MouseAction, MouseButton, MouseEvent, NavigationEvent,
-    PopupRect, PopupSurface, ProcessTerminationStatus, SameSite, TouchInput, TouchPhase,
-    ZoomCommand,
+    PopupRect, PopupSurface, ProcessTerminationStatus, SameSite, SnapshotPngCompletion,
+    SnapshotRequestId, TouchInput, TouchPhase, ZoomCommand,
 };
