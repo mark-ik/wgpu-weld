@@ -17,6 +17,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SnapshotRequestId(i32);
 
+#[cfg(feature = "cef-runtime")]
 impl SnapshotRequestId {
     pub(crate) const fn from_cef_message_id(id: i32) -> Self {
         Self(id)
