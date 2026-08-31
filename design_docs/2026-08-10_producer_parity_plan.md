@@ -2,8 +2,11 @@
 
 **Date:** 2026-08-10
 **Status:** W1-W9 landed. The 2026-08-30 snapshot-provenance follow-up is
-landed with focused local test and Windows consumer-check receipts. Every
-"verified" claim below names the machine it was verified on.
+landed with focused local test and Windows consumer-check receipts. The
+wgpu 30.0.1 release row has a green three-platform CI matrix and a current
+headed Linux/Vulkan import receipt; the saved Metal hosts were unreachable
+for a same-day rerun. Every "verified" claim below names the machine it was
+verified on.
 A three-platform parity battery was run on 2026-08-12; results under
 "Parity battery, 2026-08-12" below.
 **Scope:** cross-repo. This doc lives in wgpu-weld because welding carries most
@@ -918,6 +921,36 @@ re-verifying on the iMac and the Fedora box per phase (the readback-verdict
 pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
 
 ## Progress
+
+- 2026-08-30: **the welding 0.13.0 release candidate is green on the wgpu
+  28/29/30 matrix, with a current headed Vulkan import.** Commit
+  `2989de9088cef3de86c5e99c3c2cb6738b306e40` locks the complete wgpu 30
+  family to 30.0.1 and CEF to `151.8.0+151.3.24`. GitHub Actions run
+  [33345042921](https://github.com/merely-made/wgpu-weld/actions/runs/33345042921)
+  passed rustfmt plus all nine Windows/Linux/macOS feature rows; the default
+  wgpu 30 row also passed tests on each OS. Local isolated tests passed 48/48
+  on each wgpu row, with 2 doc tests passed and 13 ignored per row.
+
+  The headed run used that exact detached commit on the Fedora 44 ThinkPad,
+  through the live Xwayland display (`DISPLAY=:0`), rustc 1.97.1, CEF 151.8,
+  wgpu 30.0.1, and AMD Radeon Graphics / RADV Renoir (Mesa 26.1.8). CEF loaded
+  `https://example.com/` with HTTP 200; welding reported the Vulkan backend
+  and DMABUF import support, then imported 1280x701 and 1366x701
+  `Bgra8UnormSrgb` frames. The validation verdict was 16384/16384 sampled
+  bytes non-zero. The 1366x701 PPM receipt is 2,872,714 bytes with SHA-256
+  `93817a42558bc0149356a37b77dba7d78f87abaf695edb7e8a6b948da23c7147`;
+  visual inspection shows the rendered Example Domain heading, body, and link.
+
+  The first link attempt correctly failed when `CEF_PATH` named the older CEF
+  distribution left at `target/debug`; the 151.8 Rust bindings could not
+  resolve their symbols from that library. Pointing both `CEF_PATH` and
+  `LD_LIBRARY_PATH` at the 151.8 distribution downloaded by this build made
+  the headed run pass. This confirms the documented exact-version boundary.
+
+  A current Metal rerun remains unverified. Both known iMac routes were
+  unreachable during this gate, including the saved Intel host at
+  `192.168.4.105`. The macOS wgpu matrix is green, while the 2026-08-12 Intel
+  and M4 receipts below remain the latest headed Metal evidence.
 
 - 2026-08-30: **snapshot correlation landed in source.** PNG snapshot requests
   now return `SnapshotRequestId`; polling returns `SnapshotPngCompletion` with
