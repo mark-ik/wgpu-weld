@@ -22,10 +22,10 @@ The real advantage is being able to choose the right engine for your platform!
 same device, to make sharing textures easy. Controlling the embedding lib
 allows me to ensure that happens.
 
-The release notes and README both say "every desktop platform," 
-which really means every platform I could test. NVIDIA proprietary 
-and Wayland-native aren't covered by the CEF path. Now, the generated
-README, which, trust me, is a convenience for both you and me.
+The release notes and README both say "every desktop platform," which means
+every platform I could test. The current headed hardware workflow adds the
+previously missing NVIDIA/DX12 and native Wayland/RADV fixtures. Now, the
+generated README, which, trust me, is a convenience for both you and me.
 
 ---
 
@@ -40,15 +40,15 @@ the shared `grafting` interop core).
 
 ## Status (2026-08-31)
 
-Prototype. `welding` 0.13.0 is published on crates.io (MPL-2.0). It requires
-wgpu 30.0.1 on the default row and publishes the absolute zoom setter plus
-ID-correlated, bounded PNG snapshot completions added after 0.12.1. Per-platform
+Prototype. `welding` 0.13.0 is published on crates.io (MPL-2.0); `main` is the
+0.14.0 compatibility revision. It makes retained Metal frames move-only and
+adds deterministic pixel fixtures whose mismatches fail the process. Per-platform
 detail, and the difference between "verified on that hardware" and
 "implemented but not yet run there", is the table in
 [`welding/README.md`](welding/README.md).
 
 All three native wrappers now delegate to the same exact Graft commit
-(`8106f7c6b16838eb9ec062f0293249b39c108907`). Welding keeps CEF's callback
+(`59cd8a3ec017aca46b0756d2ec90fd0a62550ef4`). Welding keeps CEF's callback
 lifetime, copy/retain, modifier fallback, and synchronization policy; Graft
 owns D3D12, Metal, and Vulkan resource registration with wgpu. The platform
 demos are required CI builds rather than optional examples.
@@ -56,8 +56,8 @@ demos are required CI builds rather than optional examples.
 0.12.0 is the first release where accelerated GPU import works on every
 desktop platform reachable for testing. Linux had only ever worked on
 Intel/Mesa; AMD/RADV was refused until wgpu 30 supplied the extension that
-case needs. NVIDIA's proprietary driver and Wayland-native remain outside the
-CEF path.
+case needs. The trusted hardware workflow now exercises NVIDIA through the
+Windows DX12 path and RADV through a native Wayland window.
 
 0.12.0 shipped against CEF 147. Releases from 0.12.1 use CEF 151; the 0.13.0
 lock resolves `cef` 151.8.0+151.3.24. That line also drops the last split in

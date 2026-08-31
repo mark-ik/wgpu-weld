@@ -31,20 +31,21 @@ How far each row has been taken:
 
 ## State, 2026-08-31
 
-Version 0.13.0 is the published baseline. It adds an absolute zoom setter and
-request-correlated PNG snapshot completions with bounded admission; those
-public API changes require a minor-version boundary from 0.12.1. Version
-0.12.0 was the first one where accelerated GPU import worked on **every**
+Version 0.13.0 is the published baseline; `main` is the 0.14.0 compatibility
+revision. Retained Metal frames are move-only, and each platform demo has an
+embedded dodger-blue pixel fixture that exits unsuccessfully on a mismatch.
+Version 0.12.0 was the first one where accelerated GPU import worked on **every**
 desktop platform. Linux had only
 ever worked on Intel/Mesa; AMD/RADV was refused with a typed error until
 0.12.0, for reasons the `[^linux]` note below explains.
 
 Welding now pins Graft commit
-`8106f7c6b16838eb9ec062f0293249b39c108907` and delegates every native wgpu
+`59cd8a3ec017aca46b0756d2ec90fd0a62550ef4` and delegates every native wgpu
 wrapper to it. CEF-specific callback ownership, the Windows copy, IOSurface
 construction, and Linux modifier policy remain here. Required CI jobs compile
 the real CEF demo on Windows, macOS, and Linux in addition to the nine-row
-library matrix.
+library matrix. Trusted runners execute the pixel fixture on NVIDIA/DX12,
+RADV/native Wayland, Intel Metal, and Apple Silicon Metal.
 
 **0.13.0 builds against CEF 151** (`cef` `151.8.0+151.3.24`); 0.12.0 shipped
 CEF 147 and 0.12.1 moved the published line to 151. The library compiled

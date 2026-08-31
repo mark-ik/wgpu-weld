@@ -6,6 +6,10 @@
 //! set CEF_PATH=C:\path\to\cef_binary_151.x_windows64
 //! cargo run -p demo-weld-win
 //! ```
+//!
+//! `WELD_PIXEL_FIXTURE=1 WELD_EXIT_AFTER_FRAMES=2` loads an embedded
+//! dodger-blue page, checks a centered 64x64 pixel sample, and exits with a
+//! failing status if the DX12 shared texture carries the wrong bytes.
 
 use std::{
     sync::Arc,
@@ -30,9 +34,16 @@ use welding::{
 
 mod blit;
 mod keys;
+mod probe;
 mod scripted;
 
 use crate::{blit::build_blit_pipeline, keys::keycode_to_vk};
+
+const PIXEL_FIXTURE_URL: &str = concat!(
+    "data:text/html;base64,",
+    "PHN0eWxlPmh0bWwsYm9keXttYXJnaW46MDt3aWR0aDoxMDAlO2hlaWdodDoxMDAlO2JhY2tncm91bmQ6IzFlOTBmZn1pe3Bvc2l0aW9uOmZpeGVkO3dpZHRoOjFweDtoZWlnaHQ6MXB4fTwvc3R5bGU+PGk+PC9pPjxzY3JpcHQ+bGV0IG49MDtzZXRJbnRlcnZhbCgoKT0+ZG9jdW1lbnQucXVlcnlTZWxlY3RvcignaScpLnN0eWxlLmJhY2tncm91bmQ9bisrJTI/JyMwMDAnOicjZmZmJywxNik8L3NjcmlwdD4="
+);
+const PIXEL_TOLERANCE: u8 = 8;
 
 // ── App state ─────────────────────────────────────────────────────────────────
 
@@ -41,6 +52,7 @@ struct DemoApp {
     state: Option<DemoState>,
     started_at: Instant,
     timeout: Option<Duration>,
+    fixture_result: Option<bool>,
 }
 
 struct DemoState {
@@ -78,6 +90,7 @@ impl DemoApp {
             state: None,
             started_at: Instant::now(),
             timeout: exit_after_seconds(),
+            fixture_result: None,
         }
     }
 }
@@ -157,8 +170,7 @@ impl ApplicationHandler for DemoApp {
         // WELD_SCALE forces a scale factor regardless of the display, which is
         // how the HiDPI path gets exercised on a 1x screen.
         let scale = forced_scale().unwrap_or_else(|| window.scale_factor());
-        let initial_url =
-            std::env::var("WELD_URL").unwrap_or_else(|_| "https://example.com".into());
+        let initial_url = initial_url();
         let producer = WindowsCefProducer::new(
             &cef_runtime,
             WindowsCefConfig {
@@ -670,13 +682,19 @@ impl ApplicationHandler for DemoApp {
                 s.host_ctx.queue.submit([enc.finish()]);
                 // wgpu 30 moved presentation from SurfaceTexture to Queue.
                 s.host_ctx.queue.present(output);
-                // WELD_EXIT_AFTER_FRAMES makes an unattended probe finite.
-                // This counts presentation ticks, not imported frames: a
-                // static accelerated browser may paint only once.
+                // Outside fixture mode this counts presentation ticks so a
+                // static accelerated browser can still finish. The animated
+                // pixel fixture counts imported frames and cannot report
+                // before a native texture actually arrives.
+                let frame_progress = if pixel_fixture_enabled() {
+                    s.frames_imported
+                } else {
+                    s.frames_drawn
+                };
                 let frame_limit_reached = std::env::var("WELD_EXIT_AFTER_FRAMES")
                     .ok()
                     .and_then(|n| n.parse::<u32>().ok())
-                    .is_some_and(|n| s.frames_drawn >= n);
+                    .is_some_and(|n| frame_progress >= n);
                 let timeout_reached = self
                     .timeout
                     .is_some_and(|timeout| self.started_at.elapsed() >= timeout);
@@ -684,8 +702,9 @@ impl ApplicationHandler for DemoApp {
                     if timeout_reached {
                         eprintln!("weld demo: exit after configured timeout");
                     } else {
-                        eprintln!("weld demo: exit after {} frames", s.frames_drawn);
+                        eprintln!("weld demo: exit after {frame_progress} frames");
                     }
+                    self.fixture_result = Some(report(s));
                     s.closing = true;
                     if let Err(e) = s.producer.close() {
                         eprintln!("weld demo: close failed: {e}");
@@ -767,9 +786,79 @@ fn main() {
     let event_loop = EventLoop::new().expect("event loop creation failed");
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    event_loop
-        .run_app(&mut DemoApp::new(runtime))
-        .expect("event loop error");
+    let mut app = DemoApp::new(runtime);
+    event_loop.run_app(&mut app).expect("event loop error");
+    if pixel_fixture_enabled() && app.fixture_result != Some(true) {
+        std::process::exit(1);
+    }
+}
+
+fn report(state: &DemoState) -> bool {
+    let Some(frame) = state.frame.as_ref() else {
+        log::error!("PIXEL FIXTURE FAIL: no frame was ever imported");
+        return false;
+    };
+    let Some(expected) = pixel_fixture_expected(frame.format) else {
+        log::error!(
+            "PIXEL FIXTURE FAIL: unsupported texture format {:?}",
+            frame.format
+        );
+        return false;
+    };
+    match probe::sample(
+        &state.host_ctx.device,
+        &state.host_ctx.queue,
+        &frame.texture,
+    ) {
+        Ok(readback) => {
+            let matched = readback.matching_pixels(expected, PIXEL_TOLERANCE);
+            let total = readback.total_pixels();
+            if matched == total {
+                log::info!(
+                    "PIXEL FIXTURE PASS: {matched}/{total} center pixels at {:?} matched {:?} ±{PIXEL_TOLERANCE}",
+                    readback.origin,
+                    expected
+                );
+                true
+            } else {
+                log::error!(
+                    "PIXEL FIXTURE FAIL: {matched}/{total} center pixels at {:?} matched {:?} ±{PIXEL_TOLERANCE}; first pixels {:?}",
+                    readback.origin,
+                    expected,
+                    readback.first_pixels
+                );
+                false
+            }
+        }
+        Err(error) => {
+            log::error!("PIXEL FIXTURE FAIL: readback failed: {error}");
+            false
+        }
+    }
+}
+
+fn pixel_fixture_enabled() -> bool {
+    std::env::var_os("WELD_PIXEL_FIXTURE").is_some()
+}
+
+fn initial_url() -> String {
+    if pixel_fixture_enabled() {
+        PIXEL_FIXTURE_URL.into()
+    } else {
+        std::env::var("WELD_URL").unwrap_or_else(|_| "https://example.com".into())
+    }
+}
+
+fn pixel_fixture_expected(format: wgpu::TextureFormat) -> Option<[u8; 4]> {
+    match format {
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => {
+            Some([255, 144, 30, 255])
+        }
+        wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => {
+            Some([30, 144, 255, 255])
+        }
+        _ => None,
+    }
 }
 
 /// `WELD_TIMEOUT_SECS=N`: gracefully close an unattended run after N seconds.

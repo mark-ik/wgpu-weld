@@ -1,6 +1,6 @@
 [package]
 name = "welding"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2024"
 license = "MPL-2.0"
 repository = "https://github.com/merely-made/wgpu-weld"
@@ -50,7 +50,7 @@ serde_json = { version = "1", optional = true }
 # Shared native-texture interop core. Welding owns the CEF callback lifetime,
 # modifier fallback, and producer synchronization policy; Graft owns each
 # native resource -> wgpu wrapper. Pin the reviewed interop ABI exactly.
-grafting = { version = "0.5.1", git = "https://github.com/merely-made/wgpu-graft.git", rev = "8106f7c6b16838eb9ec062f0293249b39c108907", default-features = false }
+grafting = { version = "0.6.0", git = "https://github.com/merely-made/wgpu-graft.git", rev = "59cd8a3ec017aca46b0756d2ec90fd0a62550ef4", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

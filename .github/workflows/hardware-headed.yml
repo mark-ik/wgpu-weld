@@ -1,0 +1,157 @@
+name: headed hardware
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: headed-hardware-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  RUSTFLAGS: -D warnings
+
+jobs:
+  radv-wayland:
+    name: RADV native Wayland pixel fixture
+    runs-on: [self-hosted, wgpu-hardware, radv, wayland, headed]
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: /home/markik/Code/targets/wgpu-weld-hardware
+      CEF_CACHE_ROOT: /home/markik/Code/cef-cache/wgpu-weld
+      XDG_RUNTIME_DIR: /run/user/1000
+      WAYLAND_DISPLAY: wayland-0
+      DISPLAY: ""
+      WINIT_UNIX_BACKEND: wayland
+      WGPU_BACKEND: vulkan
+      WELD_PIXEL_FIXTURE: "1"
+      WELD_EXIT_AFTER_FRAMES: "2"
+      WELD_TIMEOUT_SECS: "60"
+      WELD_SWITCHES: ozone-platform=wayland
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Assert the native Wayland session
+        run: |
+          test -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
+          test -z "${DISPLAY:-}"
+          loginctl show-session 2 -p Active -p Type
+
+      - name: Run deterministic CEF to DMA-BUF to wgpu gate
+        run: |
+          set -o pipefail
+          export CEF_PATH="$CEF_CACHE_ROOT"
+          cargo build --locked -p demo-weld-linux
+          cef_archive="$(find "$CEF_CACHE_ROOT" -path '*/cef_linux_x86_64/archive.json' -type f | sort | tail -1)"
+          test -n "$cef_archive"
+          export CEF_PATH="${cef_archive%/archive.json}"
+          export LD_LIBRARY_PATH="$CEF_PATH"
+          "$CARGO_TARGET_DIR/debug/demo-weld-linux" 2>&1 | tee "$RUNNER_TEMP/weld-radv-wayland.log"
+          grep -F "PIXEL FIXTURE PASS" "$RUNNER_TEMP/weld-radv-wayland.log"
+
+  nvidia-dx12:
+    name: NVIDIA RTX 4060 DX12 pixel fixture
+    runs-on: [self-hosted, wgpu-hardware, nvidia, windows-x64, headed]
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: C:\Users\mark_\Code\targets\wgpu-weld-hardware
+      CEF_CACHE_ROOT: C:\Users\mark_\Code\cef-cache\wgpu-weld
+      WELD_PIXEL_FIXTURE: "1"
+      WELD_EXIT_AFTER_FRAMES: "2"
+      WELD_TIMEOUT_SECS: "60"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Record the physical adapter
+        shell: powershell
+        run: nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
+
+      - name: Run deterministic CEF to DX12 to wgpu gate
+        shell: powershell
+        run: |
+          $env:CEF_PATH = $env:CEF_CACHE_ROOT
+          cargo build --locked -p demo-weld-win
+          $cefPath = Get-ChildItem $env:CEF_CACHE_ROOT -Directory -Recurse -Filter 'cef_windows_x86_64' |
+            Where-Object { Test-Path (Join-Path $_ 'archive.json') } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $cefPath) { throw 'CEF distribution was not produced by cef-dll-sys' }
+          $env:CEF_PATH = $cefPath.FullName
+          & "$env:CARGO_TARGET_DIR\debug\demo-weld-win.exe" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\weld-nvidia-dx12.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Select-String -SimpleMatch 'PIXEL FIXTURE PASS' "$env:RUNNER_TEMP\weld-nvidia-dx12.log"
+
+  metal-m4:
+    name: Apple M4 Metal pixel fixture
+    runs-on: [self-hosted, wgpu-hardware, metal, macos-arm64, m4, headed]
+    timeout-minutes: 35
+    env:
+      CARGO_TARGET_DIR: /Users/markik/Code/targets/wgpu-weld-hardware
+      CEF_PATH: /Users/markik/Code/cef-cache/wgpu-weld
+      WELD_PIXEL_FIXTURE: "1"
+      WELD_EXIT_AFTER_FRAMES: "2"
+      WELD_TIMEOUT_SECS: "60"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Ensure CEF native build tools
+        run: |
+          brew_bin="$(command -v brew || true)"
+          if [ -z "$brew_bin" ]; then
+            if [ -x /opt/homebrew/bin/brew ]; then brew_bin=/opt/homebrew/bin/brew; else brew_bin=/usr/local/bin/brew; fi
+          fi
+          "$brew_bin" list cmake >/dev/null 2>&1 || "$brew_bin" install cmake
+          "$brew_bin" list ninja >/dev/null 2>&1 || "$brew_bin" install ninja
+          echo "$("$brew_bin" --prefix)/bin" >> "$GITHUB_PATH"
+      - name: Build the CEF app bundle
+        run: cargo run --locked -p demo-weld-mac --bin bundle-demo-weld-mac -- "$RUNNER_TEMP/bundle"
+      - name: Run deterministic CEF to IOSurface to Metal gate
+        run: |
+          export WELD_RECEIPT="$RUNNER_TEMP/weld-metal-m4.receipt"
+          export WELD_CACHE_ROOT="$RUNNER_TEMP/cef-cache"
+          export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
+          "$RUNNER_TEMP/bundle/demo-weld-mac.app/Contents/MacOS/demo-weld-mac"
+          grep -F "pixel-fixture: PASS" "$WELD_RECEIPT"
+
+  metal-intel:
+    name: Intel iMac Metal pixel fixture
+    runs-on: [self-hosted, wgpu-hardware, metal, macos-x64, intel-mac, headed]
+    timeout-minutes: 35
+    env:
+      CARGO_TARGET_DIR: /Users/markik/Code/targets/wgpu-weld-hardware
+      CEF_PATH: /Users/markik/Code/cef-cache/wgpu-weld
+      WELD_PIXEL_FIXTURE: "1"
+      WELD_EXIT_AFTER_FRAMES: "2"
+      WELD_TIMEOUT_SECS: "60"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Ensure CEF native build tools
+        run: |
+          brew_bin="$(command -v brew || true)"
+          if [ -z "$brew_bin" ]; then
+            if [ -x /opt/homebrew/bin/brew ]; then brew_bin=/opt/homebrew/bin/brew; else brew_bin=/usr/local/bin/brew; fi
+          fi
+          "$brew_bin" list cmake >/dev/null 2>&1 || "$brew_bin" install cmake
+          "$brew_bin" list ninja >/dev/null 2>&1 || "$brew_bin" install ninja
+          echo "$("$brew_bin" --prefix)/bin" >> "$GITHUB_PATH"
+      - name: Build the CEF app bundle
+        run: cargo run --locked -p demo-weld-mac --bin bundle-demo-weld-mac -- "$RUNNER_TEMP/bundle"
+      - name: Run deterministic CEF to IOSurface to Metal gate
+        run: |
+          export WELD_RECEIPT="$RUNNER_TEMP/weld-metal-intel.receipt"
+          export WELD_CACHE_ROOT="$RUNNER_TEMP/cef-cache"
+          export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
+          "$RUNNER_TEMP/bundle/demo-weld-mac.app/Contents/MacOS/demo-weld-mac"
+          grep -F "pixel-fixture: PASS" "$WELD_RECEIPT"

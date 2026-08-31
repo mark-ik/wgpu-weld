@@ -2,7 +2,9 @@
 //!
 //! Split out of `main.rs` to stay under the 600-line ceiling.
 
-use crate::{DemoState, probe};
+use crate::{
+    DemoState, PIXEL_TOLERANCE, pixel_fixture_enabled, pixel_fixture_expected, probe, receipt,
+};
 
 pub(crate) fn render(s: &mut DemoState) {
     let output = match s.surface.get_current_texture() {
@@ -109,14 +111,54 @@ pub(crate) fn render(s: &mut DemoState) {
 }
 
 /// Probe the last imported frame and print a verdict a log reader can trust.
-pub(crate) fn report(s: &mut DemoState) {
-    match s.frame.as_ref() {
+pub(crate) fn report(s: &mut DemoState) -> bool {
+    let passed = match s.frame.as_ref() {
         Some(frame) => match probe::sample(&s.host_ctx.device, &s.host_ctx.queue, &frame.texture) {
+            Ok(rb) if pixel_fixture_enabled() => {
+                let Some(expected) = pixel_fixture_expected(frame.format) else {
+                    log::error!(
+                        "PIXEL FIXTURE FAIL: unsupported texture format {:?}",
+                        frame.format
+                    );
+                    receipt(format_args!(
+                        "pixel-fixture: FAIL unsupported format {:?}",
+                        frame.format
+                    ));
+                    return false;
+                };
+                let matched = rb.matching_pixels(expected, PIXEL_TOLERANCE);
+                let total = rb.total_pixels();
+                if matched == total {
+                    log::info!(
+                        "PIXEL FIXTURE PASS: {matched}/{total} center pixels at {:?} matched {:?} ±{PIXEL_TOLERANCE}",
+                        rb.origin,
+                        expected
+                    );
+                    receipt(format_args!(
+                        "pixel-fixture: PASS {matched}/{total} pixels matched {:?} tolerance {PIXEL_TOLERANCE}",
+                        expected
+                    ));
+                    true
+                } else {
+                    log::error!(
+                        "PIXEL FIXTURE FAIL: {matched}/{total} center pixels at {:?} matched {:?} ±{PIXEL_TOLERANCE}; first pixels {:?}",
+                        rb.origin,
+                        expected,
+                        rb.first_pixels
+                    );
+                    receipt(format_args!(
+                        "pixel-fixture: FAIL {matched}/{total} pixels matched {:?} tolerance {PIXEL_TOLERANCE}",
+                        expected
+                    ));
+                    false
+                }
+            }
             Ok(rb) => {
                 log::info!(
-                    "probe: {}/{} bytes non-zero in the top-left corner; first pixels {:?}",
+                    "probe: {}/{} bytes non-zero in center {:?}; first pixels {:?}",
                     rb.non_zero_bytes,
                     rb.total_bytes,
+                    rb.origin,
                     rb.first_pixels
                 );
                 if rb.looks_painted() {
@@ -124,18 +166,27 @@ pub(crate) fn report(s: &mut DemoState) {
                         "VALIDATION PASS: {} frames imported and the IOSurface carried real pixels",
                         s.frames_imported
                     );
+                    true
                 } else {
                     log::error!(
                         "VALIDATION FAIL: {} frames imported but the corner is entirely zero, \
                          so the texture is not carrying CEF's paint",
                         s.frames_imported
                     );
+                    false
                 }
             }
-            Err(e) => log::error!("VALIDATION FAIL: readback failed: {e}"),
+            Err(e) => {
+                log::error!("VALIDATION FAIL: readback failed: {e}");
+                false
+            }
         },
-        None => log::error!("VALIDATION FAIL: no frame was ever imported"),
-    }
+        None => {
+            log::error!("VALIDATION FAIL: no frame was ever imported");
+            receipt(format_args!("pixel-fixture: FAIL no imported frame"));
+            false
+        }
+    };
 
     // Popup verdict, only when a popup was actually asked for.
     if s.popups_imported > 0 {
@@ -171,6 +222,7 @@ pub(crate) fn report(s: &mut DemoState) {
             ),
         }
     }
+    passed
 }
 
 /// Shared vocabulary to winit's icons.

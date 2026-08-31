@@ -14,11 +14,11 @@
 //!
 //! # Unattended validation
 //!
-//! `WELD_EXIT_AFTER_FRAMES=N` runs N imported frames, probes the last one for
-//! real pixels, logs a verdict and exits. That is what makes this useful over
-//! SSH, where nobody can see the window. `WELD_URL` overrides the page, and
-//! `WELD_TIMEOUT_SECS` (default 60) reports and exits even if the frames never
-//! arrive.
+//! `WELD_PIXEL_FIXTURE=1` loads an embedded, animated dodger-blue page.
+//! `WELD_EXIT_AFTER_FRAMES=N` probes the centered pixels of the last imported
+//! frame, logs a verdict, and exits unsuccessfully on a mismatch. `WELD_URL`
+//! overrides the page outside fixture mode. `WELD_TIMEOUT_SECS` (default 60)
+//! reports and exits even if the frames never arrive.
 //!
 //! Note that N should be small. Accelerated OSR only paints on change, so a
 //! static page delivers one frame and then goes quiet; asking for 30 frames of
@@ -55,6 +55,12 @@ use welding::{
 
 use crate::keys::keycode_to_vk;
 
+const PIXEL_FIXTURE_URL: &str = concat!(
+    "data:text/html;base64,",
+    "PHN0eWxlPmh0bWwsYm9keXttYXJnaW46MDt3aWR0aDoxMDAlO2hlaWdodDoxMDAlO2JhY2tncm91bmQ6IzFlOTBmZn1pe3Bvc2l0aW9uOmZpeGVkO3dpZHRoOjFweDtoZWlnaHQ6MXB4fTwvc3R5bGU+PGk+PC9pPjxzY3JpcHQ+bGV0IG49MDtzZXRJbnRlcnZhbCgoKT0+ZG9jdW1lbnQucXVlcnlTZWxlY3RvcignaScpLnN0eWxlLmJhY2tncm91bmQ9bisrJTI/JyMwMDAnOicjZmZmJywxNik8L3NjcmlwdD4="
+);
+pub(crate) const PIXEL_TOLERANCE: u8 = 8;
+
 struct DemoApp {
     cef_runtime: Option<CefRuntime>,
     pending: Option<PendingState>,
@@ -62,6 +68,7 @@ struct DemoApp {
     exit_after_frames: Option<u32>,
     exit_after_popups: Option<u32>,
     should_exit: bool,
+    fixture_result: Option<bool>,
     /// `WELD_CLICK_AT=x,y`: click once, a few ticks after the first frame.
     ///
     /// Without this there is no way to prove anything that needs a real user
@@ -190,7 +197,7 @@ impl ApplicationHandler for DemoApp {
         // WELD_SCALE forces a scale factor regardless of the display, which is
         // how the HiDPI path gets exercised on a 1x screen.
         let scale = forced_scale().unwrap_or_else(|| window.scale_factor());
-        let url = std::env::var("WELD_URL").unwrap_or_else(|_| "https://example.com".into());
+        let url = initial_url();
         let config = MacosCefConfig {
             surface: CefSurfaceConfig {
                 initial_url: url.clone(),
@@ -682,7 +689,7 @@ impl DemoApp {
             exit_after.is_some_and(|n| s.frames_imported >= n)
         };
         if done {
-            present::report(s);
+            self.fixture_result = Some(present::report(s));
             let _ = s.producer.close();
             self.should_exit = true;
             return;
@@ -694,8 +701,14 @@ impl DemoApp {
     /// Report on whatever has been imported so far, for the timeout path.
     fn report_now(&mut self) {
         if let Some(s) = self.state.as_mut() {
-            present::report(s);
+            self.fixture_result = Some(present::report(s));
             let _ = s.producer.close();
+        } else {
+            log::error!("VALIDATION FAIL: browser state was never created");
+            receipt(format_args!(
+                "pixel-fixture: FAIL browser state was never created"
+            ));
+            self.fixture_result = Some(false);
         }
     }
 }
@@ -799,6 +812,7 @@ fn main() {
         exit_after_frames,
         exit_after_popups,
         should_exit: false,
+        fixture_result: None,
         scripted,
     };
 
@@ -822,6 +836,33 @@ fn main() {
             app.report_now();
             break;
         }
+    }
+    if pixel_fixture_enabled() && app.fixture_result != Some(true) {
+        std::process::exit(1);
+    }
+}
+
+pub(crate) fn pixel_fixture_enabled() -> bool {
+    std::env::var_os("WELD_PIXEL_FIXTURE").is_some()
+}
+
+fn initial_url() -> String {
+    if pixel_fixture_enabled() {
+        PIXEL_FIXTURE_URL.into()
+    } else {
+        std::env::var("WELD_URL").unwrap_or_else(|_| "https://example.com".into())
+    }
+}
+
+pub(crate) fn pixel_fixture_expected(format: wgpu::TextureFormat) -> Option<[u8; 4]> {
+    match format {
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => {
+            Some([255, 144, 30, 255])
+        }
+        wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => {
+            Some([30, 144, 255, 255])
+        }
+        _ => None,
     }
 }
 

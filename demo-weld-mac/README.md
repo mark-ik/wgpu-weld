@@ -55,23 +55,22 @@ platforms. The demo's purpose is proving the texture path, not input parity.
 ## Unattended validation
 
 There is no point opening a window on a machine nobody is watching, and "it did
-not crash" is weak evidence. Set `WELD_EXIT_AFTER_FRAMES` and the demo reads a
-64×64 corner of the imported texture back to the CPU, prints what it found, and
-exits:
+not crash" is weak evidence. `WELD_PIXEL_FIXTURE=1` loads an embedded animated
+dodger-blue page. With `WELD_EXIT_AFTER_FRAMES`, the demo reads a centered
+64×64 sample back, requires every pixel to match within tolerance, and exits
+unsuccessfully on a mismatch:
 
 ```sh
-WELD_EXIT_AFTER_FRAMES=1 RUST_LOG=info \
+WELD_PIXEL_FIXTURE=1 WELD_EXIT_AFTER_FRAMES=2 RUST_LOG=info \
   ./demo-weld-mac.app/Contents/MacOS/demo-weld-mac
 ```
 
 ```text
-imported frame #1 (1280x800 Bgra8Unorm)
-probe: 16384/16384 bytes non-zero in the top-left corner; first pixels [[238, 238, 238, 255], ...]
-VALIDATION PASS: 1 frames imported and the IOSurface carried real pixels
+PIXEL FIXTURE PASS: 4096/4096 center pixels matched [255, 144, 30, 255] ±8
 ```
 
-`[238, 238, 238, 255]` is BGRA for `#EEEEEE`, example.com's background. Real
-Chromium output, in a wgpu texture.
+`[255, 144, 30, 255]` is BGRA for dodger blue. This is an exact page-to-CEF-to-
+IOSurface-to-wgpu content receipt rather than an arrival check.
 
 Keep the frame count small. Accelerated OSR only paints on change, so a static
 page delivers one frame and then goes quiet; asking for 30 frames of
@@ -80,6 +79,7 @@ example.com waits until `WELD_TIMEOUT_SECS` (default 60) gives up.
 | Variable | Meaning |
 | --- | --- |
 | `WELD_URL` | Initial page. Defaults to `https://example.com`. |
+| `WELD_PIXEL_FIXTURE` | Use the embedded deterministic page and make the pixel verdict affect process status. |
 | `WELD_EXIT_AFTER_FRAMES` | Probe and exit after N imported frames. |
 | `WELD_TIMEOUT_SECS` | Give up and report anyway. Default 60. |
 | `WELD_SNAPSHOT` | Write an asynchronous Chromium screenshot to this PNG path. |

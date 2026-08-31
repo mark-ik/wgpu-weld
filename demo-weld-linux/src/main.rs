@@ -20,12 +20,13 @@
 //! Graft's extension-aware helper; welding then imports the buffer as
 //! `DRM_FORMAT_MOD_LINEAR`.
 //!
-//! # Verifying the layout, not just the arrival
+//! # Deterministic pixel validation
 //!
-//! `WELD_EXIT_AFTER_FRAMES` reads a 64x64 corner back and reports how many
-//! bytes are non-zero. That catches a dead import but **not** a wrongly-tiled
-//! one, which is scrambled yet non-zero. `WELD_TEXTURE_DUMP=<path.ppm>` writes
-//! the whole imported texture out, which shows scrambling at a glance:
+//! `WELD_PIXEL_FIXTURE=1` loads an embedded, animated dodger-blue page. With
+//! `WELD_EXIT_AFTER_FRAMES`, the demo reads a centered 64x64 block back and
+//! requires every pixel to match within a small color tolerance. A mismatch
+//! makes the process fail. `WELD_TEXTURE_DUMP=<path.ppm>` still writes the
+//! whole imported texture for diagnosis:
 //!
 //! ```text
 //! WELD_TEXTURE_DUMP=/tmp/imported.ppm WELD_EXIT_AFTER_FRAMES=2 cargo run -p demo-weld-linux
@@ -87,12 +88,19 @@ mod scripted;
 
 use crate::{blit::build_blit_pipeline, keys::keycode_to_vk};
 
+const PIXEL_FIXTURE_URL: &str = concat!(
+    "data:text/html;base64,",
+    "PHN0eWxlPmh0bWwsYm9keXttYXJnaW46MDt3aWR0aDoxMDAlO2hlaWdodDoxMDAlO2JhY2tncm91bmQ6IzFlOTBmZn1pe3Bvc2l0aW9uOmZpeGVkO3dpZHRoOjFweDtoZWlnaHQ6MXB4fTwvc3R5bGU+PGk+PC9pPjxzY3JpcHQ+bGV0IG49MDtzZXRJbnRlcnZhbCgoKT0+ZG9jdW1lbnQucXVlcnlTZWxlY3RvcignaScpLnN0eWxlLmJhY2tncm91bmQ9bisrJTI/JyMwMDAnOicjZmZmJywxNik8L3NjcmlwdD4="
+);
+const PIXEL_TOLERANCE: u8 = 8;
+
 // ── App state ─────────────────────────────────────────────────────────────────
 
 struct DemoApp {
     cef_runtime: Option<CefRuntime>,
     state: Option<DemoState>,
     timeout_at: Option<Instant>,
+    fixture_result: Option<bool>,
 }
 
 struct DemoState {
@@ -139,6 +147,7 @@ impl DemoApp {
             cef_runtime: Some(cef_runtime),
             state: None,
             timeout_at: exit_after_seconds().map(|timeout| Instant::now() + timeout),
+            fixture_result: None,
         }
     }
 }
@@ -254,7 +263,7 @@ impl ApplicationHandler for DemoApp {
             win_size.width,
             win_size.height
         );
-        let url = std::env::var("WELD_URL").unwrap_or_else(|_| "https://example.com".into());
+        let url = initial_url();
         let mut producer = LinuxCefProducer::new(
             &cef_runtime,
             LinuxCefConfig {
@@ -498,7 +507,7 @@ impl ApplicationHandler for DemoApp {
                     // says nothing about the frames it did import, and a
                     // report taken long after the last paint is exactly what
                     // tells a decayed buffer from a fresh one.
-                    report(s);
+                    self.fixture_result = Some(report(s));
                     let _ = s.producer.close();
                     el.exit();
                     return;
@@ -689,7 +698,7 @@ impl ApplicationHandler for DemoApp {
                 // imported pixels back and say what they were.
                 if let Some(limit) = exit_after_frames() {
                     if s.frames_imported >= limit {
-                        report(s);
+                        self.fixture_result = Some(report(s));
                         let _ = s.producer.close();
                         el.exit();
                         return;
@@ -879,9 +888,11 @@ fn main() {
     let event_loop = EventLoop::new().expect("event loop creation failed");
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    event_loop
-        .run_app(&mut DemoApp::new(runtime))
-        .expect("event loop error");
+    let mut app = DemoApp::new(runtime);
+    event_loop.run_app(&mut app).expect("event loop error");
+    if pixel_fixture_enabled() && app.fixture_result != Some(true) {
+        std::process::exit(1);
+    }
 }
 
 /// Shared vocabulary to winit's icons.
@@ -930,8 +941,8 @@ fn exit_after_seconds() -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
-/// Read a corner of the imported texture back and report what landed there.
-fn report(s: &mut DemoState) {
+/// Read the center of the imported texture back and report what landed there.
+fn report(s: &mut DemoState) -> bool {
     match s.frame.as_ref() {
         Some(frame) => {
             if let Ok(path) = std::env::var("WELD_TEXTURE_DUMP") {
@@ -942,21 +953,85 @@ fn report(s: &mut DemoState) {
                 }
             }
             match probe::sample(&s.host_ctx.device, &s.host_ctx.queue, &frame.texture) {
-                Ok(rb) if rb.looks_painted() => log::info!(
-                    "VALIDATION PASS: {} frame(s) imported, {}/{} bytes non-zero, first pixels {:?}",
-                    s.frames_imported,
-                    rb.non_zero_bytes,
-                    rb.total_bytes,
-                    rb.first_pixels
-                ),
-                Ok(rb) => log::error!(
-                    "VALIDATION FAIL: imported but entirely zero ({} bytes)",
-                    rb.total_bytes
-                ),
-                Err(e) => log::error!("VALIDATION FAIL: readback failed: {e}"),
+                Ok(rb) if pixel_fixture_enabled() => {
+                    let Some(expected) = pixel_fixture_expected(frame.format) else {
+                        log::error!(
+                            "PIXEL FIXTURE FAIL: unsupported texture format {:?}",
+                            frame.format
+                        );
+                        return false;
+                    };
+                    let matched = rb.matching_pixels(expected, PIXEL_TOLERANCE);
+                    let total = rb.total_pixels();
+                    if matched == total {
+                        log::info!(
+                            "PIXEL FIXTURE PASS: {matched}/{total} center pixels at {:?} matched {:?} ±{PIXEL_TOLERANCE}",
+                            rb.origin,
+                            expected
+                        );
+                        true
+                    } else {
+                        log::error!(
+                            "PIXEL FIXTURE FAIL: {matched}/{total} center pixels at {:?} matched {:?} ±{PIXEL_TOLERANCE}; first pixels {:?}",
+                            rb.origin,
+                            expected,
+                            rb.first_pixels
+                        );
+                        false
+                    }
+                }
+                Ok(rb) if rb.looks_painted() => {
+                    log::info!(
+                        "VALIDATION PASS: {} frame(s) imported, {}/{} bytes non-zero, center {:?}, first pixels {:?}",
+                        s.frames_imported,
+                        rb.non_zero_bytes,
+                        rb.total_bytes,
+                        rb.origin,
+                        rb.first_pixels
+                    );
+                    true
+                }
+                Ok(rb) => {
+                    log::error!(
+                        "VALIDATION FAIL: imported but entirely zero ({} bytes)",
+                        rb.total_bytes
+                    );
+                    false
+                }
+                Err(e) => {
+                    log::error!("VALIDATION FAIL: readback failed: {e}");
+                    false
+                }
             }
         }
-        None => log::error!("VALIDATION FAIL: no frame was ever imported"),
+        None => {
+            log::error!("VALIDATION FAIL: no frame was ever imported");
+            false
+        }
+    }
+}
+
+fn pixel_fixture_enabled() -> bool {
+    std::env::var_os("WELD_PIXEL_FIXTURE").is_some()
+}
+
+fn initial_url() -> String {
+    if pixel_fixture_enabled() {
+        PIXEL_FIXTURE_URL.into()
+    } else {
+        std::env::var("WELD_URL").unwrap_or_else(|_| "https://example.com".into())
+    }
+}
+
+fn pixel_fixture_expected(format: wgpu::TextureFormat) -> Option<[u8; 4]> {
+    match format {
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => {
+            Some([255, 144, 30, 255])
+        }
+        wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => {
+            Some([30, 144, 255, 255])
+        }
+        _ => None,
     }
 }
 

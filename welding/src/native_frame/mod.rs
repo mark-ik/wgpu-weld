@@ -163,10 +163,10 @@ impl Drop for Dx12SharedTexture {
 }
 
 // macOS
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct MetalTextureRef {
-    /// Retained `IOSurfaceRef`. Released after wgpu import once the Metal path
-    /// is wired.
+    /// Retained `IOSurfaceRef`. Released when this frame is imported, replaced
+    /// in the latest-frame mailbox, or otherwise dropped.
     pub io_surface: *mut std::os::raw::c_void,
     pub size: PhysicalSize<u32>,
     pub format: wgpu::TextureFormat,
@@ -174,6 +174,23 @@ pub struct MetalTextureRef {
 }
 
 unsafe impl Send for MetalTextureRef {}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn CFRelease(cf: *const std::ffi::c_void);
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for MetalTextureRef {
+    fn drop(&mut self) {
+        if !self.io_surface.is_null() {
+            // SAFETY: CEF gives each callback one retained IOSurface reference.
+            // This move-only frame owns that reference until it is dropped.
+            unsafe { CFRelease(self.io_surface.cast_const()) };
+            self.io_surface = std::ptr::null_mut();
+        }
+    }
+}
 
 /// One plane of a DMABUF-backed image. Field widths match CEF's
 /// `cef_accelerated_paint_native_pixmap_plane_t`.

@@ -6,20 +6,6 @@
 use super::*;
 use std::ffi::c_void;
 
-unsafe extern "C" {
-    fn CFRelease(cf: *const c_void);
-}
-
-struct RetainedIoSurface(*const c_void);
-
-impl Drop for RetainedIoSurface {
-    fn drop(&mut self) {
-        // SAFETY: CEF gives MetalTextureRef one retained IOSurface reference,
-        // and this guard is created exactly once by the consuming importer.
-        unsafe { CFRelease(self.0) };
-    }
-}
-
 /// The Apple half of [`WgpuTextureImporter::import`] for
 /// [`NativeFrame::MetalTextureRef`] frames.
 pub(super) fn import_metal(
@@ -33,7 +19,6 @@ pub(super) fn import_metal(
     if frame.io_surface.is_null() {
         return Err(ImportError::InvalidFrame("IOSurface handle is null"));
     }
-    let _io_surface = RetainedIoSurface(frame.io_surface.cast_const());
     if frame.size.width == 0 || frame.size.height == 0 {
         return Err(ImportError::InvalidFrame("Metal IOSurface has zero size"));
     }

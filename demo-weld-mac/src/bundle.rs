@@ -17,6 +17,11 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use cef::build_util::mac::{BundleInfo, build_bundle};
 
+    // cef's bundler launches nested `cargo build --bin ...` commands. Resolve
+    // those against this package even when the outer command starts at the
+    // workspace root, as CI and most users naturally do.
+    std::env::set_current_dir(env!("CARGO_MANIFEST_DIR"))?;
+
     let output = std::path::PathBuf::from(
         std::env::args()
             .nth(1)
