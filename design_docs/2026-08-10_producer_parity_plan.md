@@ -922,8 +922,8 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
 
 ## Progress
 
-- 2026-08-30: **the welding 0.13.0 release candidate is green on the wgpu
-  28/29/30 matrix, with a current headed Vulkan import.** Commit
+- 2026-08-30: **the published welding 0.13.0 release is green on the wgpu
+  28/29/30 matrix, with current headed Vulkan and Metal imports.** Commit
   `2989de9088cef3de86c5e99c3c2cb6738b306e40` locks the complete wgpu 30
   family to 30.0.1 and CEF to `151.8.0+151.3.24`. GitHub Actions run
   [33345042921](https://github.com/merely-made/wgpu-weld/actions/runs/33345042921)
@@ -947,10 +947,18 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
   `LD_LIBRARY_PATH` at the 151.8 distribution downloaded by this build made
   the headed run pass. This confirms the documented exact-version boundary.
 
-  A current Metal rerun remains unverified. Both known iMac routes were
-  unreachable during this gate, including the saved Intel host at
-  `192.168.4.105`. The macOS wgpu matrix is green, while the 2026-08-12 Intel
-  and M4 receipts below remain the latest headed Metal evidence.
+  The Metal rerun subsequently passed from fresh isolated builds of the
+  published `welding-v0.13.0` tag (`e8657577703be8dabd9bf49049c5d7ef0a9e5361`)
+  on both saved Macs: the M4 iMac on macOS 26.5.1/arm64 and the Intel iMac on
+  macOS 15.7.7/x86_64. Each used rustc 1.97.1, CEF 151.8.0+151.3.24, and the
+  complete wgpu 30.0.1 family. CEF loaded `https://example.com/` with HTTP 200;
+  each run imported one 1280x800 `Bgra8Unorm` IOSurface frame through Metal,
+  sampled 16384/16384 non-zero bytes with the expected `#EEEEEE` pixels, printed
+  `VALIDATION PASS`, and exited 0. The durable logs are
+  `/Users/markik/Code/worktrees/wgpu-weld-0.13.0-metal-m4/metal-m4-0.13.0-validation.log`
+  and
+  `/Users/markik/Code/worktrees/wgpu-weld-0.13.0-metal-intel/metal-intel-0.13.0-validation.log`
+  on their respective machines.
 
 - 2026-08-30: **snapshot correlation landed in source.** PNG snapshot requests
   now return `SnapshotRequestId`; polling returns `SnapshotPngCompletion` with

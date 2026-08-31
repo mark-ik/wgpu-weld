@@ -98,6 +98,12 @@ macOS 26.5.1, Apple M4 iMac (`aarch64-apple-darwin`), 2026-08-16, on the
 **wgpu-30 default row** at `02fb1cc`. `VALIDATION PASS`, 2 frames, probe
 16384/16384 non-zero.
 
+macOS 26.5.1/Apple M4 and macOS 15.7.7/Intel iMac, 2026-08-30, from fresh
+isolated builds of the published `welding-v0.13.0` tag. Both CEF 151.8 / wgpu
+30.0.1 runs loaded Example Domain with HTTP 200, imported a 1280x800
+`Bgra8Unorm` IOSurface frame through Metal, probed 16384/16384 bytes non-zero,
+printed `VALIDATION PASS`, and exited 0.
+
 Two things to know when re-running this unattended. `bundle-demo-weld-mac`
 replaces files in place, so the `.app` directory keeps the mtime of its first
 bundling while the executables inside are current; read the mtime on
