@@ -27,8 +27,13 @@ jobs:
       XDG_RUNTIME_DIR: /run/user/1000
       WAYLAND_DISPLAY: wayland-0
       DISPLAY: ""
+      DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+      XDG_SESSION_TYPE: wayland
+      XDG_CURRENT_DESKTOP: GNOME
+      GDK_BACKEND: wayland
       WINIT_UNIX_BACKEND: wayland
       WGPU_BACKEND: vulkan
+      RUST_LOG: info
       WELD_PIXEL_FIXTURE: "1"
       WELD_EXIT_AFTER_FRAMES: "2"
       WELD_TIMEOUT_SECS: "60"
@@ -47,6 +52,9 @@ jobs:
       - name: Run deterministic CEF to DMA-BUF to wgpu gate
         run: |
           set -o pipefail
+          export WELD_CACHE_ROOT="$RUNNER_TEMP/weld-radv-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
+          mkdir -p "$WELD_PROFILE"
           export CEF_PATH="$CEF_CACHE_ROOT"
           cargo build --locked -p demo-weld-linux
           cef_archive="$(find "$CEF_CACHE_ROOT" -path '*/cef_linux_x86_64/archive.json' -type f | sort | tail -1)"
@@ -66,10 +74,16 @@ jobs:
       WELD_PIXEL_FIXTURE: "1"
       WELD_EXIT_AFTER_FRAMES: "2"
       WELD_TIMEOUT_SECS: "60"
+      RUST_LOG: info
 
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Assert the provisioned Rust toolchain
+        shell: powershell
+        run: |
+          rustc +1.97.1 --version
+          cargo +1.97.1 --version
 
       - name: Record the physical adapter
         shell: powershell
@@ -79,7 +93,7 @@ jobs:
         shell: powershell
         run: |
           $env:CEF_PATH = $env:CEF_CACHE_ROOT
-          cargo build --locked -p demo-weld-win
+          cargo +1.97.1 build --locked -p demo-weld-win
           $cefPath = Get-ChildItem $env:CEF_CACHE_ROOT -Directory -Recurse -Filter 'cef_windows_x86_64' |
             Where-Object { Test-Path (Join-Path $_ 'archive.json') } |
             Sort-Object LastWriteTime -Descending |
@@ -117,11 +131,24 @@ jobs:
         run: cargo run --locked -p demo-weld-mac --bin bundle-demo-weld-mac -- "$RUNNER_TEMP/bundle"
       - name: Run deterministic CEF to IOSurface to Metal gate
         run: |
-          export WELD_RECEIPT="$RUNNER_TEMP/weld-metal-m4.receipt"
-          export WELD_CACHE_ROOT="$RUNNER_TEMP/cef-cache"
-          export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
-          "$RUNNER_TEMP/bundle/demo-weld-mac.app/Contents/MacOS/demo-weld-mac"
-          grep -F "pixel-fixture: PASS" "$WELD_RECEIPT"
+          app="$RUNNER_TEMP/bundle/demo-weld-mac.app"
+          receipt="$RUNNER_TEMP/weld-metal-m4.receipt"
+          cache_root="$(mktemp -d "$RUNNER_TEMP/weld-metal-m4.XXXXXX")"
+          mkdir -p "$cache_root/profile"
+          stdout="$RUNNER_TEMP/weld-metal-m4.stdout.log"
+          stderr="$RUNNER_TEMP/weld-metal-m4.stderr.log"
+          open -W -n --stdout "$stdout" --stderr "$stderr" \
+            --env "WELD_RECEIPT=$receipt" \
+            --env "WELD_CACHE_ROOT=$cache_root" \
+            --env "WELD_PROFILE=$cache_root/profile" \
+            --env WELD_PIXEL_FIXTURE=1 \
+            --env WELD_EXIT_AFTER_FRAMES=2 \
+            --env WELD_TIMEOUT_SECS=60 \
+            --env RUST_LOG=info \
+            "$app"
+          cat "$stdout"
+          cat "$stderr"
+          grep -F "pixel-fixture: PASS" "$receipt"
 
   metal-intel:
     name: Intel iMac Metal pixel fixture
@@ -150,8 +177,21 @@ jobs:
         run: cargo run --locked -p demo-weld-mac --bin bundle-demo-weld-mac -- "$RUNNER_TEMP/bundle"
       - name: Run deterministic CEF to IOSurface to Metal gate
         run: |
-          export WELD_RECEIPT="$RUNNER_TEMP/weld-metal-intel.receipt"
-          export WELD_CACHE_ROOT="$RUNNER_TEMP/cef-cache"
-          export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
-          "$RUNNER_TEMP/bundle/demo-weld-mac.app/Contents/MacOS/demo-weld-mac"
-          grep -F "pixel-fixture: PASS" "$WELD_RECEIPT"
+          app="$RUNNER_TEMP/bundle/demo-weld-mac.app"
+          receipt="$RUNNER_TEMP/weld-metal-intel.receipt"
+          cache_root="$(mktemp -d "$RUNNER_TEMP/weld-metal-intel.XXXXXX")"
+          mkdir -p "$cache_root/profile"
+          stdout="$RUNNER_TEMP/weld-metal-intel.stdout.log"
+          stderr="$RUNNER_TEMP/weld-metal-intel.stderr.log"
+          open -W -n --stdout "$stdout" --stderr "$stderr" \
+            --env "WELD_RECEIPT=$receipt" \
+            --env "WELD_CACHE_ROOT=$cache_root" \
+            --env "WELD_PROFILE=$cache_root/profile" \
+            --env WELD_PIXEL_FIXTURE=1 \
+            --env WELD_EXIT_AFTER_FRAMES=2 \
+            --env WELD_TIMEOUT_SECS=60 \
+            --env RUST_LOG=info \
+            "$app"
+          cat "$stdout"
+          cat "$stderr"
+          grep -F "pixel-fixture: PASS" "$receipt"
