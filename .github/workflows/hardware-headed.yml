@@ -94,12 +94,12 @@ jobs:
         run: |
           $env:CEF_PATH = $env:CEF_CACHE_ROOT
           cargo +1.97.1 build --locked -p demo-weld-win
-          $cefPath = Get-ChildItem $env:CEF_CACHE_ROOT -Directory -Recurse -Filter 'cef_windows_x86_64' |
-            Where-Object { Test-Path (Join-Path $_ 'archive.json') } |
+          $archive = Get-ChildItem -LiteralPath $env:CEF_CACHE_ROOT -Recurse -File -Filter 'archive.json' |
+            Where-Object { $_.Directory.Name -eq 'cef_windows_x86_64' } |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
-          if (-not $cefPath) { throw 'CEF distribution was not produced by cef-dll-sys' }
-          $env:CEF_PATH = $cefPath.FullName
+          if (-not $archive) { throw 'CEF distribution was not produced by cef-dll-sys' }
+          $env:CEF_PATH = $archive.Directory.FullName
           & "$env:CARGO_TARGET_DIR\debug\demo-weld-win.exe" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\weld-nvidia-dx12.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Select-String -SimpleMatch 'PIXEL FIXTURE PASS' "$env:RUNNER_TEMP\weld-nvidia-dx12.log"
