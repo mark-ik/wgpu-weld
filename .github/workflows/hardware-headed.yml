@@ -100,9 +100,17 @@ jobs:
             Select-Object -First 1
           if (-not $archive) { throw 'CEF distribution was not produced by cef-dll-sys' }
           $env:CEF_PATH = $archive.Directory.FullName
-          & "$env:CARGO_TARGET_DIR\debug\demo-weld-win.exe" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\weld-nvidia-dx12.log"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Select-String -SimpleMatch 'PIXEL FIXTURE PASS' "$env:RUNNER_TEMP\weld-nvidia-dx12.log"
+          $stdout = Join-Path $env:RUNNER_TEMP 'weld-nvidia-dx12.stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'weld-nvidia-dx12.stderr.log'
+          $process = Start-Process -FilePath "$env:CARGO_TARGET_DIR\debug\demo-weld-win.exe" `
+            -NoNewWindow -Wait -PassThru `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          Get-Content -LiteralPath $stdout
+          Get-Content -LiteralPath $stderr
+          if ($process.ExitCode -ne 0) { exit $process.ExitCode }
+          if (-not (Select-String -SimpleMatch 'PIXEL FIXTURE PASS' -Path $stdout, $stderr)) {
+            throw 'deterministic pixel fixture did not report success'
+          }
 
   metal-m4:
     name: Apple M4 Metal pixel fixture
