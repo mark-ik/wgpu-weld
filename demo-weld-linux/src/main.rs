@@ -16,7 +16,8 @@
 //! an explicit modifier, and importing that needs
 //! `VK_EXT_image_drm_format_modifier`, which wgpu only enables from 30 on and
 //! surfaces as `VULKAN_EXTERNAL_MEMORY_DMA_BUF`. This demo requests that
-//! feature when the adapter has it; welding then imports the buffer as
+//! feature when the adapter has it and creates the unified device through
+//! Graft's extension-aware helper; welding then imports the buffer as
 //! `DRM_FORMAT_MOD_LINEAR`.
 //!
 //! # Verifying the layout, not just the arrival
@@ -178,28 +179,27 @@ impl ApplicationHandler for DemoApp {
                 })
                 .await
                 .expect("no suitable wgpu Vulkan adapter");
-            // welding needs VK_EXT_image_drm_format_modifier to import the
-            // implicit-modifier buffers CEF produces on AMD/RADV, and wgpu 30
-            // surfaces that as VULKAN_EXTERNAL_MEMORY_DMA_BUF. Ask for it only
-            // where the adapter has it, so a host without it still runs and
-            // gets welding's explicit refusal rather than a device-creation
-            // failure.
+            // Welding needs both the external-memory stack and
+            // VK_EXT_queue_family_foreign. Ask wgpu for the public feature,
+            // then let Graft construct the same unified device with its
+            // complete native extension set.
             let dmabuf_import = adapter.features() & wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF;
             log::info!(
                 "adapter DMA-BUF import feature: {}",
                 !dmabuf_import.is_empty()
             );
-            let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor {
+            let (device, queue) = welding::build_dmabuf_capable_device(
+                &adapter,
+                &wgpu::DeviceDescriptor {
                     label: Some("welding-demo"),
                     required_features: dmabuf_import,
                     required_limits: wgpu::Limits::default(),
                     experimental_features: wgpu::ExperimentalFeatures::disabled(),
                     memory_hints: wgpu::MemoryHints::default(),
                     trace: wgpu::Trace::Off,
-                })
-                .await
-                .expect("request_device failed");
+                },
+            )
+            .expect("DMA-BUF-capable device creation failed");
             let caps = surface.get_capabilities(&adapter);
             let fmt = caps
                 .formats
@@ -331,6 +331,10 @@ impl ApplicationHandler for DemoApp {
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
         });
+        // Xwayland does not guarantee an initial redraw for a window created
+        // from a non-interactive SSH session. Start the poll/render loop
+        // explicitly; subsequent redraws schedule themselves.
+        self.state.as_ref().unwrap().window.request_redraw();
     }
 
     fn window_event(
@@ -849,18 +853,27 @@ fn main() {
         .or_else(|| Some(std::env::temp_dir().join("welding-demo-linux-cache")));
     config.user_agent = std::env::var("WELD_UA").ok();
     config.user_agent_product = std::env::var("WELD_UA_PRODUCT").ok();
+    // A fresh CEF profile otherwise blocks inside CefInitialize on Chromium's
+    // first-run EULA, before winit can create a window or enforce the demo
+    // timeout. Hosts may add further switches through WELD_SWITCHES.
+    config.command_line_switches = vec![
+        ("no-first-run".into(), None),
+        ("no-default-browser-check".into(), None),
+    ];
     // WELD_SWITCHES=disable-popup-blocking,lang=en-GB
     if let Ok(list) = std::env::var("WELD_SWITCHES") {
-        config.command_line_switches = list
-            .split(',')
-            .filter(|s| !s.is_empty())
-            .map(|s| match s.split_once('=') {
-                Some((k, v)) => (k.to_owned(), Some(v.to_owned())),
-                None => (s.to_owned(), None),
-            })
-            .collect();
-        eprintln!("weld demo: switches {:?}", config.command_line_switches);
+        config
+            .command_line_switches
+            .extend(
+                list.split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| match s.split_once('=') {
+                        Some((k, v)) => (k.to_owned(), Some(v.to_owned())),
+                        None => (s.to_owned(), None),
+                    }),
+            );
     }
+    eprintln!("weld demo: switches {:?}", config.command_line_switches);
     let runtime = CefRuntime::initialize(config).expect("welding: CEF initialize failed");
 
     let event_loop = EventLoop::new().expect("event loop creation failed");

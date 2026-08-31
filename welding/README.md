@@ -7,8 +7,8 @@ to the host as a GPU texture on the host's own device, with no CPU round trip.
 Use it when you want a full Chromium in your renderer, and you are willing to
 ship Chromium to get it. If you would rather use the webview the OS already
 has, its sibling [`scrying`](https://crates.io/crates/scrying) covers that lane;
-[`grafting`](https://crates.io/crates/grafting) is the texture-interop core both
-of them import through.
+[`grafting`](https://crates.io/crates/grafting) is the texture-interop core all
+three Weld platform imports use.
 
 The crate defaults to wgpu 30 and also carries `wgpu-29` and `wgpu-28`
 features. Pick the row matching the host, with default features disabled for
@@ -23,13 +23,13 @@ How far each row has been taken:
 
 | row | evidence |
 | --- | --- |
-| `wgpu-30` (default) | live GPU-import receipts on all three paths — DX12 1578 frames, Metal on Apple Silicon `VALIDATION PASS` with a 16384/16384 non-zero probe, DMA-BUF on AMD/RADV the same 16384/16384 plus a whole-texture dump |
-| `wgpu-29` | live receipts on all three paths, taken before the default flip |
-| `wgpu-28` | compiles and passes the configuration tests; **not** exercised on hardware |
+| `wgpu-30` (default) | live GPU-import receipts on all three paths; the current Graft-backed wrappers compile on Windows, Apple Silicon, and AMD/RADV Linux |
+| `wgpu-29` | compiles on all three hosts; DX12 and Metal retain their live receipts, while content-preserving CEF DMABUF import now returns a typed version error |
+| `wgpu-28` | compiles on all three hosts; **not** exercised on hardware, and CEF DMABUF import returns the same typed version error |
 
 **Made with AI**
 
-## State, 2026-08-30
+## State, 2026-08-31
 
 Version 0.13.0 is the published baseline. It adds an absolute zoom setter and
 request-correlated PNG snapshot completions with bounded admission; those
@@ -38,6 +38,13 @@ public API changes require a minor-version boundary from 0.12.1. Version
 desktop platform. Linux had only
 ever worked on Intel/Mesa; AMD/RADV was refused with a typed error until
 0.12.0, for reasons the `[^linux]` note below explains.
+
+Welding now pins Graft commit
+`8106f7c6b16838eb9ec062f0293249b39c108907` and delegates every native wgpu
+wrapper to it. CEF-specific callback ownership, the Windows copy, IOSurface
+construction, and Linux modifier policy remain here. Required CI jobs compile
+the real CEF demo on Windows, macOS, and Linux in addition to the nine-row
+library matrix.
 
 **0.13.0 builds against CEF 151** (`cef` `151.8.0+151.3.24`); 0.12.0 shipped
 CEF 147 and 0.12.1 moved the published line to 151. The library compiled
@@ -165,16 +172,20 @@ aborts the process.
 [^linux]: Linux needs the DMABUF buffer to carry a DRM format modifier.
 Intel/Mesa supplies an explicit one and the frame import is verified there.
 AMD/RADV hands over `DRM_FORMAT_MOD_INVALID` instead, and importing that needs
-`VK_EXT_image_drm_format_modifier` on the wgpu device.
+`VK_EXT_image_drm_format_modifier` on the wgpu device. Create the unified host
+device through `welding::build_dmabuf_capable_device`; Graft adds the complete
+DMA-BUF extension set, including `VK_EXT_queue_family_foreign`.
 
 **Which row you are on decides what happens.** wgpu enables that extension from
-**30** onward and exposes it as `VULKAN_EXTERNAL_MEMORY_DMA_BUF`; wgpu 28 and
-29 have no such feature. So on `wgpu-30`, a host that requests the feature gets
-the buffer imported as `DRM_FORMAT_MOD_LINEAR`, verified on RADV by dumping the
-whole imported texture rather than counting non-zero bytes, which a
-wrongly-tiled buffer would also pass. On `wgpu-28` and `wgpu-29`, `welding`
-still refuses such a buffer with a typed error naming the situation rather than
-producing a broken texture.
+**30** onward and exposes it as `VULKAN_EXTERNAL_MEMORY_DMA_BUF`. Graft also
+acquires CEF's image from Vulkan's foreign queue family and registers the
+resulting shader-readable state with wgpu. That complete content-preserving
+contract is available on row 30. An implicit buffer is deliberately treated as
+`DRM_FORMAT_MOD_LINEAR`, verified on RADV by dumping the whole imported texture
+rather than counting non-zero bytes, which a wrongly tiled buffer would also
+pass. Rows 28 and 29 cannot register the established state at the HAL boundary,
+so Welding refuses CEF DMABUF import there with a typed error even when the
+modifier is explicit.
 
 The popup row reads "opens" because it was measured on the AMD machine while
 that refusal was still in force: CEF offered the dropdown and reported its
@@ -290,6 +301,10 @@ export WELD_TIMEOUT_SECS=45          # gracefully end a scripted battery
 export WELD_SWITCHES=disable-popup-blocking,lang=en-GB
 export WELD_BACKGROUND=transparent # or rrggbb; unset = opaque white
 ```
+
+The Linux demo always adds `no-first-run` and `no-default-browser-check`, so a
+fresh CEF profile cannot block inside `CefInitialize` before the demo timeout
+starts. `WELD_SWITCHES` appends host-specific switches to those defaults.
 
 `testing/weld_input_probe.html` reports what it received through
 `document.title`, which comes back as a `TitleChanged` navigation event, so

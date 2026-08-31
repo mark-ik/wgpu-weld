@@ -1,9 +1,24 @@
-//! macOS: retained `IOSurfaceRef` -> `MTLTexture` -> wgpu Metal.
+//! macOS: retained `IOSurfaceRef` -> `MTLTexture` -> Graft -> wgpu Metal.
 //!
-//! Split out of `native_frame/mod.rs`. Import code is written but still
-//! pending runtime validation on a real macOS host.
+//! Welding owns the CEF/IOSurface lifetime and texture descriptor. Graft owns
+//! the backend-specific `MTLTexture` -> `wgpu::Texture` wrapper.
 
 use super::*;
+use std::ffi::c_void;
+
+unsafe extern "C" {
+    fn CFRelease(cf: *const c_void);
+}
+
+struct RetainedIoSurface(*const c_void);
+
+impl Drop for RetainedIoSurface {
+    fn drop(&mut self) {
+        // SAFETY: CEF gives MetalTextureRef one retained IOSurface reference,
+        // and this guard is created exactly once by the consuming importer.
+        unsafe { CFRelease(self.0) };
+    }
+}
 
 /// The Apple half of [`WgpuTextureImporter::import`] for
 /// [`NativeFrame::MetalTextureRef`] frames.
@@ -11,13 +26,14 @@ pub(super) fn import_metal(
     frame: MetalTextureRef,
     ctx: &HostWgpuContext,
 ) -> Result<ImportedTexture, ImportError> {
+    use objc2::rc::Retained;
     use objc2_io_surface::IOSurfaceRef;
     use objc2_metal::{MTLDevice, MTLStorageMode, MTLTextureDescriptor, MTLTextureUsage};
-    use std::ffi::c_void;
 
     if frame.io_surface.is_null() {
         return Err(ImportError::InvalidFrame("IOSurface handle is null"));
     }
+    let _io_surface = RetainedIoSurface(frame.io_surface.cast_const());
     if frame.size.width == 0 || frame.size.height == 0 {
         return Err(ImportError::InvalidFrame("Metal IOSurface has zero size"));
     }
@@ -35,11 +51,7 @@ pub(super) fn import_metal(
         ))
     })?;
 
-    unsafe extern "C" {
-        fn CFRelease(cf: *const c_void);
-    }
-
-    let texture = unsafe {
+    let mtl_texture = unsafe {
         let mtl_device =
             crate::wgpu_compat::metal_device(&ctx.device).ok_or(ImportError::BackendMismatch {
                 frame: NativeFrameKind::MetalTextureRef,
@@ -48,95 +60,37 @@ pub(super) fn import_metal(
 
         // `newTextureWithDescriptor:iosurface:plane:` takes the CoreFoundation
         // `IOSurfaceRef`, not the ObjC `IOSurface` class, and CEF hands us the
-        // CF pointer.
-        let io_surf = &*(frame.io_surface as *const IOSurfaceRef);
-        let desc = MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
-            pixel_format,
-            frame.size.width as usize,
-            frame.size.height as usize,
-            false,
-        );
-        desc.setStorageMode(MTLStorageMode::Shared);
-        desc.setUsage(MTLTextureUsage::ShaderRead);
+        // retained CF pointer.
+        let io_surface = &*(frame.io_surface as *const IOSurfaceRef);
+        let descriptor =
+            MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+                pixel_format,
+                frame.size.width as usize,
+                frame.size.height as usize,
+                false,
+            );
+        descriptor.setStorageMode(MTLStorageMode::Shared);
+        descriptor.setUsage(MTLTextureUsage::ShaderRead);
 
-        let create_result = mtl_device.newTextureWithDescriptor_iosurface_plane(&desc, io_surf, 0);
-        // Release our retain; Metal holds its own reference after create.
-        CFRelease(frame.io_surface);
-        let mtl_texture = create_result.ok_or_else(|| {
-            ImportError::MetalImport(
-                "MTLDevice::newTextureWithDescriptor:iosurface:plane: returned nil".into(),
-            )
-        })?;
-        #[cfg(all(
-            feature = "wgpu-28",
-            not(feature = "wgpu-29"),
-            not(feature = "wgpu-30")
-        ))]
-        let mtl_texture = {
-            use foreign_types_shared::ForeignType;
-            ::metal::Texture::from_ptr(objc2::rc::Retained::into_raw(mtl_texture).cast())
-        };
-
-        let copy_size = wgpu_hal::CopyExtent {
-            width: frame.size.width,
-            height: frame.size.height,
-            depth: 1,
-        };
-        #[cfg(feature = "wgpu-30")]
-        let hal_texture = wgpu_hal::metal::Device::texture_from_raw(
-            mtl_texture,
-            frame.format,
-            objc2_metal::MTLTextureType::Type2D,
-            1,
-            1,
-            copy_size,
-            None,
-        );
-        #[cfg(all(feature = "wgpu-29", not(feature = "wgpu-30")))]
-        let hal_texture = wgpu_hal::metal::Device::texture_from_raw(
-            mtl_texture,
-            frame.format,
-            objc2_metal::MTLTextureType::Type2D,
-            1,
-            1,
-            copy_size,
-        );
-        #[cfg(all(
-            feature = "wgpu-28",
-            not(feature = "wgpu-29"),
-            not(feature = "wgpu-30")
-        ))]
-        let hal_texture = wgpu_hal::metal::Device::texture_from_raw(
-            mtl_texture,
-            frame.format,
-            ::metal::MTLTextureType::D2,
-            1,
-            1,
-            copy_size,
-        );
-
-        crate::wgpu_compat::create_texture_from_hal::<wgpu::wgc::api::Metal>(
-            &ctx.device,
-            hal_texture,
-            &wgpu::TextureDescriptor {
-                label: Some("weld-cef-metal-iosurface-import"),
-                size: wgpu::Extent3d {
-                    width: frame.size.width,
-                    height: frame.size.height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: frame.format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            },
-            // Metal has no explicit image layout; this imported frame enters
-            // wgpu for shader reads.
-            wgpu::TextureUses::RESOURCE,
-        )
+        mtl_device
+            .newTextureWithDescriptor_iosurface_plane(&descriptor, io_surface, 0)
+            .ok_or_else(|| {
+                ImportError::MetalImport(
+                    "MTLDevice::newTextureWithDescriptor:iosurface:plane: returned nil".into(),
+                )
+            })?
     };
+
+    let graft_host = grafting::HostWgpuContext::new(ctx.device.clone(), ctx.queue.clone());
+    let graft_frame = grafting::MetalTextureRef {
+        size: frame.size,
+        format: frame.format,
+        generation: frame.generation,
+        producer_sync: grafting::SyncMechanism::None,
+        raw_metal_texture: Retained::as_ptr(&mtl_texture) as *mut c_void,
+    };
+    let texture = grafting::import_metal_texture_ref(&graft_frame, &graft_host)
+        .map_err(|error| ImportError::MetalImport(error.to_string()))?;
 
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     Ok(ImportedTexture {

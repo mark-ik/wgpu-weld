@@ -180,9 +180,8 @@ unsafe impl Send for MetalTextureRef {}
 #[derive(Copy, Clone, Debug)]
 pub struct DmaBufPlane {
     /// Owned DMABUF file descriptor. `welding` `dup(2)`s callback-scoped FDs
-    /// before storing them here. The Vulkan importer takes ownership on
-    /// import (Vulkan closes the fd internally); otherwise `DmaBufImage::Drop`
-    /// closes the fd.
+    /// before storing them here. Graft takes ownership on import and closes
+    /// every descriptor on all paths; otherwise `DmaBufImage::Drop` closes it.
     pub fd: i32,
     /// Byte offset into the dmabuf where the plane data starts.
     pub offset: u64,
@@ -205,8 +204,8 @@ pub struct DmaBufImage {
 
 impl DmaBufImage {
     /// Release ownership of the contained fds without closing them. Used by
-    /// the Vulkan importer immediately before it hands the fds to
-    /// `vkAllocateMemory`, which takes ownership and closes them on its own.
+    /// the Vulkan importer immediately before it hands the complete plane set
+    /// to Graft, which owns every descriptor from that point onward.
     #[cfg(target_os = "linux")]
     pub(crate) fn forget_fds(mut self) -> Vec<DmaBufPlane> {
         std::mem::take(&mut self.planes)
@@ -216,12 +215,14 @@ impl DmaBufImage {
 #[cfg(target_os = "linux")]
 impl Drop for DmaBufImage {
     fn drop(&mut self) {
+        let mut closed = Vec::with_capacity(self.planes.len());
         for plane in &self.planes {
-            if plane.fd >= 0 {
+            if plane.fd >= 0 && !closed.contains(&plane.fd) {
                 // Safety: we own the fd (dup'd in OnAcceleratedPaint).
                 unsafe {
                     libc::close(plane.fd);
                 }
+                closed.push(plane.fd);
             }
         }
     }
@@ -331,6 +332,9 @@ mod dx12;
 mod metal;
 #[cfg(target_os = "linux")]
 mod vulkan_dmabuf;
+
+#[cfg(target_os = "linux")]
+pub use vulkan_dmabuf::build_dmabuf_capable_device;
 
 #[cfg(windows)]
 pub use dx12::D3d11CallbackFrameCopier;

@@ -38,7 +38,7 @@ pub mod native_frame;
 pub mod runtime;
 pub mod surface;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 mod wgpu_compat;
 
 // Only the producers consume this, and they are cef-runtime-only. The logic is
@@ -101,6 +101,8 @@ pub use app::ScriptResult;
 pub use auth::AuthId;
 pub use downloads::DownloadId;
 pub use error::WeldError;
+#[cfg(target_os = "linux")]
+pub use native_frame::build_dmabuf_capable_device;
 pub use native_frame::{
     HostWgpuContext, ImportError, ImportedTexture, InteropBackend, NativeFrame, NativeFrameKind,
     WgpuTextureImporter,

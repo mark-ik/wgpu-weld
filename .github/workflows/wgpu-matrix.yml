@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
 jobs:
   fmt:
     name: rustfmt
@@ -30,8 +33,31 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy
-      - run: cargo clippy -p welding --lib --no-default-features --features ${{ matrix.wgpu }} -- -D warnings
+      - run: cargo clippy --locked -p welding --lib --no-default-features --features ${{ matrix.wgpu }} -- -D warnings
       # The scaffold (non-cef-runtime) tests cover the version-independent
       # logic; one wgpu row per OS is enough to run them.
-      - run: cargo test -p welding --no-default-features --features ${{ matrix.wgpu }}
+      - run: cargo test --locked -p welding --no-default-features --features ${{ matrix.wgpu }}
         if: matrix.wgpu == 'wgpu-30'
+
+  demo:
+    name: ${{ matrix.os }} / ${{ matrix.package }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            package: demo-weld-linux
+          - os: macos-latest
+            package: demo-weld-mac
+          - os: windows-latest
+            package: demo-weld-win
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Check the platform CEF demo
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo check --locked -p ${{ matrix.package }}

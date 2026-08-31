@@ -38,7 +38,7 @@ content inside its own pipeline. It is the CEF sibling of
 and [`wgpu-graft`](https://github.com/merely-made/wgpu-graft) (Servo, plus
 the shared `grafting` interop core).
 
-## Status (2026-08-30)
+## Status (2026-08-31)
 
 Prototype. `welding` 0.13.0 is published on crates.io (MPL-2.0). It requires
 wgpu 30.0.1 on the default row and publishes the absolute zoom setter plus
@@ -46,6 +46,12 @@ ID-correlated, bounded PNG snapshot completions added after 0.12.1. Per-platform
 detail, and the difference between "verified on that hardware" and
 "implemented but not yet run there", is the table in
 [`welding/README.md`](welding/README.md).
+
+All three native wrappers now delegate to the same exact Graft commit
+(`8106f7c6b16838eb9ec062f0293249b39c108907`). Welding keeps CEF's callback
+lifetime, copy/retain, modifier fallback, and synchronization policy; Graft
+owns D3D12, Metal, and Vulkan resource registration with wgpu. The platform
+demos are required CI builds rather than optional examples.
 
 0.12.0 is the first release where accelerated GPU import works on every
 desktop platform reachable for testing. Linux had only ever worked on
@@ -83,14 +89,18 @@ silently, in a release build. Passing null does not fail, it just drops the
 call before any CEF code runs.
 
 - All three platform import lanes are hardware-verified: Windows (D3D11
-  copy, D3D12 shared handle via the `grafting` crate, into wgpu), Linux
-  (DMABUF via Vulkan external memory, Fedora 44 on Intel/Mesa and on AMD
-  Renoir/RADV), macOS (IOSurface via Metal, on both Intel and Apple Silicon).
+  copy, D3D12 shared handle via Graft, into wgpu), Linux (DMABUF via Graft's
+  Vulkan external-memory import, Fedora 44 on Intel/Mesa and on AMD
+  Renoir/RADV), macOS (IOSurface to Metal texture, then Graft, on both Intel
+  and Apple Silicon).
   Linux needs a DRM format modifier to import. Intel/Mesa supplies an explicit
   one; AMD/RADV supplies `DRM_FORMAT_MOD_INVALID` instead, and importing that
   needs `VK_EXT_image_drm_format_modifier`, which wgpu enables from 30 on. So
-  the `wgpu-30` row imports it as linear, and the `wgpu-29` and `wgpu-28` rows
-  still refuse with a typed error.
+  the `wgpu-30` row imports it as linear. CEF's DMABUF is a foreign image;
+  content-preserving queue acquisition and wgpu state registration require
+  the `wgpu-30` row and a device created through
+  `build_dmabuf_capable_device`. Rows 28 and 29 compile but refuse this runtime
+  path with a typed error.
 - The capability probe reports honestly as of the 2026-08-10 truth pass: a
   unit test pins every "Supported" claim to a real handler.
 - Popup widget surfaces (`<select>` dropdowns and similar) render via a
@@ -130,7 +140,9 @@ call before any CEF code runs.
   `demo-weld-mac`); the macOS demo ships a CEF helper binary, an `.app`
   bundler, and unattended pixel-readback validation. All three take the same
   environment knobs and can script a click, a wheel scroll and a keypress, so
-  the input path is provable without a human at the keyboard.
+  the input path is provable without a human at the keyboard. CI now downloads
+  the pinned CEF distribution and requires the matching demo to compile on
+  each hosted operating system.
 - Without the `cef-runtime` feature the library compiles with no CEF
   distribution; producer constructors return a pending-wiring error.
 

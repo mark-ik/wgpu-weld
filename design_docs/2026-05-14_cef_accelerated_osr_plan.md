@@ -1,7 +1,7 @@
 # wgpu-weld: CEF accelerated OSR → wgpu
 
-**Date:** 2026-05-14 (revised 2026-06-02: Windows pooled-resource lifetime correction; revised 2026-08-10: module split, `grafting` gated to Windows, macOS lane fixed and validated end to end)
-**Status:** **All four phases complete.** Windows (Phase 1 + 2), macOS (Phase 3) and Linux (Phase 4) each render example.com into a host wgpu texture through accelerated OSR, verified on real hardware rather than by cross-compilation. Remaining work is the deferred list under Phase 4 (Wayland-native, NVIDIA proprietary, multi-plane) plus macOS input parity, not the core import paths.
+**Date:** 2026-05-14 (revised 2026-06-02: Windows pooled-resource lifetime correction; revised 2026-08-10: module split and macOS validation; revised 2026-08-31: all native wgpu wrappers consolidated in Graft)
+**Status:** **All four phases complete.** Windows (Phase 1 + 2), macOS (Phase 3) and Linux (Phase 4) each render example.com into a host wgpu texture through accelerated OSR, verified on real hardware rather than by cross-compilation. Welding now owns producer policy and delegates D3D12, Metal, and Vulkan resource registration to exact Graft commit `8106f7c6b16838eb9ec062f0293249b39c108907`. Remaining work is the deferred list under Phase 4 (Wayland-native, NVIDIA proprietary, non-RGBA/disjoint multi-plane formats) plus macOS input parity.
 **Sibling crates:** `wgpu-graft` (Servo / GL-FBO interop), `wgpu-scry` (system webviews / WGC / ScreenCaptureKit)
 
 ---
@@ -12,8 +12,8 @@ Provide a clean, cross-platform Rust crate (`welding`) that routes CEF's
 `OnAcceleratedPaint` GPU texture handles into a caller-supplied wgpu pipeline.
 CEF's handles are callback-scoped, so the real contract is: duplicate/retain in
 the callback, store only an owned resource, then import from the host renderer.
-Windows is the first concrete path; macOS import code exists pending runtime
-validation, and Linux DMABUF import has been verified on Fedora 44 + Intel/Mesa.
+All three paths have headed receipts: Windows/DX12, macOS/Metal on Intel and
+Apple Silicon, and Linux/Vulkan on Intel/Mesa and AMD/RADV.
 
 **2026-06-02 Windows correction:** CEF's pooled Windows resource must not escape
 `OnAcceleratedPaint`, even through a duplicated handle. Windows now duplicates
@@ -106,9 +106,9 @@ the `impl cef::RenderHandler` + `on_accelerated_paint` pattern.
   host calls:
     producer.acquire_frame(&host_ctx)
       → WgpuTextureImporter::import(frame, ctx)
-        → Windows: already imported callback-time D3D11 copy
-        → macOS:   IOSurface → MTLTexture → wgpu HAL Metal
-        → Linux:   vkCreateImage + VkImportMemoryFdInfoKHR → wgpu HAL Vulkan
+        → Windows: callback-time D3D11 copy → Graft D3D12 import
+        → macOS:   IOSurface → MTLTexture → Graft Metal import
+        → Linux:   CEF modifier policy → Graft DMABUF/Vulkan import
 ```
 
 ---
@@ -126,9 +126,9 @@ Every file is held under a 600-line ceiling, which is what drove the
 | `welding/src/surface.rs` | `CefSurfaceProducer` trait, `CefSurfaceMode`, `CefSurfaceCapabilities`, input types, `NavigationEvent` |
 | `welding/src/cef_input.rs` | wgpu/winit input to `cef::MouseEvent` / `cef::KeyEvent` translation (`cef-runtime` only) |
 | `welding/src/native_frame/mod.rs` | `NativeFrame`, `PendingFrameSlot`, `ImportedTexture`, `HostWgpuContext`, `ImportError`, and the `WgpuTextureImporter` dispatch |
-| `welding/src/native_frame/dx12.rs` | Windows: `D3d11CallbackFrameCopier`, `copy_dx12_callback_frame`, the D3D12 import (delegated to `grafting`) |
-| `welding/src/native_frame/metal.rs` | macOS: `IOSurfaceRef` to `MTLTexture` to wgpu Metal |
-| `welding/src/native_frame/vulkan_dmabuf.rs` | Linux: DMABUF planes to Vulkan external memory to wgpu Vulkan |
+| `welding/src/native_frame/dx12.rs` | Windows callback copy and Graft D3D12 delegation |
+| `welding/src/native_frame/metal.rs` | macOS `IOSurfaceRef` lifetime/descriptor policy and Graft Metal delegation |
+| `welding/src/native_frame/vulkan_dmabuf.rs` | Linux CEF modifier policy and Graft DMABUF/Vulkan delegation |
 | `welding/src/windows_cef/mod.rs` | `WindowsCefProducer`, `WindowsCefConfig` |
 | `welding/src/macos_cef/mod.rs` | `MacosCefProducer`, `MacosCefConfig` |
 | `welding/src/linux_cef/mod.rs` | `LinuxCefProducer`, `LinuxCefConfig` |
@@ -165,7 +165,7 @@ Every file is held under a 600-line ceiling, which is what drove the
 ### Phase 3 — macOS
 
 - [x] `OnAcceleratedPaint`: `CFRetain(io_surface)`, store in `PendingFrameSlot`
-- [x] `import_metal`: `MTLDevice::newTextureWithDescriptor:iosurface:plane:` → `wgpu_hal::metal::Device::texture_from_raw` → wgpu HAL Metal
+- [x] `import_metal`: `MTLDevice::newTextureWithDescriptor:iosurface:plane:` → Graft's direct `MTLTexture` import → wgpu Metal
 - [x] All handler fixes: `CefStringUserfree` conversions, `ImplBrowser/Host/Frame` imports, `#[allow]` on impl
 - [x] **Compile validation (2026-08-10)**, via `cargo check --target aarch64-apple-darwin`
       from the Windows box. The lane had never been compiled and did not build. Three
@@ -173,9 +173,10 @@ Every file is held under a 600-line ceiling, which is what drove the
       - `grafting` was an unconditional dependency, but only `native_frame::dx12` uses
         it, and its macOS path was itself broken at the time (it passed `metal` crate
         types where wgpu-hal 29 wants `objc2-metal`). Moved to
-        `[target.'cfg(windows)'.dependencies]`, which is where it belonged anyway.
-        The grafting side was fixed and shipped separately as grafting 0.4.0, which
-        is the version welding now takes from crates.io.
+        `[target.'cfg(windows)'.dependencies]`, which matched the delegation at
+        that time. The grafting side was fixed and shipped separately as grafting
+        0.4.0. The 2026-08-31 consolidation supersedes this historical dependency
+        shape: Graft is now common and pinned to exact commit `8106f7c`.
       - `extern "C" { fn CFRelease(..); }` needs to be `unsafe extern` under edition 2024.
       - The `iosurface:` argument is a CoreFoundation `IOSurfaceRef`, not the ObjC
         `IOSurface` class. CEF hands over the CF pointer, so the cast target was wrong.
@@ -265,17 +266,18 @@ CEF 127.3.5 + Vulkan + X11 + GLFW + Intel):
       iterates `planes[..plane_count]`, `libc::dup(fd)` per plane, maps
       `ColorType` → `wgpu::TextureFormat::{Bgra8UnormSrgb,Rgba8UnormSrgb}`,
       packages into `DmaBufImage`, stores in `PendingFrameSlot`
-- [x] `WgpuTextureImporter::import_vulkan` (ported from `wgpu-graft`):
-      `vkCreateImage` w/ `DRM_FORMAT_MODIFIER_EXT` tiling, `vkAllocateMemory`
-      w/ `ImportMemoryFdInfoKHR` + `MemoryDedicatedAllocateInfo`,
-      `texture_from_raw` w/ `wgpu_hal::vulkan::TextureMemory::External`
-- [x] `DmaBufImage::Drop` closes unconsumed fds; `forget_fds` for the
-      Vulkan-takes-ownership success path
-- [x] Single-plane Phase-4 constraint (BGRA8/RGBA8); multi-plane returns
-      a typed error
+- [x] `WgpuTextureImporter::import_vulkan` retains only CEF's implicit-modifier
+      policy and delegates explicit DRM image creation, compatible memory-type
+      selection, fd ownership, foreign-queue acquisition, and wgpu registration
+      to Graft
+- [x] `DmaBufImage::Drop` closes unconsumed unique fds; `forget_fds` hands the
+      complete owned plane set to Graft
+- [x] Shared-buffer multi-plane descriptors are accepted for BGRA8/RGBA8;
+      disjoint buffers and other pixel formats return typed errors
 - [x] `demo-weld-linux` (mirrors `demo-weld-win`, forces Vulkan backend)
 - [x] Smoke test on Fedora 44 + Intel iGPU: example.com rendered, mouse input round-trips through to navigation
-- [ ] Wayland-native (currently runs through XWayland), NVIDIA proprietary, multi-plane formats (deferred)
+- [ ] Wayland-native (currently runs through XWayland), NVIDIA proprietary,
+      non-RGBA and disjoint multi-plane formats (deferred)
 
 Additional fix discovered during Phase 4: `external_begin_frame_enabled` was
 set to 1 in all three producers but no caller invokes `SendExternalBeginFrame`,
@@ -294,5 +296,5 @@ Flipped to 0 across Linux, Windows, and macOS so CEF self-drives at
 | Subprocess tax | None | None | Must call `execute_process_from` first in `main()` |
 | Frame source | Servo/surfman GL FBO | WGC / ScreenCaptureKit / WPE DMABUF | `CefAcceleratedPaintInfo` |
 | Handle lifetime | Producer-owned GL/native resource | Capture/session-owned native frame | **Callback-scoped** — must dup/retain |
-| Linux support | GL FBO → Vulkan external memory | WPE scaffold / DMABUF planned | DMABUF + Vulkan import verified (Intel/Mesa + X11/XWayland) |
+| Linux support | GL FBO and shared DMABUF import core | WPE DMABUF verified on AMD/RADV | CEF DMABUF + Vulkan verified (Intel/Mesa and AMD/RADV via X11/XWayland) |
 | CPU fallback | Servo readback demos | snapshots / overlay fallback | `cpu-paint-fallback` feature |

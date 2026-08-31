@@ -197,19 +197,16 @@ one-line explanation.
 
 ### Structural findings
 
-1. **scrying still carries a full in-tree `native_frame`** (dmabuf 796 lines,
-   metal, sync_dx12) while already delegating the DX12 open-shared step to
-   grafting. welding made the same delegation this session. The remaining
-   duplicated import paths (DMABUF/Vulkan, IOSurface/Metal) are candidates to
-   converge on grafting 0.4.0, which now carries the fixed objc2 Metal path.
-2. **scrying's grafting dep is still `git branch=main`**, the same shape that
-   blocked welding's publish until today. grafting 0.4.0 is on crates.io, so
-   the swap is now a one-liner, and it unblocks any future scrying publish.
-3. **The wgpu external-texture UNDEFINED-layout gap** (scry's WPE DCC
-   footnote: `create_texture_from_hal` tracks imports as UNDEFINED, first-use
-   barrier may discard) affects every Vulkan import in the family. One
-   upstream fix serves all three; grafting owns the tracking issue since it
-   owns the import core.
+1. **Resolved 2026-08-31:** scrying and welding retain their producer-specific
+   capture, callback-lifetime, modifier, and synchronization policy, while all
+   D3D12, Metal, and DMABUF/Vulkan wgpu wrappers live in Graft commit
+   `8106f7c6b16838eb9ec062f0293249b39c108907`.
+2. **Resolved 2026-08-31:** both consumers use that exact immutable Graft rev;
+   neither follows `branch = "main"`.
+3. **Resolved for the current row:** Graft acquires foreign DMABUF images into
+   shader-readable layout and registers `RESOURCE` at the wgpu 30 HAL boundary.
+   Rows 28 and 29 reject content-preserving foreign imports explicitly because
+   their HAL call cannot register that established state.
 4. **Vocabulary drift**: `CursorShape`, focus reasons, key/mouse event
    shapes, and `NavigationEvent` naming differ between welding and scrying
    for no load-bearing reason. Convergence is cheap now and expensive later.
@@ -892,20 +889,18 @@ a wgpu major without asking. The README now says so and gives the pin.
 
 ### S: scrying items (both directions)
 
-- **S1.** Swap the grafting dep to crates.io `0.4`.
+- **S1. Done 2026-08-31.** Pin the reviewed Graft interop ABI exactly.
 - **S2.** Its own matrix's unverified cells, in its order: win/mac IME
   observability, touch coverage, wk6 native input. Tracked in scry's docs;
   listed here only so the family view is complete.
-- **S3.** Evaluate migrating in-tree `native_frame` DMABUF/Metal import paths
-  onto grafting; keep in-tree only what is genuinely capture-specific (WGC,
-  SCK plumbing). Outcome may legitimately be "keep", but decide on a read,
-  not by default.
+- **S3. Done 2026-08-31.** DMABUF/Metal resource registration moved to Graft;
+  WPE semaphore/modifier policy and SCK/WGC capture plumbing remain in Scry.
 - **S4.** WebView2 CDP exposure, mirroring W8's shape.
 
 ### G: grafting items
 
-- **G1.** File/track the upstream wgpu initial-layout issue for imported
-  textures; link scry's DCC footnote and welding's Vulkan path to it.
+- **G1. Done 2026-08-31.** Graft's wgpu 30 import registers the acquired
+  `RESOURCE` state; older rows return a typed refusal.
 - **G2.** `servo-wgpu-interop-adapter` selects grafting features without a
   wgpu major of its own default; it compiles today because a sibling demo
   unifies one in. Make the selection explicit.
@@ -921,6 +916,22 @@ re-verifying on the iMac and the Fedora box per phase (the readback-verdict
 pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
 
 ## Progress
+
+- 2026-08-31: **the triplet now has one native import boundary.** Graft commit
+  `8106f7c6b16838eb9ec062f0293249b39c108907` owns the D3D12, Metal, and
+  DMABUF/Vulkan wrappers, including fd closure, shared-buffer plane handling,
+  compatible memory-type intersection, and foreign-queue acquisition. Scry
+  commit `01e411ef35237d4c562dd311ace68977a5b9c78f` pins it and closes the
+  WPE/RADV hard pixel gate at 4096/4096 expected pixels. Weld pins the same rev,
+  retains only CEF policy, and adds required CEF demo builds on all three hosted
+  operating systems. The library compiles with warnings denied on Windows,
+  Apple Silicon, and AMD/RADV Linux across wgpu 28, 29, and 30.
+
+  The corrected fresh-profile Linux run loaded Example Domain with HTTP 200,
+  imported two CEF frames, and read back 16384/16384 non-zero bytes with
+  `[238, 238, 238, 255]` first pixels. Khronos validation emitted no VUID. The
+  demo now supplies the two first-run-suppression switches itself, so a new
+  cache cannot stop inside Chromium's EULA before winit starts.
 
 - 2026-08-30: **the published welding 0.13.0 release is green on the wgpu
   28/29/30 matrix, with current headed Vulkan and Metal imports.** Commit
