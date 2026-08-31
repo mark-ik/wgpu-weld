@@ -38,9 +38,11 @@ content inside its own pipeline. It is the CEF sibling of
 and [`wgpu-graft`](https://github.com/merely-made/wgpu-graft) (Servo, plus
 the shared `grafting` interop core).
 
-## Status (2026-08-17)
+## Status (2026-08-30)
 
-Prototype. `welding` 0.12.0, published on crates.io (MPL-2.0). Per-platform
+Prototype. `welding` 0.13.0 is published on crates.io (MPL-2.0). It requires
+wgpu 30.0.1 on the default row and publishes the absolute zoom setter plus
+ID-correlated, bounded PNG snapshot completions added after 0.12.1. Per-platform
 detail, and the difference between "verified on that hardware" and
 "implemented but not yet run there", is the table in
 [`welding/README.md`](welding/README.md).
@@ -51,12 +53,13 @@ Intel/Mesa; AMD/RADV was refused until wgpu 30 supplied the extension that
 case needs. NVIDIA's proprietary driver and Wayland-native remain outside the
 CEF path.
 
-0.12.0 shipped against CEF 147. Main has since moved the pin to CEF 151, which
-also drops the last split in the dependency graph: `cef` carried its own
+0.12.0 shipped against CEF 147. Releases from 0.12.1 use CEF 151; the 0.13.0
+lock resolves `cef` 151.8.0+151.3.24. That line also drops the last split in
+the dependency graph: `cef` carried its own
 `wgpu 29` for an importer `welding` never calls, so the demos resolved two
 wgpu majors at once. On 151 the whole workspace resolves a single row at 30.
-The library compiles unchanged on all three platforms, but the verification
-tables still describe 147 until the battery is re-run.
+The library compiles unchanged on all three platforms. The historical
+verification tables name the CEF build each battery actually measured.
 
 A parity battery was run on all three platforms on 2026-08-12 (Windows 11,
 macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac, Fedora
@@ -164,10 +167,10 @@ features moves major with it.
 
 ```toml
 [dependencies]
-welding = "0.12"
+welding = "0.13"
 
 # or pin an older row:
-# welding = { version = "0.12", default-features = false, features = ["wgpu-29"] }
+# welding = { version = "0.13", default-features = false, features = ["wgpu-29"] }
 ```
 
 ```sh

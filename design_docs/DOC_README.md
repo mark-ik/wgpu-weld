@@ -12,6 +12,8 @@ This is the canonical index for active documentation in this repository.
   wgpu-importable frames, not an application's navigation or storage policy.
 - Treat `README.md` as current public guidance and update it with any public
   contract change.
+- Publish and tag the exact source being described. A public API change after
+  publication receives a new crate version rather than reusing the old one.
 
 ## Active documents
 

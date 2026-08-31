@@ -29,15 +29,19 @@ How far each row has been taken:
 
 **Made with AI**
 
-## State, 2026-08-17
+## State, 2026-08-30
 
-Version 0.12.0 is the published baseline, and it is the first one where
-accelerated GPU import works on **every** desktop platform. Linux had only
+Version 0.13.0 is the published baseline. It adds an absolute zoom setter and
+request-correlated PNG snapshot completions with bounded admission; those
+public API changes require a minor-version boundary from 0.12.1. Version
+0.12.0 was the first one where accelerated GPU import worked on **every**
+desktop platform. Linux had only
 ever worked on Intel/Mesa; AMD/RADV was refused with a typed error until
 0.12.0, for reasons the `[^linux]` note below explains.
 
-**Main builds against CEF 151** (`cef` `151.6.0+151.3.18`); 0.12.0 shipped
-CEF 147. The library compiled unchanged across those three Chromium majors.
+**0.13.0 builds against CEF 151** (`cef` `151.8.0+151.3.24`); 0.12.0 shipped
+CEF 147 and 0.12.1 moved the published line to 151. The library compiled
+unchanged across those Chromium majors.
 
 `scripts/parity-battery.sh` ran on all four machines on 2026-08-17:
 
