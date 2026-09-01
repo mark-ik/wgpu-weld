@@ -10,7 +10,10 @@
 #     scripts/parity-battery.sh
 #
 # macOS must run the bundled executable: CEF loads its framework relative to
-# the .app, so `cargo run` cannot work there.
+# the .app, so `cargo run` cannot work there. Self-hosted macOS runners should
+# also set WELD_MAC_APP to that bundle. The battery then uses LaunchServices,
+# which places AppKit in the logged-in GUI session instead of the runner
+# worker's idle process context.
 #
 # Four verdicts, because two of them are easy to confuse:
 #
@@ -122,8 +125,27 @@ run_case() {
     profile_env=("WELD_PROFILE=$process_profile")
   fi
 
-  env "$@" "${profile_env[@]}" WELD_TIMEOUT_SECS="$CASE_SECS" $RUN_CMD >"$log" 2>&1
-  code=$?
+  if [ -n "${WELD_MAC_APP:-}" ]; then
+    : >"$log"
+    open_args=(-W -n -F --stdout "$log" --stderr "$log")
+    # LaunchServices does not inherit a shell's full environment. Forward the
+    # exported demo configuration, then add this case's overrides explicitly.
+    for key in $(compgen -e); do
+      case "$key" in
+      WELD_* | WGPU_* | CEF_PATH | RUST_LOG)
+        open_args+=(--env "$key=${!key}")
+        ;;
+      esac
+    done
+    for assignment in "$@" "${profile_env[@]}" "WELD_TIMEOUT_SECS=$CASE_SECS"; do
+      open_args+=(--env "$assignment")
+    done
+    open "${open_args[@]}" "$WELD_MAC_APP"
+    code=$?
+  else
+    env "$@" "${profile_env[@]}" WELD_TIMEOUT_SECS="$CASE_SECS" $RUN_CMD >"$log" 2>&1
+    code=$?
+  fi
 
   # A case whose page never loaded still imports frames, of the error page,
   # and would otherwise read as a pass.

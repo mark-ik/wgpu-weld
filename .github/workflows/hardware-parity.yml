@@ -94,13 +94,21 @@ jobs:
           if (-not $archive) { throw 'CEF distribution was not produced by cef-dll-sys' }
           "CEF_PATH=$($archive.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Run the capability battery
-        shell: bash
+        shell: pwsh
         run: |
-          export WELD_CACHE_ROOT="$(cygpath -u "$RUNNER_TEMP")/weld-parity-nvidia-cache"
-          export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
-          export WELD_BATTERY_OUT="$(cygpath -u "$RUNNER_TEMP")/weld-parity-nvidia"
-          executable="$(cygpath -u "$CARGO_TARGET_DIR")/debug/demo-weld-win.exe"
-          RUN_CMD="$executable" bash scripts/parity-battery.sh
+          $gitBash = 'C:\Program Files\Git\bin\bash.exe'
+          $cygpath = 'C:\Program Files\Git\usr\bin\cygpath.exe'
+          if (-not (Test-Path -LiteralPath $gitBash -PathType Leaf)) {
+            throw "Git for Windows Bash not found at $gitBash"
+          }
+          $tempPosix = & $cygpath -u $env:RUNNER_TEMP
+          $targetPosix = & $cygpath -u $env:CARGO_TARGET_DIR
+          $env:WELD_CACHE_ROOT = "$tempPosix/weld-parity-nvidia-cache"
+          $env:WELD_PROFILE = "$env:WELD_CACHE_ROOT/profile"
+          $env:WELD_BATTERY_OUT = "$tempPosix/weld-parity-nvidia"
+          $env:RUN_CMD = "$targetPosix/debug/demo-weld-win.exe"
+          & $gitBash scripts/parity-battery.sh
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -135,7 +143,8 @@ jobs:
           export WELD_CACHE_ROOT="$(mktemp -d "$RUNNER_TEMP/weld-parity-m4.XXXXXX")"
           export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
           export WELD_BATTERY_OUT="$RUNNER_TEMP/weld-parity-m4"
-          executable="$RUNNER_TEMP/bundle/demo-weld-mac.app/Contents/MacOS/demo-weld-mac"
+          export WELD_MAC_APP="$RUNNER_TEMP/bundle/demo-weld-mac.app"
+          executable="$WELD_MAC_APP/Contents/MacOS/demo-weld-mac"
           RUN_CMD="$executable" bash scripts/parity-battery.sh
       - uses: actions/upload-artifact@v4
         if: always()
@@ -171,7 +180,8 @@ jobs:
           export WELD_CACHE_ROOT="$(mktemp -d "$RUNNER_TEMP/weld-parity-intel.XXXXXX")"
           export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
           export WELD_BATTERY_OUT="$RUNNER_TEMP/weld-parity-intel"
-          executable="$RUNNER_TEMP/bundle/demo-weld-mac.app/Contents/MacOS/demo-weld-mac"
+          export WELD_MAC_APP="$RUNNER_TEMP/bundle/demo-weld-mac.app"
+          executable="$WELD_MAC_APP/Contents/MacOS/demo-weld-mac"
           RUN_CMD="$executable" bash scripts/parity-battery.sh
       - uses: actions/upload-artifact@v4
         if: always()
