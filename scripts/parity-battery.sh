@@ -142,6 +142,18 @@ run_case() {
     done
     open "${open_args[@]}" "$WELD_MAC_APP"
     code=$?
+    # LaunchServices can finish one app instance while CEF helper processes are
+    # still retiring. Intel macOS has then admitted the next process but left
+    # it before browser creation for the whole case window. A clean run with no
+    # browser-start receipt is a launcher failure, not a capability verdict, so
+    # retry that exact condition once. A second miss still fails below.
+    if [ "$code" -eq 0 ] && ! grep -q 'creating CEF browser' "$log" 2>/dev/null; then
+      printf '  %-11s RETRY LaunchServices did not reach CEF browser creation\n' "$name"
+      sleep "${WELD_MAC_RETRY_SETTLE_SECS:-2}"
+      : >"$log"
+      open "${open_args[@]}" "$WELD_MAC_APP"
+      code=$?
+    fi
   else
     env "$@" "${profile_env[@]}" WELD_TIMEOUT_SECS="$CASE_SECS" $RUN_CMD >"$log" 2>&1
     code=$?
