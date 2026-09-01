@@ -183,7 +183,9 @@ pub(crate) fn report(s: &mut DemoState) -> bool {
         },
         None => {
             log::error!("VALIDATION FAIL: no frame was ever imported");
-            receipt(format_args!("pixel-fixture: FAIL no imported frame"));
+            if pixel_fixture_enabled() {
+                receipt(format_args!("pixel-fixture: FAIL no imported frame"));
+            }
             false
         }
     };

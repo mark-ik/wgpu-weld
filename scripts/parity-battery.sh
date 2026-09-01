@@ -12,11 +12,12 @@
 # macOS must run the bundled executable: CEF loads its framework relative to
 # the .app, so `cargo run` cannot work there.
 #
-# Three verdicts, because two of them are easy to confuse:
+# Four verdicts, because two of them are easy to confuse:
 #
 #   PASS  the case's own receipt appeared and nothing failed
 #   LIVE  the run was clean but this case has no receipt of its own, so it
 #         proves the path did not break, not that the capability works
+#   SKIP  a named, documented platform limitation was excluded explicitly
 #   FAIL  the page did not load, the demo reported a failure, or the expected
 #         receipt never appeared
 #
@@ -55,6 +56,7 @@ OUT="${WELD_BATTERY_OUT:-$REPO/target/battery}"
 # a broken capability rather than a short clock: at 16s this battery reported
 # IME, visibility, devtools and context as failures, and all four were fine.
 CASE_SECS="${WELD_CASE_SECS:-34}"
+SKIP_CASES="${WELD_SKIP_CASES:-}"
 
 : "${RUN_CMD:?set RUN_CMD to the demo invocation}"
 : "${CEF_PATH:?set CEF_PATH to the CEF binary distribution}"
@@ -69,6 +71,11 @@ export CEF_PATH
 export RUST_LOG="${RUST_LOG:-info}"
 
 mkdir -p "$OUT"
+if [ -n "${WELD_CACHE_ROOT:-}" ]; then
+  mkdir -p "$WELD_CACHE_ROOT"
+elif [ -n "${WELD_PROFILE:-}" ]; then
+  mkdir -p "$(dirname "$WELD_PROFILE")"
+fi
 echo "battery: $RUN_CMD"
 echo "cef:     $CEF_PATH"
 echo "out:     $OUT"
@@ -76,6 +83,7 @@ echo
 
 pass=0
 live=0
+skip=0
 fail=0
 
 # run_case <name> <expect-regex|-> <env>...
@@ -85,7 +93,36 @@ run_case() {
   shift 2
   log="$OUT/$name.log"
 
-  env "$@" WELD_TIMEOUT_SECS="$CASE_SECS" $RUN_CMD >"$log" 2>&1
+  case " $SKIP_CASES " in
+  *" $name "*)
+    skip=$((skip + 1))
+    printf '  %-11s SKIP  documented platform limitation\n' "$name"
+    return
+    ;;
+  esac
+
+  # CEF subprocesses can outlive the browser process briefly. Reusing one
+  # profile immediately makes the next case race the previous profile lock and
+  # silently fall back to Default. Keep the root cache shared, but give every
+  # case its own direct-child request-context profile. CEF rejects deeper
+  # descendants and expects to create the final directory itself.
+  profile_env=()
+  if [ -n "${WELD_CACHE_ROOT:-}" ]; then
+    process_root="$WELD_CACHE_ROOT"
+    case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) process_root="$(cygpath -w "$WELD_CACHE_ROOT")" ;;
+    esac
+    case_profile="$process_root/$name"
+    profile_env=("WELD_CACHE_ROOT=$process_root" "WELD_PROFILE=$case_profile")
+  elif [ -n "${WELD_PROFILE:-}" ]; then
+    process_profile="$WELD_PROFILE"
+    case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) process_profile="$(cygpath -w "$WELD_PROFILE")" ;;
+    esac
+    profile_env=("WELD_PROFILE=$process_profile")
+  fi
+
+  env "$@" "${profile_env[@]}" WELD_TIMEOUT_SECS="$CASE_SECS" $RUN_CMD >"$log" 2>&1
   code=$?
 
   # A case whose page never loaded still imports frames, of the error page,
@@ -99,13 +136,21 @@ run_case() {
     return
   fi
 
+  if grep -q 'Cannot create profile' "$log" 2>/dev/null; then
+    fail=$((fail + 1))
+    printf '  %-11s FAIL  CEF rejected the named profile and fell back to Default\n' "$name"
+    return
+  fi
+
   # Match the whole line after "failed", not a restricted character class: the
   # macOS DevTools refusal reads `open_devtools() failed: ...`, and parentheses
   # are enough to slip past a tighter pattern and report a refusal as a pass.
-  # move_focus is excluded: the demo calls it before on_after_created, so it
-  # reports the browser as absent on every run and always has.
-  failed=$(grep -ohE 'weld demo: [^:]*failed[^;]*' "$log" 2>/dev/null |
-    grep -v move_focus | sort -u | cut -c1-90 | tr '\n' ';')
+  # Focus is deferred until the first imported frame, so a move_focus failure
+  # is now actionable and belongs in the verdict like every other host call.
+  failed=$({
+    grep -ohE 'weld demo: [^:]*failed[^;]*' "$log" 2>/dev/null
+    grep -ohE 'PIXEL FIXTURE FAIL[^;]*|pixel-fixture: FAIL[^;]*' "$log" 2>/dev/null
+  } | sort -u | cut -c1-90 | tr '\n' ';')
   if [ -n "$failed" ] || [ "$code" -ne 0 ]; then
     fail=$((fail + 1))
     printf '  %-11s FAIL  exit=%s %s\n' "$name" "$code" "${failed:-(no failure line)}"
@@ -128,10 +173,12 @@ run_case() {
   fi
 }
 
-# Accelerated OSR paints on change, so a static page delivers one frame and
-# goes quiet. Asking for "#2" makes a healthy import look broken on whichever
-# platform happens not to get a spurious resize.
-run_case import 'VALIDATION PASS|exit after 2 frames|imported frame #' WELD_EXIT_AFTER_FRAMES=2
+# The animated fixture produces enough paints for every backend to reach two
+# imported frames, then makes the native-texture readback affect process status.
+# A redraw-count exit is not an import receipt: the host can draw its clear
+# colour repeatedly while CEF has delivered zero native textures.
+run_case import 'PIXEL FIXTURE PASS|VALIDATION PASS|pixel-fixture: PASS' \
+  WELD_PIXEL_FIXTURE=1 WELD_EXIT_AFTER_FRAMES=2
 
 run_case input 'title: "(key|wheel):[^"]*"' \
   WELD_URL="$PROBES/weld_input_probe.html" \
@@ -161,15 +208,21 @@ run_case download 'DownloadProgress \{[^}]*bytes_received' \
 # The byte count is not the receipt; the file is. CEF reports 28 of 28 bytes
 # for a transfer it never completes and never assigns a path to, so a case
 # asserting only on DownloadProgress passes a download that wrote nothing.
-if ls "$OUT"/downloads/* >/dev/null 2>&1; then
-  pass=$((pass + 1))
-  printf '  %-11s PASS  %s
-' "dl-file" "$(ls "$OUT"/downloads | head -1)"
-else
-  fail=$((fail + 1))
-  printf '  %-11s FAIL  bytes arrived but no file was written
-' "dl-file"
-fi
+case " $SKIP_CASES " in
+*" download "*)
+  skip=$((skip + 1))
+  printf '  %-11s SKIP  download case was skipped\n' "dl-file"
+  ;;
+*)
+  if ls "$OUT"/downloads/* >/dev/null 2>&1; then
+    pass=$((pass + 1))
+    printf '  %-11s PASS  %s\n' "dl-file" "$(ls "$OUT"/downloads | head -1)"
+  else
+    fail=$((fail + 1))
+    printf '  %-11s FAIL  bytes arrived but no file was written\n' "dl-file"
+  fi
+  ;;
+esac
 
 run_case api 'print_to_pdf|title: "script:2"' \
   WELD_SCRIPT='document.title = "script:" + (1 + 1)' \
@@ -186,6 +239,6 @@ run_case devtools 'open_devtools' WELD_DEVTOOLS=1
 run_case crash 'recovering from' WELD_CRASH_AFTER_SECS=4 WELD_RECOVER=1
 
 echo
-printf 'battery: %s pass, %s live, %s fail\n' "$pass" "$live" "$fail"
+printf 'battery: %s pass, %s live, %s skip, %s fail\n' "$pass" "$live" "$skip" "$fail"
 echo "logs in $OUT"
 [ "$fail" -eq 0 ]

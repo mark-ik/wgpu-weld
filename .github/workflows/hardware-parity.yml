@@ -1,0 +1,180 @@
+name: headed parity battery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "welding/**"
+      - "demo-weld-win/**"
+      - "demo-weld-linux/**"
+      - "demo-weld-mac/**"
+      - "testing/**"
+      - "scripts/parity-battery.sh"
+      - ".github/workflows/hardware-parity.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  schedule:
+    - cron: "23 7 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weld-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  RUSTFLAGS: -D warnings
+  WELD_CASE_SECS: "40"
+
+jobs:
+  radv-wayland:
+    name: RADV Wayland parity and popup battery
+    runs-on: [self-hosted, wgpu-hardware, radv, wayland, headed]
+    timeout-minutes: 50
+    env:
+      CARGO_TARGET_DIR: /home/markik/Code/targets/wgpu-weld-hardware
+      CEF_CACHE_ROOT: /home/markik/Code/cef-cache/wgpu-weld
+      XDG_RUNTIME_DIR: /run/user/1000
+      WAYLAND_DISPLAY: wayland-0
+      DISPLAY: ""
+      DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
+      XDG_SESSION_TYPE: wayland
+      XDG_CURRENT_DESKTOP: GNOME
+      GDK_BACKEND: wayland
+      WINIT_UNIX_BACKEND: wayland
+      WGPU_BACKEND: vulkan
+      WELD_SWITCHES: ozone-platform=wayland
+      WELD_SKIP_CASES: devtools crash
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Run the capability battery
+        run: |
+          set -o pipefail
+          export WELD_CACHE_ROOT="$(mktemp -d "$RUNNER_TEMP/weld-parity-radv.XXXXXX")"
+          export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
+          export WELD_BATTERY_OUT="$RUNNER_TEMP/weld-parity-radv"
+          export CEF_PATH="$CEF_CACHE_ROOT"
+          cargo build --locked -p demo-weld-linux
+          cef_archive="$(find "$CEF_CACHE_ROOT" -path '*/cef_linux_x86_64/archive.json' -type f | sort | tail -1)"
+          test -n "$cef_archive"
+          export CEF_PATH="${cef_archive%/archive.json}"
+          export LD_LIBRARY_PATH="$CEF_PATH"
+          RUN_CMD="$CARGO_TARGET_DIR/debug/demo-weld-linux" bash scripts/parity-battery.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: weld-parity-radv
+          path: ${{ runner.temp }}/weld-parity-radv
+
+  nvidia-dx12:
+    name: NVIDIA DX12 parity battery
+    runs-on: [self-hosted, wgpu-hardware, nvidia, windows-x64, headed]
+    timeout-minutes: 55
+    env:
+      CARGO_TARGET_DIR: C:\Users\mark_\Code\targets\wgpu-weld-hardware
+      CEF_CACHE_ROOT: C:\Users\mark_\Code\cef-cache\wgpu-weld
+      WELD_SKIP_CASES: devtools
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and locate CEF
+        shell: pwsh
+        run: |
+          $env:CEF_PATH = $env:CEF_CACHE_ROOT
+          cargo +1.97.1 build --locked -p demo-weld-win
+          $archive = Get-ChildItem -LiteralPath $env:CEF_CACHE_ROOT -Recurse -File -Filter archive.json |
+            Where-Object { $_.Directory.Name -eq 'cef_windows_x86_64' } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $archive) { throw 'CEF distribution was not produced by cef-dll-sys' }
+          "CEF_PATH=$($archive.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Run the capability battery
+        shell: bash
+        run: |
+          export WELD_CACHE_ROOT="$(cygpath -u "$RUNNER_TEMP")/weld-parity-nvidia-cache"
+          export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
+          export WELD_BATTERY_OUT="$(cygpath -u "$RUNNER_TEMP")/weld-parity-nvidia"
+          executable="$(cygpath -u "$CARGO_TARGET_DIR")/debug/demo-weld-win.exe"
+          RUN_CMD="$executable" bash scripts/parity-battery.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: weld-parity-nvidia
+          path: ${{ runner.temp }}/weld-parity-nvidia
+
+  metal-m4:
+    name: Apple M4 Metal parity battery
+    runs-on: [self-hosted, wgpu-hardware, metal, macos-arm64, m4, headed]
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: /Users/markik/Code/targets/wgpu-weld-hardware
+      CEF_PATH: /Users/markik/Code/cef-cache/wgpu-weld
+      WELD_SKIP_CASES: devtools
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Ensure CEF native build tools
+        run: |
+          brew_bin="$(command -v brew || true)"
+          if [ -z "$brew_bin" ]; then
+            if [ -x /opt/homebrew/bin/brew ]; then brew_bin=/opt/homebrew/bin/brew; else brew_bin=/usr/local/bin/brew; fi
+          fi
+          "$brew_bin" list cmake >/dev/null 2>&1 || "$brew_bin" install cmake
+          "$brew_bin" list ninja >/dev/null 2>&1 || "$brew_bin" install ninja
+          echo "$("$brew_bin" --prefix)/bin" >> "$GITHUB_PATH"
+      - name: Build the CEF app bundle
+        run: cargo run --locked -p demo-weld-mac --bin bundle-demo-weld-mac -- "$RUNNER_TEMP/bundle"
+      - name: Run the capability battery
+        run: |
+          export WELD_CACHE_ROOT="$(mktemp -d "$RUNNER_TEMP/weld-parity-m4.XXXXXX")"
+          export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
+          export WELD_BATTERY_OUT="$RUNNER_TEMP/weld-parity-m4"
+          executable="$RUNNER_TEMP/bundle/demo-weld-mac.app/Contents/MacOS/demo-weld-mac"
+          RUN_CMD="$executable" bash scripts/parity-battery.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: weld-parity-m4
+          path: ${{ runner.temp }}/weld-parity-m4
+
+  metal-intel:
+    name: Intel iMac Metal parity battery
+    runs-on: [self-hosted, wgpu-hardware, metal, macos-x64, intel-mac, headed]
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: /Users/markik/Code/targets/wgpu-weld-hardware
+      CEF_PATH: /Users/markik/Code/cef-cache/wgpu-weld
+      WELD_SKIP_CASES: devtools popup
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Ensure CEF native build tools
+        run: |
+          brew_bin="$(command -v brew || true)"
+          if [ -z "$brew_bin" ]; then
+            if [ -x /opt/homebrew/bin/brew ]; then brew_bin=/opt/homebrew/bin/brew; else brew_bin=/usr/local/bin/brew; fi
+          fi
+          "$brew_bin" list cmake >/dev/null 2>&1 || "$brew_bin" install cmake
+          "$brew_bin" list ninja >/dev/null 2>&1 || "$brew_bin" install ninja
+          echo "$("$brew_bin" --prefix)/bin" >> "$GITHUB_PATH"
+      - name: Build the CEF app bundle
+        run: cargo run --locked -p demo-weld-mac --bin bundle-demo-weld-mac -- "$RUNNER_TEMP/bundle"
+      - name: Run the capability battery
+        run: |
+          export WELD_CACHE_ROOT="$(mktemp -d "$RUNNER_TEMP/weld-parity-intel.XXXXXX")"
+          export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
+          export WELD_BATTERY_OUT="$RUNNER_TEMP/weld-parity-intel"
+          executable="$RUNNER_TEMP/bundle/demo-weld-mac.app/Contents/MacOS/demo-weld-mac"
+          RUN_CMD="$executable" bash scripts/parity-battery.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: weld-parity-intel
+          path: ${{ runner.temp }}/weld-parity-intel

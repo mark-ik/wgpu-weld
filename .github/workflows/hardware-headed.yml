@@ -54,7 +54,7 @@ jobs:
           set -o pipefail
           export WELD_CACHE_ROOT="$RUNNER_TEMP/weld-radv-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
-          mkdir -p "$WELD_PROFILE"
+          mkdir -p "$WELD_CACHE_ROOT"
           export CEF_PATH="$CEF_CACHE_ROOT"
           cargo build --locked -p demo-weld-linux
           cef_archive="$(find "$CEF_CACHE_ROOT" -path '*/cef_linux_x86_64/archive.json' -type f | sort | tail -1)"
@@ -92,6 +92,9 @@ jobs:
       - name: Run deterministic CEF to DX12 to wgpu gate
         shell: powershell
         run: |
+          $env:WELD_CACHE_ROOT = Join-Path $env:RUNNER_TEMP "weld-nvidia-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $env:WELD_PROFILE = Join-Path $env:WELD_CACHE_ROOT 'profile'
+          New-Item -ItemType Directory -Path $env:WELD_CACHE_ROOT -Force | Out-Null
           $env:CEF_PATH = $env:CEF_CACHE_ROOT
           cargo +1.97.1 build --locked -p demo-weld-win
           $archive = Get-ChildItem -LiteralPath $env:CEF_CACHE_ROOT -Recurse -File -Filter 'archive.json' |
@@ -142,7 +145,6 @@ jobs:
           app="$RUNNER_TEMP/bundle/demo-weld-mac.app"
           receipt="$RUNNER_TEMP/weld-metal-m4.receipt"
           cache_root="$(mktemp -d "$RUNNER_TEMP/weld-metal-m4.XXXXXX")"
-          mkdir -p "$cache_root/profile"
           stdout="$RUNNER_TEMP/weld-metal-m4.stdout.log"
           stderr="$RUNNER_TEMP/weld-metal-m4.stderr.log"
           open -W -n --stdout "$stdout" --stderr "$stderr" \
@@ -188,7 +190,6 @@ jobs:
           app="$RUNNER_TEMP/bundle/demo-weld-mac.app"
           receipt="$RUNNER_TEMP/weld-metal-intel.receipt"
           cache_root="$(mktemp -d "$RUNNER_TEMP/weld-metal-intel.XXXXXX")"
-          mkdir -p "$cache_root/profile"
           stdout="$RUNNER_TEMP/weld-metal-intel.stdout.log"
           stderr="$RUNNER_TEMP/weld-metal-intel.stderr.log"
           open -W -n --stdout "$stdout" --stderr "$stderr" \

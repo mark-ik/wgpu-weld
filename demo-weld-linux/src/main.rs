@@ -139,6 +139,8 @@ struct DemoState {
     popup: Option<PopupSurface>,
     cursor: (f32, f32),
     mods: EventModifiers,
+    focus_pending: bool,
+    focus_attempted: bool,
 }
 
 impl DemoApp {
@@ -293,13 +295,6 @@ impl ApplicationHandler for DemoApp {
         )
         .expect("failed to create CEF browser surface");
         log::info!("CEF browser created");
-        // Tell CEF the browser has focus straight away. winit only emits
-        // Focused(true) on a *change*, so a window that is already focused when
-        // it appears never triggers it, and an unfocused OSR browser is a
-        // candidate for ignoring input.
-        if let Err(err) = producer.move_focus(FocusDirection::Forward) {
-            log::warn!("initial move_focus failed: {err}");
-        }
         // CEF starts a windowless browser in an unspecified visibility state;
         // say it plainly.
         if let Err(err) = producer.set_visible(true) {
@@ -339,6 +334,8 @@ impl ApplicationHandler for DemoApp {
             popup: None,
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
+            focus_pending: true,
+            focus_attempted: false,
         });
         // Xwayland does not guarantee an initial redraw for a window created
         // from a non-interactive SSH session. Start the poll/render loop
@@ -383,7 +380,8 @@ impl ApplicationHandler for DemoApp {
             }
 
             WindowEvent::Focused(true) => {
-                let _ = s.producer.move_focus(FocusDirection::Forward);
+                s.focus_pending = true;
+                s.focus_attempted = false;
             }
 
             WindowEvent::ModifiersChanged(m) => {
@@ -394,6 +392,9 @@ impl ApplicationHandler for DemoApp {
             }
 
             WindowEvent::KeyboardInput { event: ke, .. } => {
+                if s.frames_imported == 0 {
+                    return;
+                }
                 let PhysicalKey::Code(kc) = ke.physical_key else {
                     return;
                 };
@@ -434,6 +435,9 @@ impl ApplicationHandler for DemoApp {
                     position.y as i32
                 );
                 s.cursor = (position.x as f32, position.y as f32);
+                if s.frames_imported == 0 {
+                    return;
+                }
                 let _ = s.producer.send_mouse_input(MouseEvent {
                     x: position.x as i32,
                     y: position.y as i32,
@@ -465,6 +469,9 @@ impl ApplicationHandler for DemoApp {
                         s.mods.right_mouse_button = state == ElementState::Pressed
                     }
                 }
+                if s.frames_imported == 0 {
+                    return;
+                }
                 match s.producer.send_mouse_input(MouseEvent {
                     x: s.cursor.0 as i32,
                     y: s.cursor.1 as i32,
@@ -478,6 +485,9 @@ impl ApplicationHandler for DemoApp {
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
+                if s.frames_imported == 0 {
+                    return;
+                }
                 let (dx, dy) = match delta {
                     MouseScrollDelta::LineDelta(x, y) => ((x * 20.0) as i32, (y * 20.0) as i32),
                     MouseScrollDelta::PixelDelta(d) => (d.x as i32, d.y as i32),
@@ -535,6 +545,14 @@ impl ApplicationHandler for DemoApp {
                         if s.import_errors == 1 || s.import_errors % 500 == 0 {
                             log::error!("acquire_frame error (x{}): {e}", s.import_errors);
                         }
+                    }
+                }
+
+                if s.focus_pending && !s.focus_attempted && s.frames_imported > 0 {
+                    s.focus_attempted = true;
+                    match s.producer.move_focus(FocusDirection::Forward) {
+                        Ok(()) => s.focus_pending = false,
+                        Err(err) => log::warn!("deferred move_focus failed: {err}"),
                     }
                 }
 
@@ -630,7 +648,7 @@ impl ApplicationHandler for DemoApp {
                     }
                 }
                 // The scripted gestures, for a machine nobody is sitting at.
-                s.scripted.tick(&mut s.producer, true);
+                s.scripted.tick(&mut s.producer, s.frames_imported > 0);
                 // Ticks, not imported frames: accelerated OSR only paints on
                 // change, so a static page yields one frame and the battery
                 // would never fire.
@@ -855,8 +873,8 @@ fn main() {
     env_logger::init();
 
     let mut config = CefRuntimeConfig::new(&cef_path);
-    // WELD_CACHE_ROOT is the CEF root cache. A WELD_PROFILE directory must
-    // live inside it; this is CEF's process-wide RequestContext invariant.
+    // WELD_CACHE_ROOT is the CEF root cache. WELD_PROFILE must name a child
+    // path, but its final directory must be left for CEF to create.
     config.cache_path = std::env::var_os("WELD_CACHE_ROOT")
         .map(Into::into)
         .or_else(|| Some(std::env::temp_dir().join("welding-demo-linux-cache")));

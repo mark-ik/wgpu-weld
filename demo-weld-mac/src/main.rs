@@ -118,6 +118,8 @@ struct DemoState {
     popups_imported: u32,
     cursor: (f32, f32),
     mods: EventModifiers,
+    focus_pending: bool,
+    focus_attempted: bool,
     started_at: Instant,
     history_checked: bool,
 }
@@ -283,7 +285,8 @@ impl ApplicationHandler for DemoApp {
             }
 
             WindowEvent::Focused(true) => {
-                let _ = s.producer.move_focus(FocusDirection::Forward);
+                s.focus_pending = true;
+                s.focus_attempted = false;
             }
 
             WindowEvent::ModifiersChanged(m) => {
@@ -294,6 +297,9 @@ impl ApplicationHandler for DemoApp {
             }
 
             WindowEvent::KeyboardInput { event: ke, .. } => {
+                if s.frames_imported == 0 {
+                    return;
+                }
                 let PhysicalKey::Code(kc) = ke.physical_key else {
                     return;
                 };
@@ -328,6 +334,9 @@ impl ApplicationHandler for DemoApp {
 
             WindowEvent::CursorMoved { position, .. } => {
                 s.cursor = (position.x as f32, position.y as f32);
+                if s.frames_imported == 0 {
+                    return;
+                }
                 let _ = s.producer.send_mouse_input(MouseEvent {
                     x: position.x as i32,
                     y: position.y as i32,
@@ -358,6 +367,9 @@ impl ApplicationHandler for DemoApp {
                         s.mods.right_mouse_button = state == ElementState::Pressed
                     }
                 }
+                if s.frames_imported == 0 {
+                    return;
+                }
                 let _ = s.producer.send_mouse_input(MouseEvent {
                     x: s.cursor.0 as i32,
                     y: s.cursor.1 as i32,
@@ -368,6 +380,9 @@ impl ApplicationHandler for DemoApp {
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
+                if s.frames_imported == 0 {
+                    return;
+                }
                 let (dx, dy) = match delta {
                     MouseScrollDelta::LineDelta(x, y) => ((x * 20.0) as i32, (y * 20.0) as i32),
                     MouseScrollDelta::PixelDelta(d) => (d.x as i32, d.y as i32),
@@ -446,6 +461,8 @@ impl DemoApp {
             popups_imported: 0,
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
+            focus_pending: true,
+            focus_attempted: false,
             started_at: Instant::now(),
             history_checked: false,
         });
@@ -485,6 +502,14 @@ impl DemoApp {
             }
             Ok(None) => {}
             Err(e) => log::error!("acquire_frame error: {e}"),
+        }
+
+        if s.focus_pending && !s.focus_attempted && s.frames_imported > 0 {
+            s.focus_attempted = true;
+            match s.producer.move_focus(FocusDirection::Forward) {
+                Ok(()) => s.focus_pending = false,
+                Err(err) => log::warn!("deferred move_focus failed: {err}"),
+            }
         }
 
         // Popup widget surface. CEF paints this separately from the view, and
@@ -743,8 +768,8 @@ fn main() {
     log::info!("framework directory: {}", frameworks.display());
 
     let mut config = CefRuntimeConfig::new(&frameworks);
-    // WELD_CACHE_ROOT is the CEF root cache. A WELD_PROFILE directory must
-    // live inside it; this is CEF's process-wide RequestContext invariant.
+    // WELD_CACHE_ROOT is the CEF root cache. WELD_PROFILE must name a child
+    // path, but its final directory must be left for CEF to create.
     config.cache_path = std::env::var_os("WELD_CACHE_ROOT")
         .map(Into::into)
         .or_else(|| Some(std::env::temp_dir().join("welding-demo-mac-cache")));

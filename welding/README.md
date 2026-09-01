@@ -300,8 +300,13 @@ export WELD_PROFILE=/tmp/weld-cache/person-a
 export WELD_PRINT=1                 # opens the native dialog where supported
 export WELD_TIMEOUT_SECS=45          # gracefully end a scripted battery
 export WELD_SWITCHES=disable-popup-blocking,lang=en-GB
+export WELD_SKIP_CASES="devtools"    # explicit documented platform skips
 export WELD_BACKGROUND=transparent # or rrggbb; unset = opaque white
 ```
+
+Create the root or the profile's parent, but leave the final profile directory
+absent. CEF creates that directory itself; pre-creating it makes Chrome reject
+the named profile and fall back to `Default`.
 
 The Linux demo always adds `no-first-run` and `no-default-browser-check`, so a
 fresh CEF profile cannot block inside `CefInitialize` before the demo timeout

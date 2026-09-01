@@ -80,6 +80,10 @@ struct DemoState {
     scripted: scripted::ScriptedInput,
     cursor: (f32, f32),
     mods: EventModifiers,
+    /// Focus can arrive before CEF's asynchronous `on_after_created`.
+    /// Defer it until an imported browser frame proves the host exists.
+    focus_pending: bool,
+    focus_attempted: bool,
     closing: bool,
 }
 
@@ -224,6 +228,8 @@ impl ApplicationHandler for DemoApp {
             scripted: scripted::ScriptedInput::from_env(),
             cursor: (0.0, 0.0),
             mods: EventModifiers::default(),
+            focus_pending: true,
+            focus_attempted: false,
             closing: false,
         });
         self.state.as_ref().unwrap().window.request_redraw();
@@ -276,9 +282,8 @@ impl ApplicationHandler for DemoApp {
             }
 
             WindowEvent::Focused(true) => {
-                if let Err(err) = s.producer.move_focus(FocusDirection::Forward) {
-                    eprintln!("weld demo: move_focus failed: {err}");
-                }
+                s.focus_pending = true;
+                s.focus_attempted = false;
             }
 
             WindowEvent::ModifiersChanged(m) => {
@@ -289,6 +294,9 @@ impl ApplicationHandler for DemoApp {
             }
 
             WindowEvent::KeyboardInput { event: ke, .. } => {
+                if s.frames_imported == 0 {
+                    return;
+                }
                 let PhysicalKey::Code(kc) = ke.physical_key else {
                     return;
                 };
@@ -331,6 +339,9 @@ impl ApplicationHandler for DemoApp {
 
             WindowEvent::CursorMoved { position, .. } => {
                 s.cursor = (position.x as f32, position.y as f32);
+                if s.frames_imported == 0 {
+                    return;
+                }
                 if let Err(err) = s.producer.send_mouse_input(MouseEvent {
                     x: position.x as i32,
                     y: position.y as i32,
@@ -363,6 +374,9 @@ impl ApplicationHandler for DemoApp {
                         s.mods.right_mouse_button = state == ElementState::Pressed
                     }
                 }
+                if s.frames_imported == 0 {
+                    return;
+                }
                 if let Err(err) = s.producer.send_mouse_input(MouseEvent {
                     x: s.cursor.0 as i32,
                     y: s.cursor.1 as i32,
@@ -375,6 +389,9 @@ impl ApplicationHandler for DemoApp {
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
+                if s.frames_imported == 0 {
+                    return;
+                }
                 let (dx, dy) = match delta {
                     MouseScrollDelta::LineDelta(x, y) => ((x * 20.0) as i32, (y * 20.0) as i32),
                     MouseScrollDelta::PixelDelta(d) => (d.x as i32, d.y as i32),
@@ -409,6 +426,14 @@ impl ApplicationHandler for DemoApp {
                     Ok(None) => {}
                     Err(err) => {
                         eprintln!("weld demo: acquire_frame failed: {err}");
+                    }
+                }
+
+                if s.focus_pending && !s.focus_attempted && s.frames_imported > 0 {
+                    s.focus_attempted = true;
+                    match s.producer.move_focus(FocusDirection::Forward) {
+                        Ok(()) => s.focus_pending = false,
+                        Err(err) => eprintln!("weld demo: deferred move_focus failed: {err}"),
                     }
                 }
 
@@ -578,7 +603,7 @@ impl ApplicationHandler for DemoApp {
                         eprintln!("weld demo: CDP <- {}", &msg[..msg.len().min(110)]);
                     }
                 }
-                s.scripted.tick(&mut s.producer, true);
+                s.scripted.tick(&mut s.producer, s.frames_imported > 0);
 
                 let output = match s.surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(t)
@@ -704,7 +729,9 @@ impl ApplicationHandler for DemoApp {
                     } else {
                         eprintln!("weld demo: exit after {frame_progress} frames");
                     }
-                    self.fixture_result = Some(report(s));
+                    if pixel_fixture_enabled() {
+                        self.fixture_result = Some(report(s));
+                    }
                     s.closing = true;
                     if let Err(e) = s.producer.close() {
                         eprintln!("weld demo: close failed: {e}");
@@ -773,8 +800,8 @@ fn main() {
             runtime_config.command_line_switches
         );
     }
-    // WELD_CACHE_ROOT is the CEF root cache. A WELD_PROFILE directory must
-    // live inside it; this is CEF's process-wide RequestContext invariant.
+    // WELD_CACHE_ROOT is the CEF root cache. WELD_PROFILE must name a child
+    // path, but its final directory must be left for CEF to create.
     runtime_config.cache_path = std::env::var_os("WELD_CACHE_ROOT")
         .map(Into::into)
         .or_else(|| Some(std::env::temp_dir().join("wgpu-weld-demo-cache")));
@@ -795,11 +822,11 @@ fn main() {
 
 fn report(state: &DemoState) -> bool {
     let Some(frame) = state.frame.as_ref() else {
-        log::error!("PIXEL FIXTURE FAIL: no frame was ever imported");
+        eprintln!("PIXEL FIXTURE FAIL: no frame was ever imported");
         return false;
     };
     let Some(expected) = pixel_fixture_expected(frame.format) else {
-        log::error!(
+        eprintln!(
             "PIXEL FIXTURE FAIL: unsupported texture format {:?}",
             frame.format
         );
@@ -814,24 +841,21 @@ fn report(state: &DemoState) -> bool {
             let matched = readback.matching_pixels(expected, PIXEL_TOLERANCE);
             let total = readback.total_pixels();
             if matched == total {
-                log::info!(
+                eprintln!(
                     "PIXEL FIXTURE PASS: {matched}/{total} center pixels at {:?} matched {:?} ±{PIXEL_TOLERANCE}",
-                    readback.origin,
-                    expected
+                    readback.origin, expected
                 );
                 true
             } else {
-                log::error!(
+                eprintln!(
                     "PIXEL FIXTURE FAIL: {matched}/{total} center pixels at {:?} matched {:?} ±{PIXEL_TOLERANCE}; first pixels {:?}",
-                    readback.origin,
-                    expected,
-                    readback.first_pixels
+                    readback.origin, expected, readback.first_pixels
                 );
                 false
             }
         }
         Err(error) => {
-            log::error!("PIXEL FIXTURE FAIL: readback failed: {error}");
+            eprintln!("PIXEL FIXTURE FAIL: readback failed: {error}");
             false
         }
     }

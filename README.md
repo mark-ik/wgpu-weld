@@ -70,7 +70,12 @@ verification tables name the CEF build each battery actually measured.
 A parity battery was run on all three platforms on 2026-08-12 (Windows 11,
 macOS 15.7 on an Intel iMac, macOS 26.5 on an Apple Silicon M4 iMac, Fedora
 on an AMD ThinkPad). Input, cursor, HiDPI, navigation, console, cookies,
-script results and command-line switches are now verified on every one.
+script results and command-line switches were verified on every one. The
+`headed parity battery` workflow now reruns those receipt-bearing cases on the
+NVIDIA, RADV, M4, and Intel Mac runners whenever the demo/runtime seams change,
+plus weekly. The CEF 151 DevTools-window regression, RADV crash-notification
+gap, and Intel native-menu popup difference are named skips on only the hosts
+where they are documented. Per-case logs are retained as workflow artifacts.
 
 The last three untested rows were then taken the same evening, and two of them
 turned out not to work. `set_visible` is verified on Windows and macOS, with
@@ -107,9 +112,9 @@ call before any CEF code runs.
   separate `acquire_popup` surface: verified on Windows and on macOS 26
   (Apple Silicon). On macOS 15.7 (Intel) Chromium used a native menu and no
   popup was ever delivered, so the behaviour differs by macOS generation. On
-  Linux the dropdown opens and reports its geometry; its texture import has
-  not been re-measured since the AMD fix landed, so treat that as untested
-  rather than as a known limit.
+  Linux the dropdown opens and reports its geometry. The RADV parity job now
+  requires the `imported popup` receipt, making the first post-AMD-fix run the
+  current texture-import gate rather than another manual observation.
 - HiDPI is honoured (`scale_factor` plus a live `set_scale_factor`): sizes and
   coordinates stay physical, and CEF is told how many make one CSS pixel.
   Verified on all three by forcing a 2x scale on a 1x panel and having the page
