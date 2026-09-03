@@ -74,6 +74,7 @@ export CEF_PATH
 export RUST_LOG="${RUST_LOG:-info}"
 
 mkdir -p "$OUT"
+DOWNLOADS="$OUT/downloads-$$"
 if [ -n "${WELD_CACHE_ROOT:-}" ]; then
   mkdir -p "$WELD_CACHE_ROOT"
 elif [ -n "${WELD_PROFILE:-}" ]; then
@@ -240,7 +241,7 @@ run_case drag 'page drag finished as copy|title: "PAGE_DRAG:started"' \
 
 run_case download 'DownloadProgress \{[^}]*bytes_received' \
   WELD_URL="$PROBES/weld_download_probe.html" \
-  WELD_CLICK_AT=60,40 WELD_DOWNLOAD_DIR="$OUT/downloads"
+  WELD_CLICK_AT=60,40 WELD_DOWNLOAD_DIR="$DOWNLOADS"
 
 # The byte count is not the receipt; the file is. CEF reports 28 of 28 bytes
 # for a transfer it never completes and never assigns a path to, so a case
@@ -251,9 +252,9 @@ case " $SKIP_CASES " in
   printf '  %-11s SKIP  download case was skipped\n' "dl-file"
   ;;
 *)
-  if ls "$OUT"/downloads/* >/dev/null 2>&1; then
+  if ls "$DOWNLOADS"/* >/dev/null 2>&1; then
     pass=$((pass + 1))
-    printf '  %-11s PASS  %s\n' "dl-file" "$(ls "$OUT"/downloads | head -1)"
+    printf '  %-11s PASS  %s\n' "dl-file" "$(ls "$DOWNLOADS" | head -1)"
   else
     fail=$((fail + 1))
     printf '  %-11s FAIL  bytes arrived but no file was written\n' "dl-file"

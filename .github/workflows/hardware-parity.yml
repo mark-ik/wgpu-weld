@@ -58,7 +58,7 @@ jobs:
           set -o pipefail
           export WELD_CACHE_ROOT="$(mktemp -d "$RUNNER_TEMP/weld-parity-radv.XXXXXX")"
           export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
-          export WELD_BATTERY_OUT="$RUNNER_TEMP/weld-parity-radv"
+          export WELD_BATTERY_OUT="$RUNNER_TEMP/weld-parity-radv-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           export CEF_PATH="$CEF_CACHE_ROOT"
           cargo build --locked -p demo-weld-linux
           cef_archive="$(find "$CEF_CACHE_ROOT" -path '*/cef_linux_x86_64/archive.json' -type f | sort | tail -1)"
@@ -70,7 +70,7 @@ jobs:
         if: always()
         with:
           name: weld-parity-radv
-          path: ${{ runner.temp }}/weld-parity-radv
+          path: ${{ runner.temp }}/weld-parity-radv-${{ github.run_id }}-${{ github.run_attempt }}
 
   nvidia-dx12:
     name: NVIDIA DX12 parity battery
@@ -106,7 +106,7 @@ jobs:
           $targetPosix = & $cygpath -u $env:CARGO_TARGET_DIR
           $env:WELD_CACHE_ROOT = "$tempPosix/weld-parity-nvidia-cache"
           $env:WELD_PROFILE = "$env:WELD_CACHE_ROOT/profile"
-          $env:WELD_BATTERY_OUT = "$tempPosix/weld-parity-nvidia"
+          $env:WELD_BATTERY_OUT = "$tempPosix/weld-parity-nvidia-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $env:RUN_CMD = "$targetPosix/debug/demo-weld-win.exe"
           & $gitBash scripts/parity-battery.sh
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -114,7 +114,7 @@ jobs:
         if: always()
         with:
           name: weld-parity-nvidia
-          path: ${{ runner.temp }}/weld-parity-nvidia
+          path: ${{ runner.temp }}/weld-parity-nvidia-${{ github.run_id }}-${{ github.run_attempt }}
 
   metal-m4:
     name: Apple M4 Metal parity battery
@@ -143,14 +143,14 @@ jobs:
         run: |
           export WELD_CACHE_ROOT="$(mktemp -d "$RUNNER_TEMP/weld-parity-m4.XXXXXX")"
           export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
-          export WELD_BATTERY_OUT="$RUNNER_TEMP/weld-parity-m4"
+          export WELD_BATTERY_OUT="$RUNNER_TEMP/weld-parity-m4-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           export WELD_MAC_APP="$RUNNER_TEMP/bundle/demo-weld-mac.app"
           RUN_CMD="$WELD_MAC_APP/Contents/MacOS/demo-weld-mac" bash scripts/parity-battery.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: weld-parity-m4
-          path: ${{ runner.temp }}/weld-parity-m4
+          path: ${{ runner.temp }}/weld-parity-m4-${{ github.run_id }}-${{ github.run_attempt }}
 
   metal-intel:
     name: Intel iMac Metal parity battery
@@ -179,11 +179,11 @@ jobs:
         run: |
           export WELD_CACHE_ROOT="$(mktemp -d "$RUNNER_TEMP/weld-parity-intel.XXXXXX")"
           export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
-          export WELD_BATTERY_OUT="$RUNNER_TEMP/weld-parity-intel"
+          export WELD_BATTERY_OUT="$RUNNER_TEMP/weld-parity-intel-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           export WELD_MAC_APP="$RUNNER_TEMP/bundle/demo-weld-mac.app"
           RUN_CMD="$WELD_MAC_APP/Contents/MacOS/demo-weld-mac" bash scripts/parity-battery.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: weld-parity-intel
-          path: ${{ runner.temp }}/weld-parity-intel
+          path: ${{ runner.temp }}/weld-parity-intel-${{ github.run_id }}-${{ github.run_attempt }}
