@@ -10,6 +10,7 @@ on:
       - "demo-weld-mac/**"
       - "testing/**"
       - "scripts/parity-battery.sh"
+      - "scripts/run-weld-mac.sh"
       - ".github/workflows/hardware-parity.yml"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -144,8 +145,7 @@ jobs:
           export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
           export WELD_BATTERY_OUT="$RUNNER_TEMP/weld-parity-m4"
           export WELD_MAC_APP="$RUNNER_TEMP/bundle/demo-weld-mac.app"
-          executable="$WELD_MAC_APP/Contents/MacOS/demo-weld-mac"
-          RUN_CMD="$executable" bash scripts/parity-battery.sh
+          RUN_CMD="$WELD_MAC_APP/Contents/MacOS/demo-weld-mac" bash scripts/parity-battery.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -181,8 +181,7 @@ jobs:
           export WELD_PROFILE="$WELD_CACHE_ROOT/profile"
           export WELD_BATTERY_OUT="$RUNNER_TEMP/weld-parity-intel"
           export WELD_MAC_APP="$RUNNER_TEMP/bundle/demo-weld-mac.app"
-          executable="$WELD_MAC_APP/Contents/MacOS/demo-weld-mac"
-          RUN_CMD="$executable" bash scripts/parity-battery.sh
+          RUN_CMD="$WELD_MAC_APP/Contents/MacOS/demo-weld-mac" bash scripts/parity-battery.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:

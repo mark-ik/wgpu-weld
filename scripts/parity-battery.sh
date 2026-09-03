@@ -127,20 +127,22 @@ run_case() {
 
   if [ -n "${WELD_MAC_APP:-}" ]; then
     : >"$log"
-    open_args=(-W -n -F --stdout "$log" --stderr "$log")
+    launch_env=()
     # LaunchServices does not inherit a shell's full environment. Forward the
     # exported demo configuration, then add this case's overrides explicitly.
     for key in $(compgen -e); do
       case "$key" in
       WELD_* | WGPU_* | CEF_PATH | RUST_LOG)
-        open_args+=(--env "$key=${!key}")
+        launch_env+=("$key=${!key}")
         ;;
       esac
     done
     for assignment in "$@" "${profile_env[@]}" "WELD_TIMEOUT_SECS=$CASE_SECS"; do
-      open_args+=(--env "$assignment")
+      launch_env+=("$assignment")
     done
-    open "${open_args[@]}" "$WELD_MAC_APP"
+    bash "$REPO/scripts/run-weld-mac.sh" \
+      "$WELD_MAC_APP" "$log" "$log" "$((CASE_SECS + 10))" \
+      "${launch_env[@]}"
     code=$?
     # LaunchServices can finish one app instance while CEF helper processes are
     # still retiring. Intel macOS has then admitted the next process but left
@@ -150,8 +152,9 @@ run_case() {
     if [ "$code" -eq 0 ] && ! grep -q 'creating CEF browser' "$log" 2>/dev/null; then
       printf '  %-11s RETRY LaunchServices did not reach CEF browser creation\n' "$name"
       sleep "${WELD_MAC_RETRY_SETTLE_SECS:-2}"
-      : >"$log"
-      open "${open_args[@]}" "$WELD_MAC_APP"
+      bash "$REPO/scripts/run-weld-mac.sh" \
+        "$WELD_MAC_APP" "$log" "$log" "$((CASE_SECS + 10))" \
+        "${launch_env[@]}"
       code=$?
     fi
   else

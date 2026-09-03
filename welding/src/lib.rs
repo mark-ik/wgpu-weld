@@ -5,7 +5,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
 #![doc = include_str!("../README.md")]
-
 // The subprocess-tax doc examples exist to show WHERE in `main` the call must
 // sit, so their `fn main` wrapper is the point, not boilerplate.
 #![allow(clippy::needless_doctest_main)]

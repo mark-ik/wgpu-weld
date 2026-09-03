@@ -147,15 +147,14 @@ jobs:
           cache_root="$(mktemp -d "$RUNNER_TEMP/weld-metal-m4.XXXXXX")"
           stdout="$RUNNER_TEMP/weld-metal-m4.stdout.log"
           stderr="$RUNNER_TEMP/weld-metal-m4.stderr.log"
-          open -W -n --stdout "$stdout" --stderr "$stderr" \
-            --env "WELD_RECEIPT=$receipt" \
-            --env "WELD_CACHE_ROOT=$cache_root" \
-            --env "WELD_PROFILE=$cache_root/profile" \
-            --env WELD_PIXEL_FIXTURE=1 \
-            --env WELD_EXIT_AFTER_FRAMES=2 \
-            --env WELD_TIMEOUT_SECS=60 \
-            --env RUST_LOG=info \
-            "$app"
+          bash scripts/run-weld-mac.sh "$app" "$stdout" "$stderr" 70 \
+            "WELD_RECEIPT=$receipt" \
+            "WELD_CACHE_ROOT=$cache_root" \
+            "WELD_PROFILE=$cache_root/profile" \
+            WELD_PIXEL_FIXTURE=1 \
+            WELD_EXIT_AFTER_FRAMES=2 \
+            WELD_TIMEOUT_SECS=60 \
+            RUST_LOG=info
           cat "$stdout"
           cat "$stderr"
           grep -F "pixel-fixture: PASS" "$receipt"
@@ -192,15 +191,14 @@ jobs:
           cache_root="$(mktemp -d "$RUNNER_TEMP/weld-metal-intel.XXXXXX")"
           stdout="$RUNNER_TEMP/weld-metal-intel.stdout.log"
           stderr="$RUNNER_TEMP/weld-metal-intel.stderr.log"
-          open -W -n --stdout "$stdout" --stderr "$stderr" \
-            --env "WELD_RECEIPT=$receipt" \
-            --env "WELD_CACHE_ROOT=$cache_root" \
-            --env "WELD_PROFILE=$cache_root/profile" \
-            --env WELD_PIXEL_FIXTURE=1 \
-            --env WELD_EXIT_AFTER_FRAMES=2 \
-            --env WELD_TIMEOUT_SECS=60 \
-            --env RUST_LOG=info \
-            "$app"
+          bash scripts/run-weld-mac.sh "$app" "$stdout" "$stderr" 70 \
+            "WELD_RECEIPT=$receipt" \
+            "WELD_CACHE_ROOT=$cache_root" \
+            "WELD_PROFILE=$cache_root/profile" \
+            WELD_PIXEL_FIXTURE=1 \
+            WELD_EXIT_AFTER_FRAMES=2 \
+            WELD_TIMEOUT_SECS=60 \
+            RUST_LOG=info
           cat "$stdout"
           cat "$stderr"
           grep -F "pixel-fixture: PASS" "$receipt"
