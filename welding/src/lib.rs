@@ -1,4 +1,11 @@
+// Copyright 2026 Mark Alan Boykin
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+
 #![doc = include_str!("../README.md")]
+
 // The subprocess-tax doc examples exist to show WHERE in `main` the call must
 // sit, so their `fn main` wrapper is the point, not boilerplate.
 #![allow(clippy::needless_doctest_main)]
