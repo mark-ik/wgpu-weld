@@ -339,9 +339,7 @@ mod tests {
     fn standalone_plane_metadata_does_not_own_fd() {
         let fd = open_pipe_read_fd();
         let raw = fd.as_raw_fd();
-        let plane = DmaBufPlane::new(0, 0, 16, 8);
-
-        drop(plane);
+        let _plane = DmaBufPlane::new(0, 0, 16, 8);
 
         assert!(
             !fd_is_closed(raw),
