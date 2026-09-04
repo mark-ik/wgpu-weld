@@ -33,10 +33,22 @@ fn main() {
     // this helper hands CEF the same app the browser process does. Without it
     // the renderer has no handlers and script results never answer.
     let args = cef::args::Args::new();
-    let code = welding::CefRuntime::run_subprocess(
-        &args,
-        welding::CefSandboxMode::UnsandboxedTrustedContent,
-    );
+    let sandbox = match std::env::var("WELD_SANDBOX").as_deref() {
+        Ok("sandboxed") => welding::CefSandboxMode::Sandboxed,
+        Ok(value) => {
+            eprintln!("helper: WELD_SANDBOX must be 'sandboxed' or unset, got {value:?}");
+            std::process::exit(1);
+        }
+        Err(std::env::VarError::NotPresent) => welding::CefSandboxMode::UnsandboxedTrustedContent,
+        Err(error) => {
+            eprintln!("helper: WELD_SANDBOX is not valid Unicode: {error}");
+            std::process::exit(1);
+        }
+    };
+    let code = welding::CefRuntime::try_run_subprocess(&args, sandbox).unwrap_or_else(|error| {
+        eprintln!("helper: {error}");
+        1
+    });
     std::process::exit(code);
 }
 

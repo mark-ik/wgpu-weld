@@ -173,11 +173,13 @@ govern every consumer (details in [`welding/README.md`](welding/README.md)):
 1. CEF re-executes the host binary for its subprocesses: call
    `CefRuntime::execute_process_from(..., sandbox)` first thing in `main()`
    and exit if it returns an exit code.
-2. The current runtime mode is explicit trusted-content embedding:
-   choose `CefSandboxMode::UnsandboxedTrustedContent` and pass the same value
-   to `CefRuntime::execute_process_from` and `CefRuntimeConfig::new`. It
-   disables Chromium's process sandbox and should not be treated as an
-   untrusted-browser boundary.
+2. Choose a sandbox policy explicitly and pass the same value to the process
+   entry point and `CefRuntimeConfig::new`. `CefSandboxMode::Sandboxed` uses
+   Chromium's sandbox on Linux and macOS; the macOS helper must enter through
+   `CefRuntime::try_run_subprocess`. Windows sandboxing requires CEF's
+   bootstrap-executable/client-DLL entry point and is rejected by the ordinary
+   executable path until that context is wired. The fallback
+   `UnsandboxedTrustedContent` mode is for trusted content and demos.
 3. CEF's paint handles are callback-scoped: `welding` takes ownership inside
    the callback, using a pixel copy on Windows and a `CFRetain`ed IOSurface
    wrapped zero-copy on macOS, and exposes only owned resources.
@@ -192,10 +194,10 @@ features moves major with it.
 
 ```toml
 [dependencies]
-welding = "0.13"
+welding = "0.14.1"
 
 # or pin an older row:
-# welding = { version = "0.13", default-features = false, features = ["wgpu-29"] }
+# welding = { version = "0.14.1", default-features = false, features = ["wgpu-29"] }
 ```
 
 ```sh

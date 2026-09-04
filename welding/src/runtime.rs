@@ -61,11 +61,10 @@ pub struct CefRuntimeConfig {
 
     /// Chromium process sandbox policy.
     ///
-    /// The only currently implemented mode is explicit trusted-content
-    /// embedding. It passes null `sandbox_info` to CEF's process entry points
-    /// and sets `CefSettings.no_sandbox = 1`. Do not use it for arbitrary
-    /// untrusted web content. Future sandboxed modes belong behind new enum
-    /// variants plus matching subprocess entry points/helpers.
+    /// Trusted-content mode passes null `sandbox_info` to CEF's process entry
+    /// points and sets `CefSettings.no_sandbox = 1`. Sandboxed mode enables
+    /// Chromium's platform process sandbox and may impose platform-specific
+    /// packaging requirements.
     pub sandbox: CefSandboxMode,
 
     /// Path to the subprocess helper executable. `None` = re-use this binary
@@ -107,6 +106,16 @@ pub enum CefSandboxMode {
     /// not accidentally treat the current runtime as a hardened browser
     /// boundary. It is intended for trusted-content embedding and demos.
     UnsandboxedTrustedContent,
+
+    /// Enable Chromium's process sandbox for renderer, GPU, and utility
+    /// subprocesses.
+    ///
+    /// Linux uses CEF's native namespace/setuid sandbox selection. macOS
+    /// helper processes initialize `libcef_sandbox.dylib` before entering CEF.
+    /// Windows requires CEF's `bootstrap.exe` plus a client DLL entry point;
+    /// the ordinary re-executed-binary entry point rejects this mode until a
+    /// bootstrap context is supplied explicitly.
+    Sandboxed,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -150,6 +159,7 @@ mod cef_backed {
             cef_path: &std::path::Path,
             sandbox: CefSandboxMode,
         ) -> Result<Option<i32>, WeldError> {
+            validate_direct_entrypoint(sandbox)?;
             maybe_load_library(cef_path)?;
             pin_cef_api_version();
             let args = Args::new();
@@ -171,19 +181,37 @@ mod cef_backed {
         /// the renderer has no handlers and anything needing the render process
         /// (script results) silently never answers. A helper that calls
         /// `cef_execute_process` on its own cannot know that.
-        pub fn run_subprocess(args: &cef::args::Args, sandbox: CefSandboxMode) -> i32 {
+        pub fn try_run_subprocess(
+            args: &cef::args::Args,
+            sandbox: CefSandboxMode,
+        ) -> Result<i32, WeldError> {
             pin_cef_api_version();
+            #[cfg(target_os = "macos")]
+            let _sandbox = MacSandbox::initialize(args.as_main_args(), sandbox)?;
             let mut app = crate::app::WeldApp::build(std::sync::Arc::new(Vec::new()));
-            cef::execute_process(
+            Ok(cef::execute_process(
                 Some(args.as_main_args()),
                 Some(&mut app),
                 sandbox_info_for(sandbox),
-            )
+            ))
+        }
+
+        /// Compatibility wrapper for helpers that cannot surface setup errors.
+        /// New helpers should call [`Self::try_run_subprocess`].
+        pub fn run_subprocess(args: &cef::args::Args, sandbox: CefSandboxMode) -> i32 {
+            match Self::try_run_subprocess(args, sandbox) {
+                Ok(code) => code,
+                Err(error) => {
+                    eprintln!("welding: {error}");
+                    1
+                }
+            }
         }
 
         /// Initialise CEF. Call after [`Self::execute_process_from`] confirms
         /// this is the browser process.
         pub fn initialize(config: CefRuntimeConfig) -> Result<Self, WeldError> {
+            validate_direct_entrypoint(config.sandbox)?;
             maybe_load_library(&config.cef_path)?;
             pin_cef_api_version();
             let args = Args::new();
@@ -288,13 +316,109 @@ mod cef_backed {
 
     fn sandbox_info_for(sandbox: CefSandboxMode) -> *mut u8 {
         match sandbox {
-            CefSandboxMode::UnsandboxedTrustedContent => std::ptr::null_mut(),
+            CefSandboxMode::UnsandboxedTrustedContent | CefSandboxMode::Sandboxed => {
+                std::ptr::null_mut()
+            }
         }
     }
 
     fn no_sandbox_for(sandbox: CefSandboxMode) -> i32 {
         match sandbox {
             CefSandboxMode::UnsandboxedTrustedContent => 1,
+            CefSandboxMode::Sandboxed => 0,
+        }
+    }
+
+    fn validate_direct_entrypoint(sandbox: CefSandboxMode) -> Result<(), WeldError> {
+        #[cfg(target_os = "windows")]
+        if sandbox == CefSandboxMode::Sandboxed {
+            return Err(WeldError::SandboxSetup(
+                "sandboxed Windows CEF requires bootstrap.exe and a client-DLL entry point; \
+                 execute_process_from cannot create the required sandbox context"
+                    .into(),
+            ));
+        }
+        let _ = sandbox;
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    struct MacSandbox {
+        library: libloading::Library,
+        context: std::ptr::NonNull<std::ffi::c_void>,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl MacSandbox {
+        fn initialize(
+            args: &cef::MainArgs,
+            mode: CefSandboxMode,
+        ) -> Result<Option<Self>, WeldError> {
+            if mode == CefSandboxMode::UnsandboxedTrustedContent {
+                return Ok(None);
+            }
+
+            let executable = std::env::current_exe().map_err(|error| {
+                WeldError::SandboxSetup(format!("cannot locate macOS helper executable: {error}"))
+            })?;
+            let helper_dir = executable.parent().ok_or_else(|| {
+                WeldError::SandboxSetup(
+                    "macOS helper executable has no containing directory".into(),
+                )
+            })?;
+            let library_path = helper_dir
+                .join(
+                    "../../../Chromium Embedded Framework.framework/Libraries/libcef_sandbox.dylib",
+                )
+                .canonicalize()
+                .map_err(|error| {
+                    WeldError::SandboxSetup(format!(
+                        "cannot locate libcef_sandbox.dylib from {}: {error}",
+                        executable.display()
+                    ))
+                })?;
+
+            // SAFETY: the dylib is from the same signed CEF framework bundle as
+            // libcef. Symbol signatures are the C API declared by CEF.
+            let library = unsafe { libloading::Library::new(&library_path) }.map_err(|error| {
+                WeldError::SandboxSetup(format!("cannot load {}: {error}", library_path.display()))
+            })?;
+            let context = unsafe {
+                let initialize = library
+                    .get::<unsafe extern "C" fn(
+                        std::os::raw::c_int,
+                        *mut *mut std::os::raw::c_char,
+                    ) -> *mut std::ffi::c_void>(b"cef_sandbox_initialize")
+                    .map_err(|error| {
+                        WeldError::SandboxSetup(format!(
+                            "libcef_sandbox.dylib lacks cef_sandbox_initialize: {error}"
+                        ))
+                    })?;
+                std::ptr::NonNull::new(initialize(args.argc, args.argv)).ok_or_else(|| {
+                    WeldError::SandboxSetup("cef_sandbox_initialize returned null".into())
+                })?
+            };
+
+            Ok(Some(Self { library, context }))
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Drop for MacSandbox {
+        fn drop(&mut self) {
+            // SAFETY: context came from this library's initialize function and
+            // is destroyed once while the library is still loaded.
+            unsafe {
+                match self
+                    .library
+                    .get::<unsafe extern "C" fn(*mut std::ffi::c_void)>(b"cef_sandbox_destroy")
+                {
+                    Ok(destroy) => destroy(self.context.as_ptr()),
+                    Err(error) => eprintln!(
+                        "welding: libcef_sandbox.dylib lacks cef_sandbox_destroy: {error}"
+                    ),
+                }
+            }
         }
     }
 

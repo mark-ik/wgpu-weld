@@ -971,6 +971,16 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
   receipts and needs CI plus DX12/Metal/Vulkan hardware reruns before
   publication.
 
+- 2026-09-04: **sandbox implementation slice.** Added the explicit
+  `CefSandboxMode::Sandboxed` variant. Linux maps it to CEF's Chromium sandbox;
+  macOS helpers now initialize and retain `libcef_sandbox.dylib` through the
+  fallible `CefRuntime::try_run_subprocess` entry point. Windows' ordinary
+  re-executed-binary path rejects the mode because CEF 151 requires
+  `bootstrap.exe` to create a sandbox context and enter a client DLL. The RADV,
+  M4, and Intel parity jobs now select sandboxed mode so a green run proves
+  page load, imported frames, and browser controls inside that process model.
+  Windows bootstrap/client-DLL support remains a separate required slice.
+
 - 2026-08-31: **the triplet now has one native import boundary.** Graft commit
   `8106f7c6b16838eb9ec062f0293249b39c108907` owns the D3D12, Metal, and
   DMABUF/Vulkan wrappers, including fd closure, shared-buffer plane handling,

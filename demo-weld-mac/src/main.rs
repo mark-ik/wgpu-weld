@@ -773,7 +773,13 @@ fn main() {
     }
     log::info!("framework directory: {}", frameworks.display());
 
-    let mut config = CefRuntimeConfig::new(&frameworks, CefSandboxMode::UnsandboxedTrustedContent);
+    let sandbox = match std::env::var("WELD_SANDBOX").as_deref() {
+        Ok("sandboxed") => CefSandboxMode::Sandboxed,
+        Ok(value) => panic!("WELD_SANDBOX must be 'sandboxed' or unset, got {value:?}"),
+        Err(std::env::VarError::NotPresent) => CefSandboxMode::UnsandboxedTrustedContent,
+        Err(error) => panic!("WELD_SANDBOX is not valid Unicode: {error}"),
+    };
+    let mut config = CefRuntimeConfig::new(&frameworks, sandbox);
     // WELD_CACHE_ROOT is the CEF root cache. WELD_PROFILE must name a child
     // path, but its final directory must be left for CEF to create.
     config.cache_path = std::env::var_os("WELD_CACHE_ROOT")

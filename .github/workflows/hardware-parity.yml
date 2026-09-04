@@ -47,6 +47,7 @@ jobs:
       GDK_BACKEND: wayland
       WINIT_UNIX_BACKEND: wayland
       WGPU_BACKEND: vulkan
+      WELD_SANDBOX: sandboxed
       WELD_SWITCHES: ozone-platform=wayland
       WELD_SKIP_CASES: crash
 
@@ -142,6 +143,7 @@ jobs:
     env:
       CARGO_TARGET_DIR: /Users/markik/Code/targets/wgpu-weld-hardware
       CEF_PATH: /Users/markik/Code/cef-cache/wgpu-weld
+      WELD_SANDBOX: sandboxed
 
     steps:
       - uses: actions/checkout@v7
@@ -187,6 +189,7 @@ jobs:
     env:
       CARGO_TARGET_DIR: /Users/markik/Code/targets/wgpu-weld-hardware
       CEF_PATH: /Users/markik/Code/cef-cache/wgpu-weld
+      WELD_SANDBOX: sandboxed
       WELD_SKIP_CASES: popup
 
     steps:

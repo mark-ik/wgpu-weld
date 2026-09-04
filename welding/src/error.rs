@@ -23,6 +23,11 @@ pub enum WeldError {
     #[error("CEF initialization failed (code {code})")]
     InitFailed { code: i32 },
 
+    /// The selected Chromium sandbox mode could not be established before CEF
+    /// process initialization.
+    #[error("CEF sandbox setup failed: {0}")]
+    SandboxSetup(String),
+
     // cef_execute_process returned >= 0: caller must exit with this code.
     // Returned as Err rather than Ok(Some(code)) so the ? operator propagates it
     // without the caller needing to inspect the Ok variant in normal paths.

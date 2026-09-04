@@ -578,20 +578,34 @@ fn main() {
 
 macOS is different: it launches separate helper executables from inside the
 `.app` bundle instead. Those helpers must call
-`CefRuntime::run_subprocess(args, sandbox)`, not `cef_execute_process`
+`CefRuntime::try_run_subprocess(args, sandbox)`, not `cef_execute_process`
 directly, or the renderer comes up with no handlers and anything needing it
-(script results) never answers. See `demo-weld-mac` for a working bundle,
-helper, and bundler.
+(script results) never answers. In sandboxed mode this entry point also loads,
+initializes, retains, and destroys the framework's `libcef_sandbox.dylib`
+context. See `demo-weld-mac` for a working bundle, helper, and bundler.
 
 ### 2. Sandbox policy
 
-The current runtime mode is `CefSandboxMode::UnsandboxedTrustedContent`.
-It passes null `sandbox_info` to CEF subprocess entry points and sets
-`CefSettings.no_sandbox = 1`, so it is a trusted-content embedding mode rather
-than a hardened boundary for arbitrary web content. It is accepted by both
-`CefRuntime::execute_process_from` and `CefRuntimeConfig::new`; pass the same
-local value to both. Future sandboxed variants need matching subprocess
-helpers before they can be added honestly.
+Sandbox policy is explicit and has no default. Pass the same local value to
+the subprocess entry point and `CefRuntimeConfig::new`.
+
+`CefSandboxMode::Sandboxed` sets `CefSettings.no_sandbox = 0`. Linux then uses
+CEF's native Chromium sandbox selection. macOS additionally initializes
+`libcef_sandbox.dylib` in every helper through
+`CefRuntime::try_run_subprocess`. Both require platform packaging and headed
+hardware proof before an application treats the sandbox as part of its
+security boundary.
+
+Windows CEF 151 uses a different shape: `bootstrap.exe` creates the sandbox
+context and calls an exported entry point in the application's client DLL.
+`CefRuntime::execute_process_from` cannot manufacture that context and
+therefore rejects `Sandboxed` on Windows. A Windows host must stay on
+`UnsandboxedTrustedContent` until it adopts the bootstrap/client-DLL entry
+point.
+
+`CefSandboxMode::UnsandboxedTrustedContent` passes null `sandbox_info` and sets
+`CefSettings.no_sandbox = 1`. It is intended only for trusted content and
+demos, not arbitrary web content.
 
 ### 3. Handle lifetime
 

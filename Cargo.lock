@@ -3265,6 +3265,7 @@ dependencies = [
  "foreign-types-shared",
  "grafting",
  "libc",
+ "libloading 0.9.0",
  "log",
  "metal",
  "objc2 0.6.4",

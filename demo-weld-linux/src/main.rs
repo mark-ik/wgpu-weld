@@ -868,7 +868,12 @@ fn main() {
     // MUST be first: CEF re-invokes this binary for renderer/GPU/utility subprocesses.
     let cef_path = std::env::var("CEF_PATH")
         .expect("CEF_PATH must point to the CEF binary distribution (contains libcef.so)");
-    let sandbox = CefSandboxMode::UnsandboxedTrustedContent;
+    let sandbox = match std::env::var("WELD_SANDBOX").as_deref() {
+        Ok("sandboxed") => CefSandboxMode::Sandboxed,
+        Ok(value) => panic!("WELD_SANDBOX must be 'sandboxed' or unset, got {value:?}"),
+        Err(std::env::VarError::NotPresent) => CefSandboxMode::UnsandboxedTrustedContent,
+        Err(error) => panic!("WELD_SANDBOX is not valid Unicode: {error}"),
+    };
     if let Some(code) = CefRuntime::execute_process_from(cef_path.as_ref(), sandbox)
         .expect("welding: CEF subprocess probe failed — is CEF_PATH set correctly?")
     {
