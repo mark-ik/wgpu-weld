@@ -951,7 +951,9 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
   off the retained IOSurface frame; Linux hands off the owned DMA-BUF frame.
   The required method deliberately has no silent `None` default. Ordered native
   callback events remain a separate prerequisite before Mere can replace its
-  host translation safely.
+  host translation safely. Local validation passed 49 library tests and a
+  Windows `cef-runtime` type check. Wgpu matrix run `33918122258` then passed
+  all nine wgpu-version/platform rows and all three platform demo builds.
 
 - 2026-09-04: **Graft owned-frame adaptation.** The implementation candidate
   first pinned Graft commit `d671c9681332751f8ea24dd974511b81fe6a05dd`;
