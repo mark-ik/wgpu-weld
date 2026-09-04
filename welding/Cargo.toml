@@ -51,7 +51,7 @@ serde_json = { version = "1", optional = true }
 # Shared native-texture interop core. Welding owns the CEF callback lifetime,
 # modifier fallback, and producer synchronization policy; Graft owns each
 # native resource -> wgpu wrapper. Pin the reviewed interop ABI exactly.
-grafting = { version = "0.6.0", git = "https://github.com/merely-made/wgpu-graft.git", rev = "d671c9681332751f8ea24dd974511b81fe6a05dd", default-features = false }
+grafting = { version = "0.6.0", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

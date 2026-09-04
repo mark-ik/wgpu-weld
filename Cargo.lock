@@ -1095,7 +1095,8 @@ dependencies = [
 [[package]]
 name = "grafting"
 version = "0.6.0"
-source = "git+https://github.com/merely-made/wgpu-graft.git?rev=d671c9681332751f8ea24dd974511b81fe6a05dd#d671c9681332751f8ea24dd974511b81fe6a05dd"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "384d9d63669dd2b92a2433f2d0f36c7e8b775865b673deeb9ca34d7e631d4be1"
 dependencies = [
  "ash",
  "dpi",
@@ -3794,7 +3795,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
