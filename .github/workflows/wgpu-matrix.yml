@@ -5,40 +5,25 @@ on:
     branches: [main]
   pull_request:
 
-env:
-  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+permissions:
+  contents: read
 
 jobs:
-  fmt:
-    name: rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
-        with:
-          components: rustfmt
-      - run: cargo fmt --all --check
+  # rustfmt, clippy across ubuntu/macOS/Windows x wgpu-28/29/30, and the
+  # version-independent test suite on the wgpu-30 row. This was three inline
+  # jobs before; the shared workflow is the same set of commands with the
+  # toolchain read from rust-toolchain.toml instead of resolved as `stable`,
+  # so a new stable release can no longer redden this repository on its own.
+  gate:
+    uses: merely-made/.github/.github/workflows/wgpu-check.yml@main
+    with:
+      crate: welding
+      run-clippy: true
+      run-fmt: true
+      test-row: wgpu-30
 
-  check:
-    name: ${{ matrix.os }} / ${{ matrix.wgpu }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        wgpu: [wgpu-28, wgpu-29, wgpu-30]
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
-        with:
-          components: clippy
-      - run: cargo clippy --locked -p welding --lib --no-default-features --features ${{ matrix.wgpu }} -- -D warnings
-      # The scaffold (non-cef-runtime) tests cover the version-independent
-      # logic; one wgpu row per OS is enough to run them.
-      - run: cargo test --locked -p welding --no-default-features --features ${{ matrix.wgpu }}
-        if: matrix.wgpu == 'wgpu-30'
-
+  # Local, and staying local: each OS checks a DIFFERENT package, which is not
+  # a shape the shared matrix expresses. These are the platform CEF demos.
   demo:
     name: ${{ matrix.os }} / ${{ matrix.package }}
     runs-on: ${{ matrix.os }}
@@ -60,4 +45,5 @@ jobs:
       - name: Check the platform CEF demo
         env:
           RUSTFLAGS: -D warnings
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: cargo check --locked -p ${{ matrix.package }}

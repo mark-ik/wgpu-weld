@@ -1,19 +1,17 @@
 name: headed parity battery
 
+# Real GPUs on self-hosted, headed machines; see hardware-headed.yml for the
+# reasoning. The path filters that used to gate the push trigger are gone with
+# it: over the sampled window this workflow completed green 5 times and was
+# cancelled 5 times, and its one real failure was a single flaky case out of
+# sixteen (14 pass, 1 skip, 1 fail on the M4 Metal battery). The weekly run
+# below was already here and is now the only automatic one.
+#
+# Run it by hand before a release with:
+#   gh workflow run hardware-parity.yml
+#
+# Branch protection must NOT list these jobs as required checks.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "welding/**"
-      - "demo-weld-win/**"
-      - "demo-weld-linux/**"
-      - "demo-weld-mac/**"
-      - "testing/**"
-      - "scripts/parity-battery.sh"
-      - "scripts/run-weld-mac.sh"
-      - ".github/workflows/hardware-parity.yml"
-      - "Cargo.toml"
-      - "Cargo.lock"
   schedule:
     - cron: "23 7 * * 0"
   workflow_dispatch:

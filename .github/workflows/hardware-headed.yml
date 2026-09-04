@@ -1,8 +1,23 @@
 name: headed hardware
 
+# This lane drives real GPUs on self-hosted, headed machines. It is not a
+# per-commit gate and never was one in practice: when a machine is asleep,
+# busy, or its session is not logged in, the run cancels or fails for a reason
+# that is about the room, not the commit. On main over the sampled window this
+# workflow completed green 6 times and was cancelled 4 times, all by the
+# concurrency group, so the badge tracked push cadence rather than the code.
+#
+# It now runs weekly and on demand. Run it by hand before a release, or after
+# touching a producer or demo, with:
+#   gh workflow run hardware-headed.yml
+#
+# Branch protection must NOT list these jobs as required checks.
 on:
-  push:
-    branches: [main]
+  schedule:
+    # Staggered against the other hardware lanes so the four physical machines
+    # are not contended: weld-headed 05:23 Sun, weld-parity 07:23 Sun,
+    # scry-headed 09:23 Sun, graft-interop 11:23 Sun.
+    - cron: "23 5 * * 0"
   workflow_dispatch:
 
 permissions:
