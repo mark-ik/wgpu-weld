@@ -38,7 +38,9 @@ use dpi::PhysicalSize;
 use crate::native_frame::D3d11CallbackFrameCopier;
 use crate::{
     error::WeldError,
-    native_frame::{Dx12SharedTexture, HostWgpuContext, ImportedTexture, WgpuTextureImporter},
+    native_frame::{
+        Dx12SharedTexture, HostWgpuContext, ImportedTexture, NativeFrame, WgpuTextureImporter,
+    },
     runtime::CefRuntime,
     surface::{
         CefSurfaceConfig, CefSurfaceMode, CefSurfaceProducer, FocusDirection, KeyEvent, MouseEvent,
@@ -344,7 +346,6 @@ impl WindowsCefProducer {
     /// escape hatch are responsible for closing the handle themselves. Calling
     /// this and `CefSurfaceProducer::acquire_frame` are alternatives; each
     /// consumes the single-slot mailbox.
-    #[cfg(feature = "cef-runtime")]
     pub fn acquire_native_frame(&mut self) -> Option<Dx12SharedTexture> {
         self.frame_slot.lock().unwrap().take()
     }
@@ -465,6 +466,10 @@ impl WindowsCefProducer {
 impl CefSurfaceProducer for WindowsCefProducer {
     fn surface_mode(&self) -> CefSurfaceMode {
         CefSurfaceMode::AcceleratedPaint
+    }
+
+    fn acquire_native_frame(&mut self) -> Option<NativeFrame> {
+        WindowsCefProducer::acquire_native_frame(self).map(NativeFrame::Dx12SharedTexture)
     }
 
     fn acquire_frame(

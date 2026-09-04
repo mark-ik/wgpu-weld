@@ -24,7 +24,9 @@ use dpi::PhysicalSize;
 
 use crate::{
     error::WeldError,
-    native_frame::{HostWgpuContext, ImportedTexture, PendingFrameSlot, WgpuTextureImporter},
+    native_frame::{
+        HostWgpuContext, ImportedTexture, NativeFrame, PendingFrameSlot, WgpuTextureImporter,
+    },
     runtime::CefRuntime,
     surface::{
         CefSurfaceConfig, CefSurfaceMode, CefSurfaceProducer, FocusDirection, KeyEvent, MouseEvent,
@@ -369,12 +371,15 @@ impl CefSurfaceProducer for LinuxCefProducer {
         CefSurfaceMode::AcceleratedPaint
     }
 
+    fn acquire_native_frame(&mut self) -> Option<NativeFrame> {
+        self.frame_slot.lock().unwrap().take()
+    }
+
     fn acquire_frame(
         &mut self,
         ctx: &HostWgpuContext,
     ) -> Result<Option<ImportedTexture>, WeldError> {
-        let frame = self.frame_slot.lock().unwrap().take();
-        match frame {
+        match self.acquire_native_frame() {
             None => Ok(None),
             Some(f) => Ok(Some(WgpuTextureImporter::import(f, ctx)?)),
         }

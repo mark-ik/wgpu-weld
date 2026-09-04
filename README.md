@@ -47,6 +47,10 @@ mismatches fail the process. Per-platform detail, and the difference between
 "verified on that hardware" and "implemented but not yet run there", is in
 [`welding/README.md`](welding/README.md).
 
+Main is preparing the breaking 0.15.0 line. Its first change makes owned native
+frame delivery a required cross-platform producer operation so neutral hosts
+can keep custody intact before choosing an importer.
+
 All three native wrappers now delegate to published `grafting` 0.6.0. Welding
 keeps CEF's callback
 lifetime, copy/retain, modifier fallback, and synchronization policy; Graft

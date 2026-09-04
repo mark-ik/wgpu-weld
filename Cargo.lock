@@ -3258,7 +3258,7 @@ dependencies = [
 
 [[package]]
 name = "welding"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "base64 0.22.1",
  "cef",

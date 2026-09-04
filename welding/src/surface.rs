@@ -609,6 +609,14 @@ pub trait CefSurfaceProducer {
         CefSurfaceCapabilities::probe()
     }
 
+    /// Take the newest application-owned native frame without importing it.
+    ///
+    /// This and [`Self::acquire_frame`] are alternative consumers of the same
+    /// latest-frame mailbox. The returned value keeps platform handle, file
+    /// descriptor, or retain custody until the host moves it into Weld's
+    /// importer or another ownership-preserving boundary.
+    fn acquire_native_frame(&mut self) -> Option<crate::NativeFrame>;
+
     /// Acquire the most recently painted frame as a wgpu texture.
     /// Returns `Ok(None)` if no new frame is available since the last call.
     fn acquire_frame(

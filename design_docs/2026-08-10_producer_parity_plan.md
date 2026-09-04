@@ -929,7 +929,29 @@ they are what every embedder hits first. W4 through W7 in listed order,
 re-verifying on the iMac and the Fedora box per phase (the readback-verdict
 pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
 
+### W10: neutral host binding after 0.14
+
+- [x] Require a cross-platform owned-native-frame take path on
+  `CefSurfaceProducer`; keep it mutually exclusive with direct wgpu import.
+- [ ] Add one callback-owned ordered event stream for navigation, page
+  messages, script completions, and cookie completions.
+- [ ] Accept caller-minted ids for result-bearing commands and settle each
+  accepted command exactly once on that stream.
+- [ ] Add the version-pinned opt-in Mere adapter only after those Weld-owned
+  facts exist. Keep CEF bootstrap, runtime lifetime, profiles, and import-cache
+  policy in the host factory.
+
 ## Progress
+
+- 2026-09-04: **0.15 neutral-adapter prerequisite, native frames.**
+  `CefSurfaceProducer` now requires every platform producer to expose its newest
+  application-owned `NativeFrame` without importing it. The method and the
+  existing `acquire_frame` are explicit alternative consumers of one latest
+  frame mailbox. Windows keeps its existing owned DX12 path; macOS now hands
+  off the retained IOSurface frame; Linux hands off the owned DMA-BUF frame.
+  The required method deliberately has no silent `None` default. Ordered native
+  callback events remain a separate prerequisite before Mere can replace its
+  host translation safely.
 
 - 2026-09-04: **Graft owned-frame adaptation.** The implementation candidate
   first pinned Graft commit `d671c9681332751f8ea24dd974511b81fe6a05dd`;
