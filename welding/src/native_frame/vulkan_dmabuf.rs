@@ -11,7 +11,7 @@
 //! selection, shared-fd planes, and foreign-queue acquisition.
 
 use super::*;
-use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd, RawFd};
+use std::os::fd::{FromRawFd, OwnedFd, RawFd};
 
 /// `DRM_FORMAT_MOD_INVALID` from `drm_fourcc.h`: no explicit modifier.
 const DRM_FORMAT_MOD_INVALID: u64 = 0x00ff_ffff_ffff_ffff;
