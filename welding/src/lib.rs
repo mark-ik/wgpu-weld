@@ -39,6 +39,17 @@ compile_error!(
     "welding needs one wgpu version feature: enable `wgpu-29` (default), `wgpu-30`, or `wgpu-28`"
 );
 
+// File-descriptor numbers are process-wide and may be reused immediately after
+// close. Tests which assert descriptor ownership must share one lock across
+// modules or a parallel test can make a closed descriptor appear live again.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn lock_fd_table() -> std::sync::MutexGuard<'static, ()> {
+    static FD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    FD_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 pub mod error;
 pub mod native_frame;
 pub mod runtime;

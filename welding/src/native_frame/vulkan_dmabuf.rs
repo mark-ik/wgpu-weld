@@ -337,6 +337,7 @@ mod tests {
 
     #[test]
     fn standalone_plane_metadata_does_not_own_fd() {
+        let _fd_lock = crate::lock_fd_table();
         let fd = open_pipe_read_fd();
         let raw = fd.as_raw_fd();
         let _plane = DmaBufPlane::new(0, 0, 16, 8);
@@ -351,6 +352,7 @@ mod tests {
 
     #[test]
     fn invalid_safe_plane_index_closes_owned_buffers() {
+        let _fd_lock = crate::lock_fd_table();
         let fd = open_pipe_read_fd();
         let raw = fd.as_raw_fd();
 
@@ -370,6 +372,7 @@ mod tests {
 
     #[test]
     fn repeated_raw_fd_planes_keep_one_owner_until_image_drop() {
+        let _fd_lock = crate::lock_fd_table();
         let fd = open_pipe_read_fd();
         let raw = fd.into_raw_fd();
 
@@ -398,6 +401,7 @@ mod tests {
 
     #[test]
     fn shared_kernel_object_planes_use_one_graft_buffer() {
+        let _fd_lock = crate::lock_fd_table();
         let first = open_pipe_read_fd();
         let second_raw = unsafe { libc::dup(first.as_raw_fd()) };
         assert!(second_raw >= 0);
@@ -431,6 +435,7 @@ mod tests {
 
     #[test]
     fn raw_constructor_failure_closes_accepted_buffers() {
+        let _fd_lock = crate::lock_fd_table();
         let first = open_pipe_read_fd();
         let first_raw = first.into_raw_fd();
 
@@ -451,6 +456,7 @@ mod tests {
 
     #[test]
     fn raw_constructor_error_closes_later_unprocessed_fds() {
+        let _fd_lock = crate::lock_fd_table();
         let first = open_pipe_read_fd();
         let second = open_pipe_read_fd();
         let first_raw = first.into_raw_fd();
@@ -481,6 +487,7 @@ mod tests {
 
     #[test]
     fn graft_constructor_error_closes_image_owned_buffers() {
+        let _fd_lock = crate::lock_fd_table();
         let first = open_pipe_read_fd();
         let second = open_pipe_read_fd();
         let first_raw = first.as_raw_fd();
