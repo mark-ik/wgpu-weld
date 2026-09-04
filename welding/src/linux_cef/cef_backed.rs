@@ -94,21 +94,17 @@ cef::wrap_render_handler! {
             // dup(2) every plane fd. CEF closes the originals after the
             // callback returns; Vulkan will close ours on successful
             // import. On dup failure we close any fds we already duped.
-            use std::os::fd::FromRawFd;
-            let mut planes: Vec<crate::native_frame::DmaBufPlane> =
+            let mut raw_planes: Vec<(std::os::fd::RawFd, u64, u64, u32)> =
                 Vec::with_capacity(plane_count);
             for src in &info.planes[..plane_count] {
                 let duped = unsafe { libc::dup(src.fd) };
                 if duped < 0 {
-                    for p in &planes {
-                        unsafe { libc::close(p.raw_fd()) };
+                    for (fd, ..) in &raw_planes {
+                        unsafe { libc::close(*fd) };
                     }
                     return;
                 }
-                let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(duped) };
-                planes.push(crate::native_frame::DmaBufPlane::from_owned_fd(
-                    fd, src.offset, src.size, src.stride,
-                ));
+                raw_planes.push((duped, src.offset, src.size, src.stride));
             }
 
             let width = info.extra.coded_size.width as u32;
@@ -120,9 +116,9 @@ cef::wrap_render_handler! {
                 self.handler.frame_slot.lock().unwrap()
             };
             let generation = slot.next_generation();
-            slot.store(crate::native_frame::NativeFrame::DmaBufImage(
-                crate::native_frame::DmaBufImage::from_owned_planes(
-                    planes,
+            let image = unsafe {
+                crate::native_frame::DmaBufImage::from_owned_raw_planes(
+                    raw_planes,
                     PhysicalSize::new(width, height),
                     format,
                     // drm_format is unused by the Vulkan import path
@@ -131,8 +127,16 @@ cef::wrap_render_handler! {
                     0,
                     info.modifier,
                     generation,
-                ),
-            ));
+                )
+            };
+            match image {
+                Ok(image) => {
+                    slot.store(crate::native_frame::NativeFrame::DmaBufImage(image));
+                }
+                Err(error) => {
+                    log::error!("failed to wrap CEF DMABUF image: {error}");
+                }
+            }
         }
 
         fn on_ime_composition_range_changed(
@@ -171,7 +175,7 @@ cef::wrap_render_handler! {
             if !showing {
                 // A hidden popup never paints again; drop the stale surface so
                 // acquire_popup cannot hand back a dropdown that is gone.
-                // DmaBufImage::Drop closes the duped plane fds.
+                // DmaBufImage's owned buffer table closes duped plane fds.
                 let _ = self.handler.popup_slot.lock().unwrap().take();
             }
         }

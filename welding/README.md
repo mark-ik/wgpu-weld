@@ -43,7 +43,7 @@ ever worked on Intel/Mesa; AMD/RADV was refused with a typed error until
 0.12.0, for reasons the `[^linux]` note below explains.
 
 Welding now pins Graft commit
-`a9c6ee856f784361b9e6134adb694461b3aadf3c` and delegates every native wgpu
+`d671c9681332751f8ea24dd974511b81fe6a05dd` and delegates every native wgpu
 wrapper to its owned, value-consuming import API. CEF-specific callback
 ownership, the Windows copy, IOSurface construction, and Linux modifier policy
 remain here. DX12 converts Weld's owned handle into `OwnedHandle` once, Metal

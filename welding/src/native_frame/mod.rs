@@ -134,17 +134,12 @@ pub struct Dx12SharedTexture {
     /// callback copier produces an application-owned shared texture, and the
     /// importer converts it into an `OwnedHandle` exactly once before handing
     /// it to Graft's owned shared-resource wrapper.
-    handle: *mut std::os::raw::c_void,
+    #[cfg(windows)]
+    handle: std::os::windows::io::OwnedHandle,
     size: PhysicalSize<u32>,
     format: wgpu::TextureFormat,
     generation: u64,
 }
-
-// SAFETY: this frame owns only a duplicated Win32 shared-resource HANDLE plus
-// copyable metadata. It stores no COM pointer, CEF browser object, or
-// thread-affine callback state. Moving it to another thread only moves handle
-// custody; import/drop still use the OS handle API.
-unsafe impl Send for Dx12SharedTexture {}
 
 impl Dx12SharedTexture {
     /// Build a frame from an already-owned Win32 `HANDLE`.
@@ -154,15 +149,20 @@ impl Dx12SharedTexture {
         size: PhysicalSize<u32>,
         format: wgpu::TextureFormat,
         generation: u64,
-    ) -> Self {
-        use std::os::windows::io::IntoRawHandle;
+    ) -> Result<Self, ImportError> {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::HANDLE;
 
-        Self {
-            handle: handle.into_raw_handle(),
+        if HANDLE(handle.as_raw_handle()).is_invalid() {
+            return Err(ImportError::InvalidFrame("D3D shared handle is invalid"));
+        }
+
+        Ok(Self {
+            handle,
             size,
             format,
             generation,
-        }
+        })
     }
 
     /// Build a frame from an owned raw Win32 `HANDLE`.
@@ -179,15 +179,18 @@ impl Dx12SharedTexture {
         format: wgpu::TextureFormat,
         generation: u64,
     ) -> Result<Self, ImportError> {
-        if handle.is_null() {
-            return Err(ImportError::InvalidFrame("D3D shared handle is null"));
+        use std::os::windows::io::FromRawHandle;
+        use windows::Win32::Foundation::HANDLE;
+
+        if HANDLE(handle).is_invalid() {
+            return Err(ImportError::InvalidFrame("D3D shared handle is invalid"));
         }
-        Ok(Self {
-            handle,
+        Self::from_owned_handle(
+            unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(handle) },
             size,
             format,
             generation,
-        })
+        )
     }
 
     pub fn size(&self) -> PhysicalSize<u32> {
@@ -204,19 +207,18 @@ impl Dx12SharedTexture {
 
     /// Relinquish this frame's owned handle to a RAII owner.
     ///
-    /// This disarms [`Drop`] for the Weld frame. The returned `OwnedHandle`
-    /// must be handed to the next ownership boundary exactly once.
+    /// The returned `OwnedHandle` must be handed to the next ownership boundary
+    /// exactly once.
     #[cfg(windows)]
     pub fn into_owned_handle(self) -> Result<std::os::windows::io::OwnedHandle, ImportError> {
-        use std::os::windows::io::FromRawHandle;
+        use std::os::windows::io::AsRawHandle;
         use windows::Win32::Foundation::HANDLE;
 
-        let frame = std::mem::ManuallyDrop::new(self);
-        let handle = frame.handle;
-        if HANDLE(handle).is_invalid() {
+        let handle = self.handle;
+        if HANDLE(handle.as_raw_handle()).is_invalid() {
             return Err(ImportError::InvalidFrame("D3D shared handle is invalid"));
         }
-        Ok(unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(handle) })
+        Ok(handle)
     }
 
     /// Relinquish this frame's owned handle to a host that imports through a
@@ -224,25 +226,9 @@ impl Dx12SharedTexture {
     /// after `OpenSharedHandle` succeeds or fails.
     #[cfg(windows)]
     pub fn into_raw_handle(self) -> *mut std::os::raw::c_void {
-        let frame = std::mem::ManuallyDrop::new(self);
-        frame.handle
-    }
-}
+        use std::os::windows::io::IntoRawHandle;
 
-/// A CEF callback frame owns the duplicate shared handle returned by the
-/// callback copier. Keeping that ownership on the frame closes dropped
-/// mailbox replacements instead of leaking one Win32 handle per paint.
-#[cfg(windows)]
-impl Drop for Dx12SharedTexture {
-    fn drop(&mut self) {
-        if !self.handle.is_null() {
-            unsafe {
-                let _ = windows::Win32::Foundation::CloseHandle(
-                    windows::Win32::Foundation::HANDLE(self.handle),
-                );
-            }
-            self.handle = std::ptr::null_mut();
-        }
+        self.handle.into_raw_handle()
     }
 }
 
@@ -320,15 +306,15 @@ impl Drop for MetalTextureRef {
     }
 }
 
-/// One plane of a DMABUF-backed image. Field widths match CEF's
-/// `cef_accelerated_paint_native_pixmap_plane_t`.
-#[derive(Debug)]
+/// One plane of a DMABUF-backed image.
+///
+/// The plane is copyable metadata only. `buffer_index` selects the owned
+/// descriptor in [`DmaBufImage`]'s buffer table, so dropping a standalone plane
+/// never owns or leaks a file descriptor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DmaBufPlane {
-    /// Owned DMABUF file descriptor. `welding` `dup(2)`s callback-scoped FDs
-    /// before storing them here. The Linux importer converts these raw owned
-    /// descriptors into Graft's `OwnedFd` buffer table; otherwise
-    /// `DmaBufImage::Drop` closes them.
-    fd: i32,
+    /// Index into `DmaBufImage`'s owned buffer table.
+    buffer_index: usize,
     /// Byte offset into the dmabuf where the plane data starts.
     offset: u64,
     /// Byte size of the plane.
@@ -338,42 +324,17 @@ pub struct DmaBufPlane {
 }
 
 impl DmaBufPlane {
-    /// Build a plane from an owned DMABUF file descriptor.
-    #[cfg(target_os = "linux")]
-    pub fn from_owned_fd(fd: std::os::fd::OwnedFd, offset: u64, size: u64, stride: u32) -> Self {
-        use std::os::fd::IntoRawFd;
-
+    pub fn new(buffer_index: usize, offset: u64, size: u64, stride: u32) -> Self {
         Self {
-            fd: fd.into_raw_fd(),
+            buffer_index,
             offset,
             size,
             stride,
         }
     }
 
-    /// Build a plane from an owned raw DMABUF file descriptor.
-    ///
-    /// # Safety
-    ///
-    /// `fd` must be a valid owned descriptor. The descriptor must not be closed
-    /// elsewhere after this call; ownership belongs to the containing
-    /// `DmaBufImage` or to the importer that consumes that image.
-    #[cfg(target_os = "linux")]
-    pub unsafe fn from_owned_raw_fd(fd: i32, offset: u64, size: u64, stride: u32) -> Self {
-        debug_assert!(fd >= 0);
-        Self {
-            fd,
-            offset,
-            size,
-            stride,
-        }
-    }
-
-    /// Borrow the raw file descriptor for diagnostics or low-level import.
-    ///
-    /// The caller must not close this descriptor.
-    pub fn raw_fd(&self) -> i32 {
-        self.fd
+    pub fn buffer_index(&self) -> usize {
+        self.buffer_index
     }
 
     pub fn offset(&self) -> u64 {
@@ -392,6 +353,8 @@ impl DmaBufPlane {
 // Linux
 #[derive(Debug)]
 pub struct DmaBufImage {
+    #[cfg(target_os = "linux")]
+    buffers: Vec<std::os::fd::OwnedFd>,
     planes: Vec<DmaBufPlane>,
     size: PhysicalSize<u32>,
     format: wgpu::TextureFormat,
@@ -401,29 +364,6 @@ pub struct DmaBufImage {
 }
 
 impl DmaBufImage {
-    /// Build an owned DMABUF image from owned planes.
-    ///
-    /// The image owns every plane descriptor from this point onward. Repeated
-    /// raw fd numbers are treated as shared-plane references and closed only
-    /// once on drop or import handoff.
-    pub fn from_owned_planes(
-        planes: Vec<DmaBufPlane>,
-        size: PhysicalSize<u32>,
-        format: wgpu::TextureFormat,
-        drm_format: u32,
-        modifier: u64,
-        generation: u64,
-    ) -> Self {
-        Self {
-            planes,
-            size,
-            format,
-            drm_format,
-            modifier,
-            generation,
-        }
-    }
-
     pub fn planes(&self) -> &[DmaBufPlane] {
         &self.planes
     }
@@ -448,28 +388,10 @@ impl DmaBufImage {
         self.generation
     }
 
-    /// Release ownership of the contained fds without closing them. Used by
-    /// the Vulkan importer immediately before it wraps each unique buffer fd
-    /// in `OwnedFd` and hands the complete plane set to Graft.
+    /// Move the owned buffer table and plane metadata to the Linux importer.
     #[cfg(target_os = "linux")]
-    pub(crate) fn forget_fds(mut self) -> Vec<DmaBufPlane> {
-        std::mem::take(&mut self.planes)
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl Drop for DmaBufImage {
-    fn drop(&mut self) {
-        let mut closed = Vec::with_capacity(self.planes.len());
-        for plane in &self.planes {
-            if plane.fd >= 0 && !closed.contains(&plane.fd) {
-                // Safety: we own the fd (dup'd in OnAcceleratedPaint).
-                unsafe {
-                    libc::close(plane.fd);
-                }
-                closed.push(plane.fd);
-            }
-        }
+    pub(crate) fn into_owned_parts(self) -> (Vec<std::os::fd::OwnedFd>, Vec<DmaBufPlane>) {
+        (self.buffers, self.planes)
     }
 }
 
@@ -706,27 +628,26 @@ impl WgpuTextureImporter {
 mod tests {
     use super::*;
 
+    fn empty_dmabuf_frame(size: PhysicalSize<u32>, generation: u64) -> NativeFrame {
+        NativeFrame::DmaBufImage(DmaBufImage {
+            #[cfg(target_os = "linux")]
+            buffers: Vec::new(),
+            planes: Vec::new(),
+            size,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            drm_format: 0,
+            modifier: 0,
+            generation,
+        })
+    }
+
     #[test]
     fn pending_frame_slot_keeps_latest_frame() {
         let mut slot = PendingFrameSlot::default();
         let first = slot.next_generation();
-        slot.store(NativeFrame::DmaBufImage(DmaBufImage::from_owned_planes(
-            Vec::new(),
-            PhysicalSize::new(10, 10),
-            wgpu::TextureFormat::Bgra8Unorm,
-            0,
-            0,
-            first,
-        )));
+        slot.store(empty_dmabuf_frame(PhysicalSize::new(10, 10), first));
         let second = slot.next_generation();
-        slot.store(NativeFrame::DmaBufImage(DmaBufImage::from_owned_planes(
-            Vec::new(),
-            PhysicalSize::new(20, 10),
-            wgpu::TextureFormat::Bgra8Unorm,
-            0,
-            0,
-            second,
-        )));
+        slot.store(empty_dmabuf_frame(PhysicalSize::new(20, 10), second));
 
         let frame = slot.take().expect("latest frame should be present");
         assert_eq!(frame.generation(), second);

@@ -108,12 +108,18 @@ cef::wrap_render_handler! {
             };
 
             let generation = self.handler.next_generation.fetch_add(1, Ordering::Relaxed) + 1;
-            let frame = Dx12SharedTexture::from_owned_handle(
+            let frame = match Dx12SharedTexture::from_owned_handle(
                 unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(dup.0) },
                 PhysicalSize::new(width, height),
                 format,
                 generation,
-            );
+            ) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    log::error!("failed to wrap duplicated CEF D3D handle: {error}");
+                    return;
+                }
+            };
             match WgpuTextureImporter::copy_dx12_callback_frame_to_owned(
                 frame,
                 &self.handler.callback_copier,

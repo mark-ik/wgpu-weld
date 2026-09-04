@@ -208,7 +208,7 @@ one-line explanation.
    capture, callback-lifetime, modifier, and synchronization policy, while all
    D3D12, Metal, and DMABUF/Vulkan wgpu wrappers live in Graft. Weld now pins
    the owned-frame Graft commit
-   `a9c6ee856f784361b9e6134adb694461b3aadf3c`; Scry still needs its matching
+   `d671c9681332751f8ea24dd974511b81fe6a05dd`; Scry still needs its matching
    ownership-adaptation slice.
 2. **Resolved for Weld 2026-09-04:** Weld uses that exact immutable Graft rev
    rather than following `branch = "main"`.
@@ -927,11 +927,11 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
 ## Progress
 
 - 2026-09-04: **Graft owned-frame adaptation.** Weld now pins Graft commit
-  `a9c6ee856f784361b9e6134adb694461b3aadf3c` and consumes Graft native frames
-  by value. DX12 converts the weld-owned Win32 handle into `OwnedHandle`
-  exactly once before building `Dx12SharedResource`, which disarms Weld's
-  handle-closing `Drop`. Metal moves the retained `MTLTexture` into Graft's
-  `MetalTextureRef`. Linux validates each plane fd, maps repeated raw fd
+  `d671c9681332751f8ea24dd974511b81fe6a05dd` and consumes Graft native frames
+  by value. DX12 stores the weld-owned Win32 handle as `OwnedHandle` and moves
+  it exactly once into `Dx12SharedResource`. Metal moves the retained
+  `MTLTexture` into Graft's `MetalTextureRef`. Linux validates each plane fd,
+  maps repeated raw fd
   numbers before constructing `OwnedFd`, deduplicates distinct dup fds by kernel
   identity, and builds Graft's buffer table plus per-plane buffer indices before
   constructing `VulkanDmaBufImport`. Constructor/import failure paths close

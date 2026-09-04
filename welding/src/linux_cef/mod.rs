@@ -12,8 +12,8 @@
 //! Each plane fd in `AcceleratedPaintInfo` is callback-scoped. The
 //! `on_accelerated_paint` callback calls `dup(2)` on every fd before storing
 //! the planes in [`DmaBufImage`](crate::native_frame::DmaBufImage). The Vulkan
-//! importer takes ownership of the duped fds on success; otherwise
-//! `DmaBufImage::Drop` closes them.
+//! importer takes ownership of the duped fds on success; otherwise the image's
+//! owned descriptor buffer table closes them.
 
 use std::{
     collections::VecDeque,

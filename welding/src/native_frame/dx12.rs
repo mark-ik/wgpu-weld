@@ -168,7 +168,7 @@ impl D3d11CallbackFrameCopier {
         let target_handle =
             unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(target_handle.0) };
         Ok((
-            Dx12SharedTexture::from_owned_handle(target_handle, size, format, generation),
+            Dx12SharedTexture::from_owned_handle(target_handle, size, format, generation)?,
             target,
         ))
     }
@@ -307,10 +307,8 @@ pub(super) fn import_dx12(
     frame: Dx12SharedTexture,
     ctx: &HostWgpuContext,
 ) -> Result<ImportedTexture, ImportError> {
-    if frame.handle.is_null() {
-        return Err(ImportError::InvalidFrame("D3D shared handle is null"));
-    }
-    if frame.size.width == 0 || frame.size.height == 0 {
+    let frame_size = frame.size();
+    if frame_size.width == 0 || frame_size.height == 0 {
         return Err(ImportError::InvalidFrame(
             "D3D shared texture has zero size",
         ));
@@ -326,9 +324,8 @@ pub(super) fn import_dx12(
     // shared interop core). welding's CEF-specific callback copy + cache-flush
     // stay in `copy_dx12_callback_frame`, which calls this on the copied,
     // owned shared handle.
-    let frame_size = frame.size;
-    let frame_format = frame.format;
-    let frame_generation = frame.generation;
+    let frame_format = frame.format();
+    let frame_generation = frame.generation();
     let owned_handle = frame.into_owned_handle()?;
     let g_host = grafting::HostWgpuContext::new(ctx.device.clone(), ctx.queue.clone());
     let g_resource = grafting::Dx12SharedResource::from_owned_handle(owned_handle);

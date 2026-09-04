@@ -47,7 +47,7 @@ detail, and the difference between "verified on that hardware" and
 [`welding/README.md`](welding/README.md).
 
 All three native wrappers now delegate to the same exact Graft commit
-(`a9c6ee856f784361b9e6134adb694461b3aadf3c`). Welding keeps CEF's callback
+(`d671c9681332751f8ea24dd974511b81fe6a05dd`). Welding keeps CEF's callback
 lifetime, copy/retain, modifier fallback, and synchronization policy; Graft
 owns D3D12, Metal, and Vulkan resource registration with wgpu through owned,
 value-consuming frame APIs. After a resource is handed to Graft, hosts do not
