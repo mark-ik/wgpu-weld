@@ -40,9 +40,9 @@ jobs:
       WELD_SWITCHES: ozone-platform=wayland
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch the shared host hardware lock
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: merely-made/wgpu-graft
           ref: 781aa6aad3f63b83ad48b192a6a5d078be1d71b8
@@ -87,9 +87,9 @@ jobs:
       RUST_LOG: info
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch the shared host hardware lock
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: merely-made/wgpu-graft
           ref: 781aa6aad3f63b83ad48b192a6a5d078be1d71b8
@@ -147,9 +147,9 @@ jobs:
       WELD_TIMEOUT_SECS: "60"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch the shared host hardware lock
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: merely-made/wgpu-graft
           ref: 781aa6aad3f63b83ad48b192a6a5d078be1d71b8
@@ -201,9 +201,9 @@ jobs:
       WELD_TIMEOUT_SECS: "60"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch the shared host hardware lock
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: merely-made/wgpu-graft
           ref: 781aa6aad3f63b83ad48b192a6a5d078be1d71b8

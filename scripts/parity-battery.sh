@@ -208,7 +208,7 @@ run_case() {
   # is now actionable and belongs in the verdict like every other host call.
   failed=$({
     grep -ohE 'weld demo: [^:]*failed[^;]*' "$log" 2>/dev/null
-    grep -ohE 'PIXEL FIXTURE FAIL[^;]*|pixel-fixture: FAIL[^;]*' "$log" 2>/dev/null
+    grep -ohE 'VALIDATION FAIL[^;]*|PIXEL FIXTURE FAIL[^;]*|pixel-fixture: FAIL[^;]*' "$log" 2>/dev/null
   } | sort -u | cut -c1-90 | tr '\n' ';')
   if [ -n "$failed" ] || [ "$code" -ne 0 ]; then
     fail=$((fail + 1))
@@ -293,7 +293,8 @@ run_case api 'print_to_pdf|title: "script:2"' \
 # window that crashes on 151. Assert its response and the safe window refusal:
 # a host building its own inspector pane depends on CDP, not the native window.
 run_case cdp 'CDP <- .*"result"' WELD_CDP=Browser.getVersion
-run_case visibility 'set_visible' WELD_HIDE_CYCLE=1
+run_case visibility 'set_visible' \
+  WELD_URL="$PROBES/weld_anim_probe.html" WELD_HIDE_CYCLE=1
 run_case devtools 'open_devtools' \
   WELD_URL="$PROBES/weld_anim_probe.html" WELD_DEVTOOLS=1
 run_case crash 'recovering from' WELD_CRASH_AFTER_SECS=4 WELD_RECOVER=1

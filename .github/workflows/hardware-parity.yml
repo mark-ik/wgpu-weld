@@ -51,9 +51,9 @@ jobs:
       WELD_SKIP_CASES: crash
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch the shared host hardware lock
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: merely-made/wgpu-graft
           ref: 781aa6aad3f63b83ad48b192a6a5d078be1d71b8
@@ -91,9 +91,9 @@ jobs:
       CEF_CACHE_ROOT: C:\Users\mark_\Code\cef-cache\wgpu-weld
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch the shared host hardware lock
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: merely-made/wgpu-graft
           ref: 781aa6aad3f63b83ad48b192a6a5d078be1d71b8
@@ -144,9 +144,9 @@ jobs:
       CEF_PATH: /Users/markik/Code/cef-cache/wgpu-weld
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch the shared host hardware lock
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: merely-made/wgpu-graft
           ref: 781aa6aad3f63b83ad48b192a6a5d078be1d71b8
@@ -190,9 +190,9 @@ jobs:
       WELD_SKIP_CASES: popup
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch the shared host hardware lock
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: merely-made/wgpu-graft
           ref: 781aa6aad3f63b83ad48b192a6a5d078be1d71b8
