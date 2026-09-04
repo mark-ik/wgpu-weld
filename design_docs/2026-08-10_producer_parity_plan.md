@@ -12,6 +12,11 @@ A three-platform parity battery was run on 2026-08-12; results under
 **Scope:** cross-repo. This doc lives in wgpu-weld because welding carries most
 of the gap list, but it assigns work to all three siblings.
 
+**Release authority (2026-09-03):** This remains the capability-parity
+implementation record. Release hardening, package order, and publication gates
+now live once in
+`wgpu-graft/design_docs/2026-09-03_wgpu_triplet_release_plan.md`.
+
 ## Goal
 
 The three embedding lanes should feel like one product family to a host:
