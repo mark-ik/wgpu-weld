@@ -109,7 +109,7 @@ jobs:
         shell: powershell
         run: nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
 
-      - name: Run deterministic CEF to DX12 to wgpu gate
+      - name: Run sandboxed CEF to DX12 to wgpu gate
         shell: powershell
         run: |
           $env:WELD_CACHE_ROOT = Join-Path $env:RUNNER_TEMP "weld-nvidia-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
@@ -123,9 +123,12 @@ jobs:
             Select-Object -First 1
           if (-not $archive) { throw 'CEF distribution was not produced by cef-dll-sys' }
           $env:CEF_PATH = $archive.Directory.FullName
+          $bundle = Join-Path $env:RUNNER_TEMP 'weld-win-sandbox'
+          cargo +1.97.1 run --locked -p demo-weld-win --bin bundle-demo-weld-win -- $bundle
+          $env:CEF_PATH = $bundle
           $stdout = Join-Path $env:RUNNER_TEMP 'weld-nvidia-dx12.stdout.log'
           $stderr = Join-Path $env:RUNNER_TEMP 'weld-nvidia-dx12.stderr.log'
-          $process = Start-Process -FilePath "$env:CARGO_TARGET_DIR\debug\demo-weld-win.exe" `
+          $process = Start-Process -FilePath "$bundle\demo-weld-win.exe" `
             -NoNewWindow -Wait -PassThru `
             -RedirectStandardOutput $stdout -RedirectStandardError $stderr
           Get-Content -LiteralPath $stdout

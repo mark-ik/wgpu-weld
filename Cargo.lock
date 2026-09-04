@@ -725,6 +725,7 @@ dependencies = [
 name = "demo-weld-win"
 version = "0.1.0"
 dependencies = [
+ "cef",
  "env_logger",
  "log",
  "pollster",

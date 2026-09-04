@@ -8,7 +8,16 @@ description = "Windows demo: CEF accelerated OSR rendered into a wgpu surface vi
 
 [[bin]]
 name = "demo-weld-win"
-path = "src/main.rs"
+path = "src/direct.rs"
+
+[[bin]]
+name = "bundle-demo-weld-win"
+path = "src/bundle.rs"
+
+[lib]
+name = "demo_weld_win"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
 
 [dependencies]
 welding = { path = "../welding", features = ["cef-runtime"] }
@@ -21,3 +30,4 @@ env_logger = "0.11"
 [target.'cfg(windows)'.dependencies]
 # raw-window-handle for the wgpu surface (winit 0.30 uses rwh 0.6)
 raw-window-handle.workspace = true
+cef = { version = "151", features = ["accelerated_osr", "build-util", "sandbox"] }

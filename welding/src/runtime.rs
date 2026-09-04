@@ -148,6 +148,96 @@ mod cef_backed {
         pub(super) config: CefRuntimeConfig,
     }
 
+    /// Borrowed sandbox context supplied by CEF's Windows bootstrap executable.
+    ///
+    /// CEF 151 creates this value before loading the application's client DLL.
+    /// The DLL entry point must pass the same context to both
+    /// [`execute_process`](Self::execute_process) and
+    /// [`initialize`](Self::initialize). The bootstrap owns and destroys it.
+    #[cfg(target_os = "windows")]
+    pub struct CefWindowsSandboxContext<'a> {
+        instance: cef::sys::HINSTANCE,
+        sandbox_info: std::ptr::NonNull<u8>,
+        _borrow: std::marker::PhantomData<&'a mut u8>,
+    }
+
+    #[cfg(target_os = "windows")]
+    impl<'a> CefWindowsSandboxContext<'a> {
+        /// Borrow the process instance and sandbox context passed to the
+        /// client-DLL `RunWinMain` entry point by CEF's `bootstrap.exe`.
+        ///
+        /// # Safety
+        ///
+        /// `instance` and `sandbox_info` must be the unmodified values received
+        /// by the active bootstrap callback. The bootstrap must keep the
+        /// sandbox context alive through both calls on this value.
+        pub unsafe fn from_raw(
+            instance: *mut std::ffi::c_void,
+            sandbox_info: *mut u8,
+        ) -> Result<Self, WeldError> {
+            let instance = std::ptr::NonNull::new(instance).ok_or_else(|| {
+                WeldError::SandboxSetup(
+                    "CEF bootstrap entered the client DLL without a process instance".into(),
+                )
+            })?;
+            let sandbox_info = std::ptr::NonNull::new(sandbox_info).ok_or_else(|| {
+                WeldError::SandboxSetup(
+                    "CEF bootstrap entered the client DLL without a sandbox context".into(),
+                )
+            })?;
+            Ok(Self {
+                instance: cef::sys::HINSTANCE(instance.as_ptr().cast()),
+                sandbox_info,
+                _borrow: std::marker::PhantomData,
+            })
+        }
+
+        /// Execute a renderer/GPU/utility process under the bootstrap-owned
+        /// sandbox. Returns `None` only for the browser process.
+        pub fn execute_process(
+            &self,
+            cef_path: &std::path::Path,
+        ) -> Result<Option<i32>, WeldError> {
+            maybe_load_library(cef_path)?;
+            pin_cef_api_version();
+            let args = cef::MainArgs {
+                instance: self.instance,
+            };
+            let mut app = crate::app::WeldApp::build(std::sync::Arc::new(Vec::new()));
+            let code =
+                cef::execute_process(Some(&args), Some(&mut app), self.sandbox_info.as_ptr());
+            if code >= 0 { Ok(Some(code)) } else { Ok(None) }
+        }
+
+        /// Initialize the browser process under the bootstrap-owned sandbox.
+        pub fn initialize(&self, config: CefRuntimeConfig) -> Result<CefRuntime, WeldError> {
+            if config.sandbox != CefSandboxMode::Sandboxed {
+                return Err(WeldError::SandboxSetup(
+                    "a Windows bootstrap sandbox context requires CefSandboxMode::Sandboxed".into(),
+                ));
+            }
+            maybe_load_library(&config.cef_path)?;
+            pin_cef_api_version();
+            let args = cef::MainArgs {
+                instance: self.instance,
+            };
+            let mut app = crate::app::WeldApp::build(std::sync::Arc::new(
+                config.command_line_switches.clone(),
+            ));
+            let settings = build_settings(&config);
+            let code = cef::initialize(
+                Some(&args),
+                Some(&settings),
+                Some(&mut app),
+                self.sandbox_info.as_ptr(),
+            );
+            if code == 0 {
+                return Err(WeldError::InitFailed { code });
+            }
+            Ok(CefRuntime { config })
+        }
+    }
+
     impl CefRuntime {
         /// Load libcef and call `cef_execute_process`. Must be the very first
         /// CEF call in `main()`.
@@ -466,6 +556,8 @@ mod cef_backed {
 
 #[cfg(feature = "cef-runtime")]
 pub use cef_backed::CefRuntime;
+#[cfg(all(feature = "cef-runtime", target_os = "windows"))]
+pub use cef_backed::CefWindowsSandboxContext;
 
 // ── stub: no `cef-runtime` feature ────────────────────────────────────────────
 //

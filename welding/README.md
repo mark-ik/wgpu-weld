@@ -597,11 +597,12 @@ hardware proof before an application treats the sandbox as part of its
 security boundary.
 
 Windows CEF 151 uses a different shape: `bootstrap.exe` creates the sandbox
-context and calls an exported entry point in the application's client DLL.
-`CefRuntime::execute_process_from` cannot manufacture that context and
-therefore rejects `Sandboxed` on Windows. A Windows host must stay on
-`UnsandboxedTrustedContent` until it adopts the bootstrap/client-DLL entry
-point.
+context and calls an exported `RunWinMain` entry point in the application's
+client DLL. That entry point borrows the supplied instance and context with
+`CefWindowsSandboxContext::from_raw`, then calls its `execute_process` and
+`initialize` methods. `CefRuntime::execute_process_from` cannot manufacture
+the context and therefore rejects `Sandboxed` on Windows. See
+`demo-weld-win/src/lib.rs` and its bundler for the complete packaging shape.
 
 `CefSandboxMode::UnsandboxedTrustedContent` passes null `sandbox_info` and sets
 `CefSettings.no_sandbox = 1`. It is intended only for trusted content and

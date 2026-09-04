@@ -176,10 +176,10 @@ govern every consumer (details in [`welding/README.md`](welding/README.md)):
 2. Choose a sandbox policy explicitly and pass the same value to the process
    entry point and `CefRuntimeConfig::new`. `CefSandboxMode::Sandboxed` uses
    Chromium's sandbox on Linux and macOS; the macOS helper must enter through
-   `CefRuntime::try_run_subprocess`. Windows sandboxing requires CEF's
-   bootstrap-executable/client-DLL entry point and is rejected by the ordinary
-   executable path until that context is wired. The fallback
-   `UnsandboxedTrustedContent` mode is for trusted content and demos.
+  `CefRuntime::try_run_subprocess`. Windows sandboxing enters a client DLL
+   through CEF's bootstrap executable and borrows its
+   `CefWindowsSandboxContext`; the ordinary executable path rejects that mode.
+   The fallback `UnsandboxedTrustedContent` mode is for trusted content.
 3. CEF's paint handles are callback-scoped: `welding` takes ownership inside
    the callback, using a pixel copy on Windows and a `CFRetain`ed IOSurface
    wrapped zero-copy on macOS, and exposes only owned resources.
@@ -204,9 +204,13 @@ welding = "0.14.1"
 cargo check -p welding                          # no CEF needed
 cargo check -p welding --features cef-runtime   # real integration
 
-# Windows / Linux demos (set CEF_PATH first; WELD_URL picks the page)
+# Unsandboxed Windows development path and sandboxed Linux demo
 cargo run -p demo-weld-win
 cargo run -p demo-weld-linux
+
+# Sandboxed Windows bundle (CEF_PATH is needed while building)
+cargo run -p demo-weld-win --bin bundle-demo-weld-win -- target/bundle/demo-weld-win
+target/bundle/demo-weld-win/demo-weld-win.exe
 
 # macOS needs the .app bundle
 cd demo-weld-mac && cargo run --bin bundle-demo-weld-mac && open ../target/bundle/demo-weld-mac.app

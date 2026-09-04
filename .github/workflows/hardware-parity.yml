@@ -103,7 +103,7 @@ jobs:
           sparse-checkout-cone-mode: false
       - name: Serialize host hardware use
         uses: ./.host-hardware-lock/.github/actions/host-hardware-lock
-      - name: Build and locate CEF
+      - name: Build the sandboxed CEF bundle
         shell: pwsh
         run: |
           $env:CEF_PATH = $env:CEF_CACHE_ROOT
@@ -113,7 +113,11 @@ jobs:
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
           if (-not $archive) { throw 'CEF distribution was not produced by cef-dll-sys' }
-          "CEF_PATH=$($archive.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $env:CEF_PATH = $archive.Directory.FullName
+          $bundle = Join-Path $env:RUNNER_TEMP 'weld-win-sandbox'
+          cargo +1.97.1 run --locked -p demo-weld-win --bin bundle-demo-weld-win -- $bundle
+          "CEF_PATH=$bundle" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "WELD_WIN_BUNDLE=$bundle" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Run the capability battery
         shell: pwsh
         run: |
@@ -123,11 +127,11 @@ jobs:
             throw "Git for Windows Bash not found at $gitBash"
           }
           $tempPosix = & $cygpath -u $env:RUNNER_TEMP
-          $targetPosix = & $cygpath -u $env:CARGO_TARGET_DIR
+          $bundlePosix = & $cygpath -u $env:WELD_WIN_BUNDLE
           $env:WELD_CACHE_ROOT = "$tempPosix/weld-parity-nvidia-cache"
           $env:WELD_PROFILE = "$env:WELD_CACHE_ROOT/profile"
           $env:WELD_BATTERY_OUT = "$tempPosix/weld-parity-nvidia-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
-          $env:RUN_CMD = "$targetPosix/debug/demo-weld-win.exe"
+          $env:RUN_CMD = "$bundlePosix/demo-weld-win.exe"
           & $gitBash scripts/parity-battery.sh
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4

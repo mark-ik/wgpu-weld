@@ -38,12 +38,7 @@ use welding::{
     windows_cef::{WindowsCefConfig, WindowsCefProducer},
 };
 
-mod blit;
-mod keys;
-mod probe;
-mod scripted;
-
-use crate::{blit::build_blit_pipeline, keys::keycode_to_vk};
+use crate::{blit::build_blit_pipeline, keys::keycode_to_vk, probe, scripted};
 
 const PIXEL_FIXTURE_URL: &str = concat!(
     "data:text/html;base64,",
@@ -775,7 +770,8 @@ impl ApplicationHandler for DemoApp {
 
 // ── main ──────────────────────────────────────────────────────────────────────
 
-fn main() {
+#[allow(dead_code)]
+pub(crate) fn run_direct() -> i32 {
     // MUST be first: CEF re-invokes this binary for renderer/GPU/utility subprocesses.
     let cef_path = std::env::var("CEF_PATH")
         .expect("CEF_PATH must point to the CEF binary distribution (contains libcef.dll)");
@@ -783,15 +779,63 @@ fn main() {
     if let Some(code) = CefRuntime::execute_process_from(cef_path.as_ref(), sandbox)
         .expect("weld: CEF subprocess probe failed — is CEF_PATH set correctly?")
     {
-        std::process::exit(code);
+        return code;
     }
 
-    // After the fork-guard, so CEF's renderer/GPU helpers do not each stand up
-    // their own logger. Without this, welding's own log:: output is invisible,
-    // which is exactly the wrong thing for a reference demo.
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let runtime_config = runtime_config(&cef_path, sandbox);
+    let runtime = CefRuntime::initialize(runtime_config).expect("weld: CEF initialize failed");
+    run_browser(runtime)
+}
 
-    let mut runtime_config = CefRuntimeConfig::new(&cef_path, sandbox);
+/// Run inside CEF's Windows bootstrap/client-DLL contract.
+///
+/// # Safety
+///
+/// The pointers must be the unmodified values received by `RunWinMain`.
+#[allow(dead_code)]
+pub(crate) unsafe fn run_bootstrap(instance: *mut std::ffi::c_void, sandbox_info: *mut u8) -> i32 {
+    // Sandboxed subprocesses may receive a reduced environment. The supported
+    // bundle keeps libcef beside bootstrap.exe, so that location is canonical.
+    let cef_path = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+        .or_else(|| std::env::var_os("CEF_PATH").map(Into::into));
+    let Some(cef_path) = cef_path else {
+        eprintln!("weld demo: cannot locate the bundled CEF distribution");
+        return 110;
+    };
+    // SAFETY: the exported entry point forwards CEF's values without alteration,
+    // and the bootstrap retains the context for the duration of this call.
+    let context =
+        match unsafe { welding::CefWindowsSandboxContext::from_raw(instance, sandbox_info) } {
+            Ok(context) => context,
+            Err(error) => {
+                eprintln!("weld demo: invalid CEF bootstrap sandbox context: {error}");
+                return 111;
+            }
+        };
+    match context.execute_process(&cef_path) {
+        Ok(Some(code)) => return code,
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("weld demo: sandboxed CEF subprocess probe failed: {error}");
+            return 112;
+        }
+    }
+
+    let runtime_config = runtime_config(&cef_path.to_string_lossy(), CefSandboxMode::Sandboxed);
+    let runtime = match context.initialize(runtime_config) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("weld demo: sandboxed CEF initialize failed: {error}");
+            return 113;
+        }
+    };
+    run_browser(runtime)
+}
+
+fn runtime_config(cef_path: &str, sandbox: CefSandboxMode) -> CefRuntimeConfig {
+    let mut runtime_config = CefRuntimeConfig::new(cef_path, sandbox);
     // WELD_SWITCHES=disable-popup-blocking,lang=en-GB
     if let Ok(list) = std::env::var("WELD_SWITCHES") {
         runtime_config.command_line_switches = list
@@ -815,7 +859,13 @@ fn main() {
     // WELD_UA replaces the whole User-Agent; WELD_UA_PRODUCT only the token.
     runtime_config.user_agent = std::env::var("WELD_UA").ok();
     runtime_config.user_agent_product = std::env::var("WELD_UA_PRODUCT").ok();
-    let runtime = CefRuntime::initialize(runtime_config).expect("weld: CEF initialize failed");
+    runtime_config
+}
+
+fn run_browser(runtime: CefRuntime) -> i32 {
+    // Renderer/GPU helpers returned above before logging is initialized.
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .try_init();
 
     let event_loop = EventLoop::new().expect("event loop creation failed");
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -823,8 +873,9 @@ fn main() {
     let mut app = DemoApp::new(runtime);
     event_loop.run_app(&mut app).expect("event loop error");
     if pixel_fixture_enabled() && app.fixture_result != Some(true) {
-        std::process::exit(1);
+        return 1;
     }
+    0
 }
 
 fn report(state: &DemoState) -> bool {

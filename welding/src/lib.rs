@@ -125,6 +125,8 @@ pub use native_frame::{
     WgpuTextureImporter,
 };
 pub use permissions::{PermissionId, PermissionKind};
+#[cfg(all(feature = "cef-runtime", target_os = "windows"))]
+pub use runtime::CefWindowsSandboxContext;
 pub use runtime::{CefLogSeverity, CefRuntime, CefRuntimeConfig, CefSandboxMode};
 pub use surface::{
     BrowserFeatureStatus, CefSurfaceCapabilities, CefSurfaceConfig, CefSurfaceMode,
