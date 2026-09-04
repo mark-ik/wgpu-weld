@@ -40,9 +40,17 @@ jobs:
       WELD_SWITCHES: ozone-platform=wayland
 
     steps:
-      - name: Serialize host hardware use
-        uses: merely-made/wgpu-graft/.github/actions/host-hardware-lock@781aa6aad3f63b83ad48b192a6a5d078be1d71b8
       - uses: actions/checkout@v4
+      - name: Fetch the shared host hardware lock
+        uses: actions/checkout@v4
+        with:
+          repository: merely-made/wgpu-graft
+          ref: 781aa6aad3f63b83ad48b192a6a5d078be1d71b8
+          path: .host-hardware-lock
+          sparse-checkout: .github/actions/host-hardware-lock
+          sparse-checkout-cone-mode: false
+      - name: Serialize host hardware use
+        uses: ./.host-hardware-lock/.github/actions/host-hardware-lock
       - uses: dtolnay/rust-toolchain@1.97.1
 
       - name: Assert the native Wayland session
@@ -79,9 +87,17 @@ jobs:
       RUST_LOG: info
 
     steps:
-      - name: Serialize host hardware use
-        uses: merely-made/wgpu-graft/.github/actions/host-hardware-lock@781aa6aad3f63b83ad48b192a6a5d078be1d71b8
       - uses: actions/checkout@v4
+      - name: Fetch the shared host hardware lock
+        uses: actions/checkout@v4
+        with:
+          repository: merely-made/wgpu-graft
+          ref: 781aa6aad3f63b83ad48b192a6a5d078be1d71b8
+          path: .host-hardware-lock
+          sparse-checkout: .github/actions/host-hardware-lock
+          sparse-checkout-cone-mode: false
+      - name: Serialize host hardware use
+        uses: ./.host-hardware-lock/.github/actions/host-hardware-lock
 
       - name: Assert the provisioned Rust toolchain
         shell: powershell
@@ -131,9 +147,17 @@ jobs:
       WELD_TIMEOUT_SECS: "60"
 
     steps:
-      - name: Serialize host hardware use
-        uses: merely-made/wgpu-graft/.github/actions/host-hardware-lock@781aa6aad3f63b83ad48b192a6a5d078be1d71b8
       - uses: actions/checkout@v4
+      - name: Fetch the shared host hardware lock
+        uses: actions/checkout@v4
+        with:
+          repository: merely-made/wgpu-graft
+          ref: 781aa6aad3f63b83ad48b192a6a5d078be1d71b8
+          path: .host-hardware-lock
+          sparse-checkout: .github/actions/host-hardware-lock
+          sparse-checkout-cone-mode: false
+      - name: Serialize host hardware use
+        uses: ./.host-hardware-lock/.github/actions/host-hardware-lock
       - uses: dtolnay/rust-toolchain@1.97.1
       - name: Ensure CEF native build tools
         run: |
@@ -177,9 +201,17 @@ jobs:
       WELD_TIMEOUT_SECS: "60"
 
     steps:
-      - name: Serialize host hardware use
-        uses: merely-made/wgpu-graft/.github/actions/host-hardware-lock@781aa6aad3f63b83ad48b192a6a5d078be1d71b8
       - uses: actions/checkout@v4
+      - name: Fetch the shared host hardware lock
+        uses: actions/checkout@v4
+        with:
+          repository: merely-made/wgpu-graft
+          ref: 781aa6aad3f63b83ad48b192a6a5d078be1d71b8
+          path: .host-hardware-lock
+          sparse-checkout: .github/actions/host-hardware-lock
+          sparse-checkout-cone-mode: false
+      - name: Serialize host hardware use
+        uses: ./.host-hardware-lock/.github/actions/host-hardware-lock
       - uses: dtolnay/rust-toolchain@1.97.1
       - name: Ensure CEF native build tools
         run: |
