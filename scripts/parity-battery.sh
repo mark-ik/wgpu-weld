@@ -284,6 +284,7 @@ case " $SKIP_CASES " in
 esac
 
 run_case api 'print_to_pdf|title: "script:2"' \
+  WELD_URL="$PROBES/weld_anim_probe.html" \
   WELD_SCRIPT='document.title = "script:" + (1 + 1)' \
   WELD_PDF="$OUT/api.pdf" \
   WELD_UA_PRODUCT=weld-battery \
@@ -292,7 +293,8 @@ run_case api 'print_to_pdf|title: "script:2"' \
 # CDP is execute_dev_tools_method, a different CEF call from the show_dev_tools
 # window that crashes on 151. Assert its response and the safe window refusal:
 # a host building its own inspector pane depends on CDP, not the native window.
-run_case cdp 'CDP <- .*"result"' WELD_CDP=Browser.getVersion
+run_case cdp 'CDP <- .*"result"' \
+  WELD_URL="$PROBES/weld_anim_probe.html" WELD_CDP=Browser.getVersion
 run_case visibility 'set_visible' \
   WELD_URL="$PROBES/weld_anim_probe.html" WELD_HIDE_CYCLE=1
 run_case devtools 'open_devtools' \
