@@ -39,8 +39,8 @@ the shared `grafting` interop core).
 
 ## Status (2026-09-04)
 
-Prototype. `welding` 0.14.0 is published on crates.io (MPL-2.0); `main` is the
-0.14.1 patch candidate. It refuses CEF 151's unsafe native DevTools window on
+Prototype. `welding` 0.14.1 is published on crates.io (MPL-2.0). It refuses
+CEF 151's unsafe native DevTools window on
 every platform while preserving the supported CDP path. Version 0.14.0 made
 retained Metal frames move-only and added deterministic pixel fixtures whose
 mismatches fail the process. Per-platform detail, and the difference between

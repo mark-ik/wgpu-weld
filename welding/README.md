@@ -34,7 +34,7 @@ How far each row has been taken:
 
 ## State, 2026-09-04
 
-Version 0.14.1 is the current patch candidate. It refuses CEF 151's unsafe
+Version 0.14.1 is the current published release. It refuses CEF 151's unsafe
 native DevTools window on every platform while preserving the supported CDP
 path. Version 0.14.0 made retained Metal frames move-only, and each platform
 demo has an embedded dodger-blue pixel fixture that exits unsuccessfully on a
