@@ -1,0 +1,63 @@
+name: welding MSRV
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  RUSTFLAGS: -D warnings
+
+jobs:
+  library:
+    name: Rust 1.92 / ${{ matrix.os }} / ${{ matrix.wgpu }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # These are alternative host-compatibility rows. Do not replace this
+        # matrix with --all-features: feature unification selects multiple
+        # wgpu majors and does not represent a supported consumer graph.
+        wgpu: [wgpu-28, wgpu-29, wgpu-30]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - name: Check the selected library row
+        run: cargo check --locked -p welding --lib --no-default-features --features ${{ matrix.wgpu }}
+      # The tests are version-independent; exercise them on the MSRV anchor
+      # rather than tripling the same suite for each compatibility row.
+      - name: Test the MSRV anchor row
+        if: matrix.wgpu == 'wgpu-28'
+        run: cargo test --locked -p welding --no-default-features --features wgpu-28
+
+  cef-runtime:
+    name: Rust 1.92 / ${{ matrix.os }} / cef-runtime
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+      # cef-dll-sys downloads the platform CEF distribution and builds its
+      # native wrapper with CMake + Ninja. Keep this distinct from the core
+      # library rows so a native-tooling failure is not reported as an MSRV
+      # failure in the publishable Rust-only graph.
+      - name: Check CEF native build tools
+        run: |
+          cmake --version
+          ninja --version
+      # This is the released default wgpu-30 graph plus the optional CEF
+      # integration. It intentionally does not combine wgpu-28/29/30.
+      - name: Check the full default CEF graph
+        run: cargo check --locked -p welding --lib --features cef-runtime
