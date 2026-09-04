@@ -20,7 +20,7 @@ jobs:
   radv-wayland:
     name: RADV native Wayland pixel fixture
     runs-on: [self-hosted, wgpu-hardware, radv, wayland, headed]
-    timeout-minutes: 30
+    timeout-minutes: 150
     env:
       CARGO_TARGET_DIR: /home/markik/Code/targets/wgpu-weld-hardware
       CEF_CACHE_ROOT: /home/markik/Code/cef-cache/wgpu-weld
@@ -40,6 +40,8 @@ jobs:
       WELD_SWITCHES: ozone-platform=wayland
 
     steps:
+      - name: Serialize host hardware use
+        uses: merely-made/wgpu-graft/.github/actions/host-hardware-lock@ab70a66e625f15ae1b369bf34502fe6f7f7625a7
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.97.1
 
@@ -67,7 +69,7 @@ jobs:
   nvidia-dx12:
     name: NVIDIA RTX 4060 DX12 pixel fixture
     runs-on: [self-hosted, wgpu-hardware, nvidia, windows-x64, headed]
-    timeout-minutes: 30
+    timeout-minutes: 150
     env:
       CARGO_TARGET_DIR: C:\Users\mark_\Code\targets\wgpu-weld-hardware
       CEF_CACHE_ROOT: C:\Users\mark_\Code\cef-cache\wgpu-weld
@@ -77,6 +79,8 @@ jobs:
       RUST_LOG: info
 
     steps:
+      - name: Serialize host hardware use
+        uses: merely-made/wgpu-graft/.github/actions/host-hardware-lock@ab70a66e625f15ae1b369bf34502fe6f7f7625a7
       - uses: actions/checkout@v4
 
       - name: Assert the provisioned Rust toolchain
@@ -118,7 +122,7 @@ jobs:
   metal-m4:
     name: Apple M4 Metal pixel fixture
     runs-on: [self-hosted, wgpu-hardware, metal, macos-arm64, m4, headed]
-    timeout-minutes: 35
+    timeout-minutes: 155
     env:
       CARGO_TARGET_DIR: /Users/markik/Code/targets/wgpu-weld-hardware
       CEF_PATH: /Users/markik/Code/cef-cache/wgpu-weld
@@ -127,6 +131,8 @@ jobs:
       WELD_TIMEOUT_SECS: "60"
 
     steps:
+      - name: Serialize host hardware use
+        uses: merely-made/wgpu-graft/.github/actions/host-hardware-lock@ab70a66e625f15ae1b369bf34502fe6f7f7625a7
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.97.1
       - name: Ensure CEF native build tools
@@ -162,7 +168,7 @@ jobs:
   metal-intel:
     name: Intel iMac Metal pixel fixture
     runs-on: [self-hosted, wgpu-hardware, metal, macos-x64, intel-mac, headed]
-    timeout-minutes: 35
+    timeout-minutes: 155
     env:
       CARGO_TARGET_DIR: /Users/markik/Code/targets/wgpu-weld-hardware
       CEF_PATH: /Users/markik/Code/cef-cache/wgpu-weld
@@ -171,6 +177,8 @@ jobs:
       WELD_TIMEOUT_SECS: "60"
 
     steps:
+      - name: Serialize host hardware use
+        uses: merely-made/wgpu-graft/.github/actions/host-hardware-lock@ab70a66e625f15ae1b369bf34502fe6f7f7625a7
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.97.1
       - name: Ensure CEF native build tools

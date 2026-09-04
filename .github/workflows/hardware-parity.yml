@@ -34,7 +34,7 @@ jobs:
   radv-wayland:
     name: RADV Wayland parity and popup battery
     runs-on: [self-hosted, wgpu-hardware, radv, wayland, headed]
-    timeout-minutes: 50
+    timeout-minutes: 170
     env:
       CARGO_TARGET_DIR: /home/markik/Code/targets/wgpu-weld-hardware
       CEF_CACHE_ROOT: /home/markik/Code/cef-cache/wgpu-weld
@@ -51,6 +51,8 @@ jobs:
       WELD_SKIP_CASES: crash
 
     steps:
+      - name: Serialize host hardware use
+        uses: merely-made/wgpu-graft/.github/actions/host-hardware-lock@ab70a66e625f15ae1b369bf34502fe6f7f7625a7
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.97.1
       - name: Run the capability battery
@@ -75,12 +77,14 @@ jobs:
   nvidia-dx12:
     name: NVIDIA DX12 parity battery
     runs-on: [self-hosted, wgpu-hardware, nvidia, windows-x64, headed]
-    timeout-minutes: 55
+    timeout-minutes: 175
     env:
       CARGO_TARGET_DIR: C:\Users\mark_\Code\targets\wgpu-weld-hardware
       CEF_CACHE_ROOT: C:\Users\mark_\Code\cef-cache\wgpu-weld
 
     steps:
+      - name: Serialize host hardware use
+        uses: merely-made/wgpu-graft/.github/actions/host-hardware-lock@ab70a66e625f15ae1b369bf34502fe6f7f7625a7
       - uses: actions/checkout@v4
       - name: Build and locate CEF
         shell: pwsh
@@ -118,12 +122,14 @@ jobs:
   metal-m4:
     name: Apple M4 Metal parity battery
     runs-on: [self-hosted, wgpu-hardware, metal, macos-arm64, m4, headed]
-    timeout-minutes: 60
+    timeout-minutes: 180
     env:
       CARGO_TARGET_DIR: /Users/markik/Code/targets/wgpu-weld-hardware
       CEF_PATH: /Users/markik/Code/cef-cache/wgpu-weld
 
     steps:
+      - name: Serialize host hardware use
+        uses: merely-made/wgpu-graft/.github/actions/host-hardware-lock@ab70a66e625f15ae1b369bf34502fe6f7f7625a7
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.97.1
       - name: Ensure CEF native build tools
@@ -153,13 +159,15 @@ jobs:
   metal-intel:
     name: Intel iMac Metal parity battery
     runs-on: [self-hosted, wgpu-hardware, metal, macos-x64, intel-mac, headed]
-    timeout-minutes: 60
+    timeout-minutes: 180
     env:
       CARGO_TARGET_DIR: /Users/markik/Code/targets/wgpu-weld-hardware
       CEF_PATH: /Users/markik/Code/cef-cache/wgpu-weld
       WELD_SKIP_CASES: popup
 
     steps:
+      - name: Serialize host hardware use
+        uses: merely-made/wgpu-graft/.github/actions/host-hardware-lock@ab70a66e625f15ae1b369bf34502fe6f7f7625a7
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.97.1
       - name: Ensure CEF native build tools
