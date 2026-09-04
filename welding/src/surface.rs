@@ -95,6 +95,8 @@ pub struct CefSurfaceCapabilities {
     pub profile_isolation: BrowserFeatureStatus,
 }
 
+pub(crate) const CEF_OSR_DEVTOOLS_REASON: &str = "DevTools windows are disabled for windowless CEF: CEF 151 crashes Windows/Linux; macOS remains refused after its CEF 148 crash";
+
 impl CefSurfaceCapabilities {
     /// Probe capabilities for the current platform.
     ///
@@ -178,15 +180,10 @@ impl CefSurfaceCapabilities {
             ),
             script_execution: BrowserFeatureStatus::Supported,
             script_result: BrowserFeatureStatus::Supported,
-            // Windows opens a real DevTools window; Linux takes the call
-            // without crashing but has not been seen to open one; macOS
-            // crashes CEF outright, so the producer refuses there.
-            #[cfg(not(target_os = "macos"))]
-            devtools: BrowserFeatureStatus::Supported,
-            #[cfg(target_os = "macos")]
-            devtools: BrowserFeatureStatus::Unsupported(
-                "DevTools crashes CEF 148 for windowless browsers on macOS",
-            ),
+            // CEF's native DevTools window is unsafe for accelerated
+            // windowless browsers. The CDP path below is separate, supported,
+            // and is the safe basis for a host-owned inspector.
+            devtools: BrowserFeatureStatus::Unsupported(CEF_OSR_DEVTOOLS_REASON),
             // A CefDownloadHandler is registered on every producer. Whether a
             // download can actually land is a per-producer question --
             // `download_dir` decides that -- so this reports the wiring, and
@@ -314,22 +311,14 @@ mod capability_tests {
             return;
         }
 
-        // Wired: script execution, devtools, console messages (the display
-        // handler's on_console_message), and the accelerated paint path on all
-        // three verified platforms.
-        //
-        // `devtools` was the one claim here that was not true when this test
-        // was written: `open_devtools` returned a pending-wiring error on all
-        // three producers, and this assertion pinned the lie in place rather
-        // than catching it. It calls `show_dev_tools` now, checked by opening
-        // a real DevTools window on Windows, 2026-08-12.
+        // Script execution, console messages (the display handler's
+        // on_console_message), and accelerated paint are wired on all three
+        // verified platforms. The native DevTools window is deliberately
+        // refused because it crashes accelerated windowless browsers.
         assert_eq!(caps.script_execution, BrowserFeatureStatus::Supported);
-        #[cfg(not(target_os = "macos"))]
-        assert_eq!(caps.devtools, BrowserFeatureStatus::Supported);
-        #[cfg(target_os = "macos")]
         assert!(matches!(
             caps.devtools,
-            BrowserFeatureStatus::Unsupported(_)
+            BrowserFeatureStatus::Unsupported(CEF_OSR_DEVTOOLS_REASON)
         ));
         assert_eq!(caps.console_messages, BrowserFeatureStatus::Supported);
         // Cookies went from a trait default that errored to real producer

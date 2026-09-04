@@ -1081,38 +1081,9 @@ impl CefSurfaceProducer for LinuxCefProducer {
     }
 
     fn open_devtools(&self) -> Result<(), WeldError> {
-        #[cfg(feature = "cef-runtime")]
-        {
-            if let Some(host) = self.browser.host() {
-                // A real WindowInfo, not None. CEF dereferences it on macOS:
-                // passing None crashed the host inside the framework with
-                // EXC_BAD_ACCESS at null+0x150, while Windows tolerated it and
-                // opened the window -- exactly the kind of difference that
-                // ships if only one platform is tried. Windowless is left off
-                // so CEF opens DevTools in its own native window; a windowless
-                // DevTools would need a producer of its own.
-                let window_info = cef::WindowInfo {
-                    bounds: cef::Rect {
-                        x: 0,
-                        y: 0,
-                        width: 1024,
-                        height: 768,
-                    },
-                    ..Default::default()
-                };
-                let settings = cef::BrowserSettings::default();
-                // `inspect_element_at` must be a real pointer too. CEF's C++ API
-                // takes it as `const CefPoint&` and its generated entry point
-                // lists it "unverified", meaning libcef dereferences it without
-                // a null check -- which is how a None here became a crash inside
-                // the framework on macOS rather than an error. (0,0) is the
-                // "inspect nothing in particular" value.
-                let inspect_at = cef::Point { x: 0, y: 0 };
-                host.show_dev_tools(Some(&window_info), None, Some(&settings), Some(&inspect_at));
-                return Ok(());
-            }
-        }
-        Err(pending("cef_browser_host_t::show_dev_tools"))
+        Err(WeldError::PlatformUnsupported(
+            crate::surface::CEF_OSR_DEVTOOLS_REASON,
+        ))
     }
 
     fn browser_id(&self) -> i32 {

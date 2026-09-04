@@ -34,17 +34,18 @@ How far each row has been taken:
 
 ## State, 2026-09-04
 
-Version 0.13.0 is the published baseline; `main` is the 0.14.0 compatibility
-revision. Retained Metal frames are move-only, and each platform demo has an
-embedded dodger-blue pixel fixture that exits unsuccessfully on a mismatch.
+Version 0.14.1 is the current patch candidate. It refuses CEF 151's unsafe
+native DevTools window on every platform while preserving the supported CDP
+path. Version 0.14.0 made retained Metal frames move-only, and each platform
+demo has an embedded dodger-blue pixel fixture that exits unsuccessfully on a
+mismatch.
 Version 0.12.0 was the first one where accelerated GPU import worked on **every**
 desktop platform. Linux had only
 ever worked on Intel/Mesa; AMD/RADV was refused with a typed error until
 0.12.0, for reasons the `[^linux]` note below explains.
 
-Welding now pins Graft commit
-`d671c9681332751f8ea24dd974511b81fe6a05dd` and delegates every native wgpu
-wrapper to its owned, value-consuming import API. CEF-specific callback
+Welding uses published `grafting` 0.6.0 and delegates every native wgpu wrapper
+to its owned, value-consuming import API. CEF-specific callback
 ownership, the Windows copy, IOSurface construction, and Linux modifier policy
 remain here. DX12 converts Weld's owned handle into `OwnedHandle` once, Metal
 moves the retained `MTLTexture`, and Linux hands Graft a deduplicated `OwnedFd`
@@ -139,7 +140,7 @@ and Fedora 44 on a ThinkPad (AMD Renoir/RADV, Mesa 26.1.5).
 | Popup widgets (`<select>`) | verified | **differs by macOS** [^macpopup] | verified on AMD/RADV |
 | Renderer crash recovery | verified | verified | event not delivered [^linuxcrash] |
 | Visibility (`set_visible`) | verified | verified | wired |
-| DevTools window | **crashes CEF 151** [^devtools] | refused by design [^devtools] | **crashes CEF 151** [^devtools] |
+| DevTools window | refused by design [^devtools] | refused by design [^devtools] | refused by design [^devtools] |
 | IME composition | verified | verified | verified |
 | Downloads | verified [^dl] | untested on 151 | untested on 151 |
 | Auth challenges | **never fires** [^auth] | wired | wired |
@@ -253,19 +254,18 @@ battery, on all three platforms, and it reproduces every run:
 | macOS | crashed CEF, so the call is refused | unchanged, and the refusal is why this platform survives |
 
 The macOS refusal was written against 148 and looked over-conservative. Three
-Chromium majors later it is the only thing keeping one platform up, and the
-open question is now whether it should extend to the other two rather than
-whether it should be relaxed.
+Chromium majors later the same class of fatal failure was measured on Windows
+and Linux. All producers now refuse the native window and report it unsupported;
+the working DevTools protocol remains supported for host-owned inspector UIs.
 
 The original macOS finding, unchanged: opening DevTools for a windowless
 browser crashed CEF 148 from inside the framework (`EXC_BAD_ACCESS` at
 null+0x150, on the host thread), with a NULL `CefWindowInfo`, with a
 bounds-only one, and with every by-ref argument supplied non-null including
 `inspect_element_at`. Rather
-than segfault its embedder, the macOS producer refuses the call and `probe()`
-reports it unsupported there, so a host can grey the button out. Windows opens
-a real DevTools window; the window needs top-level style flags, because a
-zero-style `CefWindowInfo` yields an invisible child and a success return.
+than terminate its embedder, the macOS producer refuses the call. Windows and
+Linux now do the same. `probe()` reports the native window unsupported on all
+three so a host can grey the button out.
 
 [^linuxcrash]: A renderer crash on Linux does not reach the host. Chromium logs
 `Intentionally crashing` and then `Failed to send GetTerminationStatus request
@@ -306,7 +306,7 @@ export WELD_PROFILE=/tmp/weld-cache/person-a
 export WELD_PRINT=1                 # opens the native dialog where supported
 export WELD_TIMEOUT_SECS=45          # gracefully end a scripted battery
 export WELD_SWITCHES=disable-popup-blocking,lang=en-GB
-export WELD_SKIP_CASES="devtools"    # explicit documented platform skips
+export WELD_SKIP_CASES="popup"       # explicit documented platform skips
 export WELD_BACKGROUND=transparent # or rrggbb; unset = opaque white
 ```
 

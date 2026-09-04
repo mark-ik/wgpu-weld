@@ -110,10 +110,10 @@ demos.
 | Visibility (WasHidden / set_visible) | Y (set_visible on all three) | Y | o |
 | Per-producer profile isolation | P (global root_cache_path only; CEF has RequestContext) | Y (per-producer data_dir) | o |
 | Render-process crash recovery | Y (status-carrying event + `request_repaint`; frames resume after a deliberate crash on Windows and macOS, not delivered at all on Linux — 2026-08-12) | P | o |
-| DevTools window | Y | Y | o |
+| DevTools window | N (CEF 151 crashes accelerated windowless browsers; all producers refuse it) | Y | o |
 | DevTools protocol (CDP) | N (CEF has ExecuteDevToolsMethod; unique leverage) | N (WebView2 could; not exposed) | o |
 | Multi-producer per process | Y | Y (except WPE) | Y |
-| Honest capability probe | P (W1's test pinned `devtools: Supported` while `open_devtools` was a stub on all three; corrected 2026-08-12) | Y (matrix + footnotes) | o |
+| Honest capability probe | Y (`devtools` corrected again for the CEF 151 regression in 0.14.1) | Y (matrix + footnotes) | o |
 
 ### The capability probe lies in both directions (fixed in W1)
 
@@ -204,14 +204,13 @@ one-line explanation.
 
 ### Structural findings
 
-1. **Resolved 2026-09-04 for Weld:** scrying and welding retain their producer-specific
+1. **Resolved 2026-09-04:** Scry and Weld retain their producer-specific
    capture, callback-lifetime, modifier, and synchronization policy, while all
-   D3D12, Metal, and DMABUF/Vulkan wgpu wrappers live in Graft. Weld now pins
-   the owned-frame Graft commit
-   `d671c9681332751f8ea24dd974511b81fe6a05dd`; Scry still needs its matching
-   ownership-adaptation slice.
-2. **Resolved for Weld 2026-09-04:** Weld uses that exact immutable Graft rev
-   rather than following `branch = "main"`.
+   D3D12, Metal, and DMABUF/Vulkan wgpu wrappers live in Graft. Both published
+   crates use `grafting` 0.6.0, released from
+   `816f3e7857afee863200e1c25b300c43b1532aae`.
+2. **Resolved for Weld 2026-09-04:** Weld uses the exact published Graft 0.6.0
+   semver dependency rather than following a branch or Git revision.
 3. **Resolved for the current row:** Graft acquires foreign DMABUF images into
    shader-readable layout and registers `RESOURCE` at the wgpu 30 HAL boundary.
    Rows 28 and 29 reject content-preserving foreign imports explicitly because
@@ -339,6 +338,12 @@ divergence to get right:
 - Top-level style flags on Windows: window back. macOS crashes either way, so
   that producer refuses the call and `probe()` reports it unsupported there.
   A library must not segfault its embedder to report a missing feature.
+
+**CEF 151 correction, 2026-09-04.** The later CEF release crashes the Windows
+GPU process after `show_dev_tools` and segfaults Linux. Version 0.14.1 extends
+the refusal to all three producers, reports the native window unsupported, and
+keeps the independently verified CDP path supported. The parity battery now
+passes only when the refusal is observed and the browser process stays alive.
 
 **IME: wired, returns `Ok`, delivers nothing.** Windows and macOS both.
 Dug into properly; every precondition holds and CEF still drops the input.
@@ -926,9 +931,11 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
 
 ## Progress
 
-- 2026-09-04: **Graft owned-frame adaptation.** Weld now pins Graft commit
-  `d671c9681332751f8ea24dd974511b81fe6a05dd` and consumes Graft native frames
-  by value. DX12 stores the weld-owned Win32 handle as `OwnedHandle` and moves
+- 2026-09-04: **Graft owned-frame adaptation.** The implementation candidate
+  first pinned Graft commit `d671c9681332751f8ea24dd974511b81fe6a05dd`;
+  commit `c65a44e` switched the release to published `grafting` 0.6.0. Weld
+  consumes Graft native frames by value. DX12 stores the weld-owned Win32
+  handle as `OwnedHandle` and moves
   it exactly once into `Dx12SharedResource`. Metal moves the retained
   `MTLTexture` into Graft's `MetalTextureRef`. Linux validates each plane fd,
   maps repeated raw fd

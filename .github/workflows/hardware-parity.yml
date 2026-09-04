@@ -48,7 +48,7 @@ jobs:
       WINIT_UNIX_BACKEND: wayland
       WGPU_BACKEND: vulkan
       WELD_SWITCHES: ozone-platform=wayland
-      WELD_SKIP_CASES: devtools crash
+      WELD_SKIP_CASES: crash
 
     steps:
       - uses: actions/checkout@v4
@@ -79,7 +79,6 @@ jobs:
     env:
       CARGO_TARGET_DIR: C:\Users\mark_\Code\targets\wgpu-weld-hardware
       CEF_CACHE_ROOT: C:\Users\mark_\Code\cef-cache\wgpu-weld
-      WELD_SKIP_CASES: devtools
 
     steps:
       - uses: actions/checkout@v4
@@ -123,7 +122,6 @@ jobs:
     env:
       CARGO_TARGET_DIR: /Users/markik/Code/targets/wgpu-weld-hardware
       CEF_PATH: /Users/markik/Code/cef-cache/wgpu-weld
-      WELD_SKIP_CASES: devtools
 
     steps:
       - uses: actions/checkout@v4
@@ -159,7 +157,7 @@ jobs:
     env:
       CARGO_TARGET_DIR: /Users/markik/Code/targets/wgpu-weld-hardware
       CEF_PATH: /Users/markik/Code/cef-cache/wgpu-weld
-      WELD_SKIP_CASES: devtools popup
+      WELD_SKIP_CASES: popup
 
     steps:
       - uses: actions/checkout@v4

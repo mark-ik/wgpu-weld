@@ -1151,22 +1151,8 @@ impl CefSurfaceProducer for MacosCefProducer {
     }
 
     fn open_devtools(&self) -> Result<(), WeldError> {
-        // Deliberately not calling show_dev_tools on macOS. CEF 148 crashed the
-        // host process from inside the framework when a windowless browser
-        // opens DevTools (EXC_BAD_ACCESS at null+0x150, on the host thread).
-        // Measured on 148 and not re-tested against 151; if it was fixed
-        // upstream this refusal is now stricter than it needs to be, but
-        // loosening it needs a run on real hardware, not an assumption.
-        // Tried and ruled out: a NULL CefWindowInfo, a bounds-only one, and a
-        // non-null `inspect_element_at` -- the last because CEF dereferences
-        // its by-ref arguments without a null check, which is what made the
-        // same mistake fatal here and merely silent for the IME calls. It
-        // crashes with all three supplied. A library segfaulting its embedder
-        // is worse than a missing feature, so this reports the situation
-        // instead, and `probe()` says the same so a host can grey the button
-        // out.
         Err(WeldError::PlatformUnsupported(
-            "DevTools crashes CEF 148 for windowless browsers on macOS",
+            crate::surface::CEF_OSR_DEVTOOLS_REASON,
         ))
     }
 

@@ -20,7 +20,7 @@
 //! - `WELD_IME=text` composes `text` through the IME path, then commits it.
 //! - `WELD_HIDE_CYCLE=1` hides the browser, then shows it again, which is how
 //!   `set_visible` gets checked: painting should stop while hidden.
-//! - `WELD_DEVTOOLS=1` opens the DevTools window.
+//! - `WELD_DEVTOOLS=1` exercises the safe native-DevTools refusal.
 //! - `WELD_RIGHT_CLICK_AT=x,y` right-clicks, to provoke a context menu.
 //! - `WELD_TOUCH_AT=x,y` sends one direct touch contact.
 //! - `WELD_DROP_FILE=absolute-path` drops a local file at `WELD_TOUCH_AT`

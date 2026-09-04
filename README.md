@@ -39,15 +39,16 @@ the shared `grafting` interop core).
 
 ## Status (2026-09-04)
 
-Prototype. `welding` 0.13.0 is published on crates.io (MPL-2.0); `main` is the
-0.14.0 compatibility revision. It makes retained Metal frames move-only and
-adds deterministic pixel fixtures whose mismatches fail the process. Per-platform
-detail, and the difference between "verified on that hardware" and
-"implemented but not yet run there", is the table in
+Prototype. `welding` 0.14.0 is published on crates.io (MPL-2.0); `main` is the
+0.14.1 patch candidate. It refuses CEF 151's unsafe native DevTools window on
+every platform while preserving the supported CDP path. Version 0.14.0 made
+retained Metal frames move-only and added deterministic pixel fixtures whose
+mismatches fail the process. Per-platform detail, and the difference between
+"verified on that hardware" and "implemented but not yet run there", is in
 [`welding/README.md`](welding/README.md).
 
-All three native wrappers now delegate to the same exact Graft commit
-(`d671c9681332751f8ea24dd974511b81fe6a05dd`). Welding keeps CEF's callback
+All three native wrappers now delegate to published `grafting` 0.6.0. Welding
+keeps CEF's callback
 lifetime, copy/retain, modifier fallback, and synchronization policy; Graft
 owns D3D12, Metal, and Vulkan resource registration with wgpu through owned,
 value-consuming frame APIs. After a resource is handed to Graft, hosts do not
@@ -80,12 +81,12 @@ where they are documented. Per-case logs are retained as workflow artifacts.
 
 The last three untested rows were then taken the same evening, and two of them
 turned out not to work. `set_visible` is verified on Windows and macOS, with
-painting stopping exactly while hidden. DevTools was not implemented at all
-despite the capability probe claiming otherwise; it opens a real window on
-Windows now and crashes CEF on macOS, where the producer refuses the call
-rather than segfault its host. IME composition was delivering nothing at all;
-it is fixed and verified on all three platforms. `welding/README.md` carries
-the evidence for each.
+painting stopping exactly while hidden. CEF 151's native DevTools window
+crashes accelerated windowless browsers on Windows and Linux; macOS remains
+refused after its CEF 148 crash. All producers now refuse that unsafe call and
+expose the supported CDP path instead. IME composition was delivering nothing
+at all; it is fixed and verified on all three platforms. `welding/README.md`
+carries the evidence for each.
 
 The IME bug is worth knowing about if you call CEF's C API from anywhere:
 `replacement_range` must be a real pointer. CEF's own C++ wrapper takes it by

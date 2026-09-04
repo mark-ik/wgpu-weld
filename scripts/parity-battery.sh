@@ -180,6 +180,27 @@ run_case() {
     return
   fi
 
+  # The native DevTools window terminates accelerated windowless CEF on the
+  # measured platforms. The safe behavior is a deliberate refusal while the
+  # process stays alive. CDP is tested separately below.
+  if [ "$name" = "devtools" ]; then
+    refusal_line=$(grep -n 'open_devtools() failed:.*DevTools windows are disabled for windowless CEF' "$log" 2>/dev/null | tail -1 | cut -d: -f1)
+    post_refusal_frame=""
+    if [ -n "$refusal_line" ]; then
+      post_refusal_frame=$(tail -n "+$((refusal_line + 1))" "$log" | grep -m1 'imported frame #' 2>/dev/null)
+    fi
+    if [ "$code" -eq 0 ] && \
+       [ -n "$post_refusal_frame" ] && \
+       ! grep -q 'open_devtools() ok' "$log" 2>/dev/null; then
+      pass=$((pass + 1))
+      printf '  %-11s PASS  refusal followed by imported frame\n' "$name"
+    else
+      fail=$((fail + 1))
+      printf '  %-11s FAIL  expected safe DevTools refusal, exit=%s\n' "$name" "$code"
+    fi
+    return
+  fi
+
   # Match the whole line after "failed", not a restricted character class: the
   # macOS DevTools refusal reads `open_devtools() failed: ...`, and parentheses
   # are enough to slip past a tighter pattern and report a refusal as a pass.
@@ -269,11 +290,12 @@ run_case api 'print_to_pdf|title: "script:2"' \
   WELD_HISTORY=1
 
 # CDP is execute_dev_tools_method, a different CEF call from the show_dev_tools
-# window that crashes on 151. Assert the response, not just that nothing broke:
-# a host building its own inspector pane depends on this path, not that one.
+# window that crashes on 151. Assert its response and the safe window refusal:
+# a host building its own inspector pane depends on CDP, not the native window.
 run_case cdp 'CDP <- .*"result"' WELD_CDP=Browser.getVersion
 run_case visibility 'set_visible' WELD_HIDE_CYCLE=1
-run_case devtools 'open_devtools' WELD_DEVTOOLS=1
+run_case devtools 'open_devtools' \
+  WELD_URL="$PROBES/weld_anim_probe.html" WELD_DEVTOOLS=1
 run_case crash 'recovering from' WELD_CRASH_AFTER_SECS=4 WELD_RECOVER=1
 
 echo
