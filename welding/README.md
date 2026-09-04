@@ -15,6 +15,11 @@ features. Pick the row matching the host, with default features disabled for
 29 or 28. `welding::wgpu` re-exports the selected version so public device and
 texture types cannot silently come from a different major.
 
+The current CEF runtime is intentionally explicit about its security posture:
+pass `CefSandboxMode::UnsandboxedTrustedContent` to the subprocess entry point
+and to `CefRuntimeConfig::new`. That mode disables Chromium's process sandbox
+and is for trusted-content embedding, not arbitrary untrusted browsing.
+
 **The default row changed in 0.11.0**, from 29 to 30. A consumer taking default
 features moves major with it; pin `default-features = false, features =
 ["wgpu-29"]` to stay where you were.
@@ -26,8 +31,6 @@ How far each row has been taken:
 | `wgpu-30` (default) | live GPU-import receipts on all three paths; the current Graft-backed wrappers compile on Windows, Apple Silicon, and AMD/RADV Linux |
 | `wgpu-29` | compiles on all three hosts; DX12 and Metal retain their live receipts, while content-preserving CEF DMABUF import now returns a typed version error |
 | `wgpu-28` | compiles on all three hosts; **not** exercised on hardware, and CEF DMABUF import returns the same typed version error |
-
-**Made with AI**
 
 ## State, 2026-08-31
 
@@ -361,7 +364,8 @@ producer.print_to_pdf(Path::new("/tmp/page.pdf"))?;
 
 // The user agent is process-wide, not per producer -- CEF takes it in
 // CefSettings, so every producer under one runtime shares it.
-let mut runtime = CefRuntimeConfig::new(&cef_path);
+let sandbox = CefSandboxMode::UnsandboxedTrustedContent;
+let mut runtime = CefRuntimeConfig::new(&cef_path, sandbox);
 runtime.user_agent_product = Some("MyApp/1.0".into());  // or user_agent for all of it
 ```
 
@@ -531,7 +535,8 @@ if let NavigationEvent::ContentProcessTerminated { status, .. } = event {
 Reaching Chromium behaviour that has no CEF API:
 
 ```rust,ignore
-let mut config = CefRuntimeConfig::new(&cef_path);
+let sandbox = CefSandboxMode::UnsandboxedTrustedContent;
+let mut config = CefRuntimeConfig::new(&cef_path, sandbox);
 config.command_line_switches = vec![("disable-popup-blocking".into(), None)];
 ```
 
@@ -557,22 +562,35 @@ winit, wgpu, or any thread pool:
 ```rust,no_run
 fn main() {
     let cef_path = std::env::var("CEF_PATH").expect("CEF_PATH required");
-    if let Some(code) = welding::CefRuntime::execute_process_from(cef_path.as_ref())
+    let sandbox = welding::CefSandboxMode::UnsandboxedTrustedContent;
+    if let Some(code) = welding::CefRuntime::execute_process_from(cef_path.as_ref(), sandbox)
         .expect("failed to probe CEF subprocess role")
     {
         std::process::exit(code);
     }
-    // ... rest of main
+    let config = welding::CefRuntimeConfig::new(cef_path, sandbox);
+    // initialize CEF with config, then create browsers
 }
 ```
 
 macOS is different: it launches separate helper executables from inside the
 `.app` bundle instead. Those helpers must call
-`CefRuntime::run_subprocess`, not `cef_execute_process` directly, or the
-renderer comes up with no handlers and anything needing it (script results)
-never answers. See `demo-weld-mac` for a working bundle, helper, and bundler.
+`CefRuntime::run_subprocess(args, sandbox)`, not `cef_execute_process`
+directly, or the renderer comes up with no handlers and anything needing it
+(script results) never answers. See `demo-weld-mac` for a working bundle,
+helper, and bundler.
 
-### 2. Handle lifetime
+### 2. Sandbox policy
+
+The current runtime mode is `CefSandboxMode::UnsandboxedTrustedContent`.
+It passes null `sandbox_info` to CEF subprocess entry points and sets
+`CefSettings.no_sandbox = 1`, so it is a trusted-content embedding mode rather
+than a hardened boundary for arbitrary web content. It is accepted by both
+`CefRuntime::execute_process_from` and `CefRuntimeConfig::new`; pass the same
+local value to both. Future sandboxed variants need matching subprocess
+helpers before they can be added honestly.
+
+### 3. Handle lifetime
 
 The resource `OnAcceleratedPaint` hands over is callback-scoped. `welding`
 copies or retains it inside the callback and only ever exposes an owned
@@ -580,7 +598,7 @@ resource: a D3D11 copy into a weld-owned shared texture on Windows, a
 `CFRetain`ed `IOSurface` on macOS, `dup(2)`ed plane fds on Linux. Never hold
 CEF's own handle past the callback.
 
-### 3. Distribution
+### 4. Distribution
 
 CEF is not a system library. `libcef.dll` / `libcef.so` / `Chromium Embedded
 Framework.framework` ships with your application, and its path goes to
@@ -591,7 +609,9 @@ crates download and link it at build time.
 
 - `cef-runtime` (off by default) enables the real CEF integration. Without it
   the crate still compiles and every producer constructor returns a
-  pending-wiring error, which keeps `cargo check` cheap for downstream crates.
+  pending-wiring error; `CefSurfaceCapabilities::probe()` also reports the
+  CEF-backed browser features as unsupported, which keeps `cargo check` cheap
+  without overstating runtime support.
 - `cpu-paint-fallback` (off by default) enables the slower `OnPaint` CPU-bitmap
   path, for when accelerated OSR is unavailable.
 

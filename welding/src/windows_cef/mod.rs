@@ -151,9 +151,9 @@ pub struct WindowsCefProducer {
     size: PhysicalSize<u32>,
 }
 
-// Safety: CefSurfaceProducer is Send; cef::Browser wraps *mut CEF objects whose
-// ref-counts are thread-safe. On Windows, CEF proxies browser-host operations
-// from the host thread to its dedicated UI thread.
+// Safety: cef::Browser wraps *mut CEF objects whose ref-counts are
+// thread-safe. On Windows, CEF runs a supported dedicated UI thread and proxies
+// browser-host operations from the host thread to that UI thread.
 #[cfg(feature = "cef-runtime")]
 unsafe impl Send for WindowsCefProducer {}
 

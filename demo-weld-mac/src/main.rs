@@ -53,9 +53,9 @@ use winit::{
 };
 
 use welding::{
-    CefRuntime, CefRuntimeConfig, CefSurfaceConfig, CefSurfaceProducer, EventModifiers,
-    FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent, KeyEventKind, MouseAction,
-    MouseButton, MouseEvent, PopupSurface,
+    CefRuntime, CefRuntimeConfig, CefSandboxMode, CefSurfaceConfig, CefSurfaceProducer,
+    EventModifiers, FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent, KeyEventKind,
+    MouseAction, MouseButton, MouseEvent, PopupSurface,
     macos_cef::{MacosCefConfig, MacosCefProducer, PreparedMacosCefProfile},
 };
 
@@ -773,7 +773,7 @@ fn main() {
     }
     log::info!("framework directory: {}", frameworks.display());
 
-    let mut config = CefRuntimeConfig::new(&frameworks);
+    let mut config = CefRuntimeConfig::new(&frameworks, CefSandboxMode::UnsandboxedTrustedContent);
     // WELD_CACHE_ROOT is the CEF root cache. WELD_PROFILE must name a child
     // path, but its final directory must be left for CEF to create.
     config.cache_path = std::env::var_os("WELD_CACHE_ROOT")

@@ -5,8 +5,9 @@
 landed with focused local test and Windows consumer-check receipts. The
 wgpu 30.0.1 release row has a green three-platform CI matrix and a current
 headed Linux/Vulkan import receipt; the saved Metal hosts were unreachable
-for a same-day rerun. Every "verified" claim below names the machine it was
-verified on.
+for a same-day rerun. The 2026-09-04 pre-release hardening slice is edited
+locally with fast checks only and needs a fresh CI/hardware rerun after commit.
+Every "verified" claim below names the machine it was verified on.
 A three-platform parity battery was run on 2026-08-12; results under
 "Parity battery, 2026-08-12" below.
 **Scope:** cross-repo. This doc lives in wgpu-weld because welding carries most
@@ -921,6 +922,28 @@ re-verifying on the iMac and the Fedora box per phase (the readback-verdict
 pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
 
 ## Progress
+
+- 2026-09-04: **pre-release hardening source slice.** The public
+  `CefSurfaceProducer` trait no longer carries `Send`, matching the Linux and
+  macOS producers' CEF UI-thread ownership; the Windows producer keeps its
+  platform-specific `unsafe impl Send` with the existing CEF proxying
+  rationale. `CefRuntimeConfig::new` now requires
+  `CefSandboxMode::UnsandboxedTrustedContent`, and every subprocess entry point
+  takes the same sandbox choice before passing null `sandbox_info`; the enum
+  has no `Default`, so the current no-sandbox posture is not an invisible
+  default. `CefSurfaceCapabilities::probe()` now reports CEF-backed browser
+  features as unsupported when `cef-runtime` is not compiled in, matching the
+  constructors. The `welding` crate declares
+  `rust-version = "1.97.1"`, backed by the checked-in `rust-toolchain.toml` and
+  the local validation toolchain. Local verification for this final API shape
+  is limited to fast formatting, diff hygiene, and stale-pattern searches. A
+  pre-correction `cargo test -p welding` passed 48 unit tests plus 2 doctests,
+  and the first final-shape `cef-runtime` check caught and fixed the generated
+  CEF binding's `*mut u8` `sandbox_info` type, but the full compile/test matrix
+  is deferred to CI/hardware because of concurrent Cargo load. This slice
+  deliberately does not adapt to the pending Graft ownership API. A new commit
+  invalidates the prior headed receipts and needs CI plus DX12/Metal/Vulkan
+  hardware reruns before publication.
 
 - 2026-08-31: **the triplet now has one native import boundary.** Graft commit
   `8106f7c6b16838eb9ec062f0293249b39c108907` owns the D3D12, Metal, and

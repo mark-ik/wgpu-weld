@@ -21,12 +21,14 @@ use crate::error::WeldError;
 /// ```no_run
 /// fn main() {
 ///     let cef_path = std::env::var("CEF_PATH").expect("CEF_PATH required");
-///     if let Some(code) = welding::CefRuntime::execute_process_from(cef_path.as_ref())
+///     let sandbox = welding::CefSandboxMode::UnsandboxedTrustedContent;
+///     if let Some(code) = welding::CefRuntime::execute_process_from(cef_path.as_ref(), sandbox)
 ///         .expect("failed to probe CEF subprocess role")
 ///     {
 ///         std::process::exit(code);
 ///     }
-///     // now safe to call CefRuntime::initialize and create browsers
+///     let config = welding::CefRuntimeConfig::new(cef_path, sandbox);
+///     // now safe to call CefRuntime::initialize(config) and create browsers
 /// }
 /// ```
 #[derive(Clone, Debug)]
@@ -57,6 +59,15 @@ pub struct CefRuntimeConfig {
     /// way to reach a great many Chromium behaviours, which have no CEF API.
     pub command_line_switches: Vec<(String, Option<String>)>,
 
+    /// Chromium process sandbox policy.
+    ///
+    /// The only currently implemented mode is explicit trusted-content
+    /// embedding. It passes null `sandbox_info` to CEF's process entry points
+    /// and sets `CefSettings.no_sandbox = 1`. Do not use it for arbitrary
+    /// untrusted web content. Future sandboxed modes belong behind new enum
+    /// variants plus matching subprocess entry points/helpers.
+    pub sandbox: CefSandboxMode,
+
     /// Path to the subprocess helper executable. `None` = re-use this binary
     /// (requires calling [`CefRuntime::execute_process_from`] at `main()` start).
     pub browser_subprocess_path: Option<PathBuf>,
@@ -71,18 +82,31 @@ pub struct CefRuntimeConfig {
 }
 
 impl CefRuntimeConfig {
-    pub fn new(cef_path: impl Into<PathBuf>) -> Self {
+    pub fn new(cef_path: impl Into<PathBuf>, sandbox: CefSandboxMode) -> Self {
         CefRuntimeConfig {
             cef_path: cef_path.into(),
             user_agent: None,
             user_agent_product: None,
             command_line_switches: Vec::new(),
+            sandbox,
             browser_subprocess_path: None,
             cache_path: None,
             single_process: false,
             log_severity: CefLogSeverity::Default,
         }
     }
+}
+
+/// Chromium process sandbox policy for a CEF runtime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CefSandboxMode {
+    /// Run CEF without Chromium's process sandbox.
+    ///
+    /// This is the historical welding behaviour, now made explicit so hosts do
+    /// not accidentally treat the current runtime as a hardened browser
+    /// boundary. It is intended for trusted-content embedding and demos.
+    UnsandboxedTrustedContent,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -122,7 +146,10 @@ mod cef_backed {
         /// Returns `Ok(Some(exit_code))` for CEF subprocesses — the caller must
         /// `std::process::exit(exit_code)`. Returns `Ok(None)` for the browser
         /// (host) process.
-        pub fn execute_process_from(cef_path: &std::path::Path) -> Result<Option<i32>, WeldError> {
+        pub fn execute_process_from(
+            cef_path: &std::path::Path,
+            sandbox: CefSandboxMode,
+        ) -> Result<Option<i32>, WeldError> {
             maybe_load_library(cef_path)?;
             pin_cef_api_version();
             let args = Args::new();
@@ -132,7 +159,7 @@ mod cef_backed {
             let code = cef::execute_process(
                 Some(args.as_main_args()),
                 Some(&mut app),
-                std::ptr::null_mut(),
+                sandbox_info_for(sandbox),
             );
             if code >= 0 { Ok(Some(code)) } else { Ok(None) }
         }
@@ -144,13 +171,13 @@ mod cef_backed {
         /// the renderer has no handlers and anything needing the render process
         /// (script results) silently never answers. A helper that calls
         /// `cef_execute_process` on its own cannot know that.
-        pub fn run_subprocess(args: &cef::args::Args) -> i32 {
+        pub fn run_subprocess(args: &cef::args::Args, sandbox: CefSandboxMode) -> i32 {
             pin_cef_api_version();
             let mut app = crate::app::WeldApp::build(std::sync::Arc::new(Vec::new()));
             cef::execute_process(
                 Some(args.as_main_args()),
                 Some(&mut app),
-                std::ptr::null_mut(),
+                sandbox_info_for(sandbox),
             )
         }
 
@@ -168,7 +195,7 @@ mod cef_backed {
                 Some(args.as_main_args()),
                 Some(&settings),
                 Some(&mut app),
-                std::ptr::null_mut(),
+                sandbox_info_for(config.sandbox),
             );
             if code == 0 {
                 return Err(WeldError::InitFailed { code });
@@ -225,10 +252,8 @@ mod cef_backed {
             // continue to integrate CefDoMessageLoopWork into the host loop.
             multi_threaded_message_loop: cfg!(target_os = "windows") as _,
             external_message_pump: cfg!(not(target_os = "windows")) as _,
-            // We pass null sandbox_info to CEF initialize/execute_process;
-            // disable sandbox mode so subprocesses (GPU/renderer/utility)
-            // can start reliably across dev environments.
-            no_sandbox: 1,
+            // Keep this in lockstep with sandbox_info_for.
+            no_sandbox: no_sandbox_for(config.sandbox),
             log_severity: match config.log_severity {
                 CefLogSeverity::Default => LogSeverity::DEFAULT,
                 CefLogSeverity::Verbose => LogSeverity::VERBOSE,
@@ -259,6 +284,18 @@ mod cef_backed {
             s.user_agent_product = product.into();
         }
         s
+    }
+
+    fn sandbox_info_for(sandbox: CefSandboxMode) -> *mut u8 {
+        match sandbox {
+            CefSandboxMode::UnsandboxedTrustedContent => std::ptr::null_mut(),
+        }
+    }
+
+    fn no_sandbox_for(sandbox: CefSandboxMode) -> i32 {
+        match sandbox {
+            CefSandboxMode::UnsandboxedTrustedContent => 1,
+        }
     }
 
     /// Platform-specific library loading:
@@ -324,7 +361,10 @@ mod stub {
     }
 
     impl CefRuntime {
-        pub fn execute_process_from(_cef_path: &std::path::Path) -> Result<Option<i32>, WeldError> {
+        pub fn execute_process_from(
+            _cef_path: &std::path::Path,
+            _sandbox: CefSandboxMode,
+        ) -> Result<Option<i32>, WeldError> {
             Err(WeldError::FeatureRequired("cef-runtime"))
         }
 

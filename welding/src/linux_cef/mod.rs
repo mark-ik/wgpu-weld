@@ -115,9 +115,6 @@ pub struct LinuxCefProducer {
     size: PhysicalSize<u32>,
 }
 
-#[cfg(feature = "cef-runtime")]
-unsafe impl Send for LinuxCefProducer {}
-
 // needless_return: cfg-dispatch bodies end in `return X;` because a cfg-gated
 // scaffold block follows; when the runtime arm is the only one compiled the
 // return looks needless to clippy but the idiom requires it.

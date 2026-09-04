@@ -33,7 +33,10 @@ fn main() {
     // this helper hands CEF the same app the browser process does. Without it
     // the renderer has no handlers and script results never answer.
     let args = cef::args::Args::new();
-    let code = welding::CefRuntime::run_subprocess(&args);
+    let code = welding::CefRuntime::run_subprocess(
+        &args,
+        welding::CefSandboxMode::UnsandboxedTrustedContent,
+    );
     std::process::exit(code);
 }
 

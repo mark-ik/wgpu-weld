@@ -32,9 +32,9 @@ use winit::{
 };
 
 use welding::{
-    CefRuntime, CefRuntimeConfig, CefSurfaceConfig, CefSurfaceProducer, EventModifiers,
-    FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent, KeyEventKind, MouseAction,
-    MouseButton, MouseEvent, PopupSurface,
+    CefRuntime, CefRuntimeConfig, CefSandboxMode, CefSurfaceConfig, CefSurfaceProducer,
+    EventModifiers, FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent, KeyEventKind,
+    MouseAction, MouseButton, MouseEvent, PopupSurface,
     windows_cef::{WindowsCefConfig, WindowsCefProducer},
 };
 
@@ -779,7 +779,8 @@ fn main() {
     // MUST be first: CEF re-invokes this binary for renderer/GPU/utility subprocesses.
     let cef_path = std::env::var("CEF_PATH")
         .expect("CEF_PATH must point to the CEF binary distribution (contains libcef.dll)");
-    if let Some(code) = CefRuntime::execute_process_from(cef_path.as_ref())
+    let sandbox = CefSandboxMode::UnsandboxedTrustedContent;
+    if let Some(code) = CefRuntime::execute_process_from(cef_path.as_ref(), sandbox)
         .expect("weld: CEF subprocess probe failed — is CEF_PATH set correctly?")
     {
         std::process::exit(code);
@@ -790,7 +791,7 @@ fn main() {
     // which is exactly the wrong thing for a reference demo.
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let mut runtime_config = CefRuntimeConfig::new(&cef_path);
+    let mut runtime_config = CefRuntimeConfig::new(&cef_path, sandbox);
     // WELD_SWITCHES=disable-popup-blocking,lang=en-GB
     if let Ok(list) = std::env::var("WELD_SWITCHES") {
         runtime_config.command_line_switches = list

@@ -146,9 +146,6 @@ pub struct PreparedMacosCefProfile {
     ready: Arc<AtomicBool>,
 }
 
-#[cfg(feature = "cef-runtime")]
-unsafe impl Send for MacosCefProducer {}
-
 // needless_return: cfg-dispatch bodies end in `return X;` because a cfg-gated
 // scaffold block follows; when the runtime arm is the only one compiled the
 // return looks needless to clippy but the idiom requires it.

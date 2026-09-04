@@ -24,8 +24,7 @@ allows me to ensure that happens.
 
 The release notes and README both say "every desktop platform," which means
 every platform I could test. The current headed hardware workflow adds the
-previously missing NVIDIA/DX12 and native Wayland/RADV fixtures. Now, the
-generated README, which, trust me, is a convenience for both you and me.
+previously missing NVIDIA/DX12 and native Wayland/RADV fixtures.
 
 ---
 
@@ -149,7 +148,8 @@ call before any CEF code runs.
   the pinned CEF distribution and requires the matching demo to compile on
   each hosted operating system.
 - Without the `cef-runtime` feature the library compiles with no CEF
-  distribution; producer constructors return a pending-wiring error.
+  distribution; producer constructors return a pending-wiring error, and the
+  capability probe reports the CEF-backed browser features as unsupported.
 
 Current plan (`design_docs/`, 2026-08-10 parity plan): W1 through W6 have
 landed. W7 is done bar one row: downloads, permission requests, and context
@@ -168,12 +168,17 @@ For wgpu hosts that want an app-shipped Chromium lane. Three constraints
 govern every consumer (details in [`welding/README.md`](welding/README.md)):
 
 1. CEF re-executes the host binary for its subprocesses: call
-   `CefRuntime::execute_process_from` first thing in `main()` and exit if it
-   returns an exit code.
-2. CEF's paint handles are callback-scoped: `welding` takes ownership inside
-   the callback — a pixel copy on Windows, a `CFRetain`ed IOSurface wrapped
-   zero-copy on macOS — and exposes only owned resources.
-3. CEF is not a system library: ship libcef with the app and point
+   `CefRuntime::execute_process_from(..., sandbox)` first thing in `main()`
+   and exit if it returns an exit code.
+2. The current runtime mode is explicit trusted-content embedding:
+   choose `CefSandboxMode::UnsandboxedTrustedContent` and pass the same value
+   to `CefRuntime::execute_process_from` and `CefRuntimeConfig::new`. It
+   disables Chromium's process sandbox and should not be treated as an
+   untrusted-browser boundary.
+3. CEF's paint handles are callback-scoped: `welding` takes ownership inside
+   the callback, using a pixel copy on Windows and a `CFRetain`ed IOSurface
+   wrapped zero-copy on macOS, and exposes only owned resources.
+4. CEF is not a system library: ship libcef with the app and point
    `CEF_PATH` at a CEF 151 binary distribution, matching the `cef` crate.
 
 The library defaults to wgpu 30 and also carries `wgpu-29` and `wgpu-28`.
@@ -205,7 +210,3 @@ cd demo-weld-mac && cargo run --bin bundle-demo-weld-mac && open ../target/bundl
 ## License
 
 MPL-2.0 ([LICENSE](LICENSE)).
-
----
-
-**Made with AI**

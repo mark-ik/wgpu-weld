@@ -81,9 +81,9 @@ use winit::{
 };
 
 use welding::{
-    CefRuntime, CefRuntimeConfig, CefSurfaceConfig, CefSurfaceProducer, EventModifiers,
-    FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent, KeyEventKind, MouseAction,
-    MouseButton, MouseEvent, PopupSurface,
+    CefRuntime, CefRuntimeConfig, CefSandboxMode, CefSurfaceConfig, CefSurfaceProducer,
+    EventModifiers, FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent, KeyEventKind,
+    MouseAction, MouseButton, MouseEvent, PopupSurface,
     linux_cef::{LinuxCefConfig, LinuxCefProducer},
 };
 
@@ -868,7 +868,8 @@ fn main() {
     // MUST be first: CEF re-invokes this binary for renderer/GPU/utility subprocesses.
     let cef_path = std::env::var("CEF_PATH")
         .expect("CEF_PATH must point to the CEF binary distribution (contains libcef.so)");
-    if let Some(code) = CefRuntime::execute_process_from(cef_path.as_ref())
+    let sandbox = CefSandboxMode::UnsandboxedTrustedContent;
+    if let Some(code) = CefRuntime::execute_process_from(cef_path.as_ref(), sandbox)
         .expect("welding: CEF subprocess probe failed — is CEF_PATH set correctly?")
     {
         std::process::exit(code);
@@ -878,7 +879,7 @@ fn main() {
     // CEF renderer/GPU helper processes don't all init their own logger.
     env_logger::init();
 
-    let mut config = CefRuntimeConfig::new(&cef_path);
+    let mut config = CefRuntimeConfig::new(&cef_path, sandbox);
     // WELD_CACHE_ROOT is the CEF root cache. WELD_PROFILE must name a child
     // path, but its final directory must be left for CEF to create.
     config.cache_path = std::env::var_os("WELD_CACHE_ROOT")

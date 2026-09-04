@@ -103,23 +103,29 @@ impl CefSurfaceCapabilities {
     /// definitively confirmed after creating a browser and observing whether
     /// `OnAcceleratedPaint` fires; this probe returns the best static estimate.
     pub fn probe() -> Self {
-        // Windows, Linux and macOS have each been verified end to end against
-        // a real CEF build (see the accelerated-OSR plan's phase table). The
-        // remaining honesty gap is the one the doc comment describes: whether
-        // *this* CEF distribution was built with GPU support can only be
-        // confirmed once `OnAcceleratedPaint` actually fires.
-        let accelerated_paint_available = cfg!(any(
+        // Without cef-runtime, welding exposes public types but no CEF-backed
+        // runtime or producer can run. Keep the probe as conservative as the
+        // constructors instead of reporting platform capabilities for code
+        // that is not compiled in.
+        let runtime_feature_enabled = cfg!(feature = "cef-runtime");
+        let supported_platform = cfg!(any(
             target_os = "windows",
             target_os = "linux",
             target_os = "macos"
         ));
-        let cpu_paint_available = cfg!(feature = "cpu-paint-fallback");
+        let accelerated_paint_available = runtime_feature_enabled && supported_platform;
+        let cpu_paint_available =
+            runtime_feature_enabled && supported_platform && cfg!(feature = "cpu-paint-fallback");
         let preferred_mode = if accelerated_paint_available {
             CefSurfaceMode::AcceleratedPaint
         } else {
             #[cfg(feature = "cpu-paint-fallback")]
             {
-                CefSurfaceMode::CpuPaint
+                if cpu_paint_available {
+                    CefSurfaceMode::CpuPaint
+                } else {
+                    CefSurfaceMode::Unsupported
+                }
             }
             #[cfg(not(feature = "cpu-paint-fallback"))]
             {
@@ -127,6 +133,41 @@ impl CefSurfaceCapabilities {
             }
         };
 
+        if !runtime_feature_enabled || !supported_platform {
+            let unavailable = BrowserFeatureStatus::Unsupported(if !runtime_feature_enabled {
+                "requires the cef-runtime feature"
+            } else {
+                "unsupported target platform"
+            });
+            return Self {
+                preferred_mode,
+                accelerated_paint_available,
+                cpu_paint_available,
+                cookies: unavailable,
+                cookie_change_events: unavailable,
+                script_execution: unavailable,
+                script_result: unavailable,
+                devtools: unavailable,
+                downloads: unavailable,
+                auth_challenges: unavailable,
+                permission_requests: unavailable,
+                devtools_protocol: unavailable,
+                popups: unavailable,
+                context_menus: unavailable,
+                console_messages: unavailable,
+                printer: unavailable,
+                drag_drop: unavailable,
+                touch: unavailable,
+                png_snapshot: unavailable,
+                profile_isolation: unavailable,
+            };
+        }
+
+        // Windows, Linux and macOS have each been verified end to end against
+        // a real CEF build (see the accelerated-OSR plan's phase table). The
+        // remaining honesty gap is the one the doc comment describes: whether
+        // *this* CEF distribution was built with GPU support can only be
+        // confirmed once `OnAcceleratedPaint` actually fires.
         Self {
             preferred_mode,
             accelerated_paint_available,
@@ -225,6 +266,53 @@ mod capability_tests {
     #[test]
     fn probe_only_claims_what_is_wired() {
         let caps = CefSurfaceCapabilities::probe();
+
+        if !cfg!(feature = "cef-runtime") {
+            let all_browser_features = [
+                caps.cookies,
+                caps.cookie_change_events,
+                caps.script_execution,
+                caps.script_result,
+                caps.devtools,
+                caps.downloads,
+                caps.auth_challenges,
+                caps.permission_requests,
+                caps.devtools_protocol,
+                caps.popups,
+                caps.context_menus,
+                caps.console_messages,
+                caps.printer,
+                caps.drag_drop,
+                caps.touch,
+                caps.png_snapshot,
+                caps.profile_isolation,
+            ];
+            assert_eq!(caps.preferred_mode, CefSurfaceMode::Unsupported);
+            assert!(!caps.accelerated_paint_available);
+            assert!(!caps.cpu_paint_available);
+            assert!(all_browser_features.iter().all(|status| {
+                matches!(
+                    status,
+                    BrowserFeatureStatus::Unsupported("requires the cef-runtime feature")
+                )
+            }));
+            return;
+        }
+
+        if !cfg!(any(
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "macos"
+        )) {
+            assert_eq!(caps.preferred_mode, CefSurfaceMode::Unsupported);
+            assert!(!caps.accelerated_paint_available);
+            assert!(!caps.cpu_paint_available);
+            assert!(matches!(
+                caps.cookies,
+                BrowserFeatureStatus::Unsupported("unsupported target platform")
+            ));
+            return;
+        }
 
         // Wired: script execution, devtools, console messages (the display
         // handler's on_console_message), and the accelerated paint path on all
@@ -525,7 +613,7 @@ impl CefSurfaceConfig {
 /// — all implement this trait.
 ///
 /// For single-platform code, use the [`crate::PlatformCefProducer`] alias.
-pub trait CefSurfaceProducer: Send {
+pub trait CefSurfaceProducer {
     fn surface_mode(&self) -> CefSurfaceMode;
 
     fn capabilities(&self) -> CefSurfaceCapabilities {

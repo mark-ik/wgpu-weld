@@ -2,6 +2,7 @@
 name = "welding"
 version = "0.14.0"
 edition = "2024"
+rust-version = "1.97.1"
 license = "MPL-2.0"
 repository = "https://github.com/merely-made/wgpu-weld"
 description = "Embed Chromium Embedded Framework (CEF) into wgpu via accelerated off-screen rendering"
