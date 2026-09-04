@@ -94,22 +94,21 @@ cef::wrap_render_handler! {
             // dup(2) every plane fd. CEF closes the originals after the
             // callback returns; Vulkan will close ours on successful
             // import. On dup failure we close any fds we already duped.
+            use std::os::fd::FromRawFd;
             let mut planes: Vec<crate::native_frame::DmaBufPlane> =
                 Vec::with_capacity(plane_count);
             for src in &info.planes[..plane_count] {
                 let duped = unsafe { libc::dup(src.fd) };
                 if duped < 0 {
                     for p in &planes {
-                        unsafe { libc::close(p.fd) };
+                        unsafe { libc::close(p.raw_fd()) };
                     }
                     return;
                 }
-                planes.push(crate::native_frame::DmaBufPlane {
-                    fd: duped,
-                    offset: src.offset,
-                    size: src.size,
-                    stride: src.stride,
-                });
+                let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(duped) };
+                planes.push(crate::native_frame::DmaBufPlane::from_owned_fd(
+                    fd, src.offset, src.size, src.stride,
+                ));
             }
 
             let width = info.extra.coded_size.width as u32;
@@ -122,17 +121,17 @@ cef::wrap_render_handler! {
             };
             let generation = slot.next_generation();
             slot.store(crate::native_frame::NativeFrame::DmaBufImage(
-                crate::native_frame::DmaBufImage {
+                crate::native_frame::DmaBufImage::from_owned_planes(
                     planes,
-                    size: PhysicalSize::new(width, height),
+                    PhysicalSize::new(width, height),
                     format,
                     // drm_format is unused by the Vulkan import path
                     // (which derives vk::Format from wgpu::TextureFormat
                     // directly). Left zeroed for now.
-                    drm_format: 0,
-                    modifier: info.modifier,
+                    0,
+                    info.modifier,
                     generation,
-                },
+                ),
             ));
         }
 

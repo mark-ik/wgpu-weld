@@ -97,14 +97,22 @@ cef::wrap_render_handler! {
                 self.handler.frame_slot.lock().unwrap()
             };
             let generation = slot.next_generation();
-            slot.store(crate::native_frame::NativeFrame::MetalTextureRef(
-                crate::native_frame::MetalTextureRef {
-                    io_surface: io_surface as *mut c_void,
-                    size: PhysicalSize::new(width, height),
+            let frame = unsafe {
+                crate::native_frame::MetalTextureRef::from_retained_raw_io_surface(
+                    io_surface as *mut c_void,
+                    PhysicalSize::new(width, height),
                     format,
                     generation,
-                },
-            ));
+                )
+            };
+            match frame {
+                Ok(frame) => {
+                    slot.store(crate::native_frame::NativeFrame::MetalTextureRef(frame));
+                }
+                Err(error) => {
+                    log::error!("failed to wrap retained CEF IOSurface: {error}");
+                }
+            }
         }
 
         fn on_ime_composition_range_changed(

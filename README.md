@@ -37,7 +37,7 @@ content inside its own pipeline. It is the CEF sibling of
 and [`wgpu-graft`](https://github.com/merely-made/wgpu-graft) (Servo, plus
 the shared `grafting` interop core).
 
-## Status (2026-08-31)
+## Status (2026-09-04)
 
 Prototype. `welding` 0.13.0 is published on crates.io (MPL-2.0); `main` is the
 0.14.0 compatibility revision. It makes retained Metal frames move-only and
@@ -47,10 +47,12 @@ detail, and the difference between "verified on that hardware" and
 [`welding/README.md`](welding/README.md).
 
 All three native wrappers now delegate to the same exact Graft commit
-(`59cd8a3ec017aca46b0756d2ec90fd0a62550ef4`). Welding keeps CEF's callback
+(`a9c6ee856f784361b9e6134adb694461b3aadf3c`). Welding keeps CEF's callback
 lifetime, copy/retain, modifier fallback, and synchronization policy; Graft
-owns D3D12, Metal, and Vulkan resource registration with wgpu. The platform
-demos are required CI builds rather than optional examples.
+owns D3D12, Metal, and Vulkan resource registration with wgpu through owned,
+value-consuming frame APIs. After a resource is handed to Graft, hosts do not
+manually close its handle or file descriptor. The platform demos are required
+CI builds rather than optional examples.
 
 0.12.0 is the first release where accelerated GPU import works on every
 desktop platform reachable for testing. Linux had only ever worked on

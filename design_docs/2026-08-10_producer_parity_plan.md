@@ -5,8 +5,9 @@
 landed with focused local test and Windows consumer-check receipts. The
 wgpu 30.0.1 release row has a green three-platform CI matrix and a current
 headed Linux/Vulkan import receipt; the saved Metal hosts were unreachable
-for a same-day rerun. The 2026-09-04 pre-release hardening slice is edited
-locally with fast checks only and needs a fresh CI/hardware rerun after commit.
+for a same-day rerun. The 2026-09-04 pre-release hardening and Graft ownership
+adaptation slices are local commits and need fresh CI/hardware reruns before
+publication.
 Every "verified" claim below names the machine it was verified on.
 A three-platform parity battery was run on 2026-08-12; results under
 "Parity battery, 2026-08-12" below.
@@ -203,12 +204,14 @@ one-line explanation.
 
 ### Structural findings
 
-1. **Resolved 2026-08-31:** scrying and welding retain their producer-specific
+1. **Resolved 2026-09-04 for Weld:** scrying and welding retain their producer-specific
    capture, callback-lifetime, modifier, and synchronization policy, while all
-   D3D12, Metal, and DMABUF/Vulkan wgpu wrappers live in Graft commit
-   `8106f7c6b16838eb9ec062f0293249b39c108907`.
-2. **Resolved 2026-08-31:** both consumers use that exact immutable Graft rev;
-   neither follows `branch = "main"`.
+   D3D12, Metal, and DMABUF/Vulkan wgpu wrappers live in Graft. Weld now pins
+   the owned-frame Graft commit
+   `a9c6ee856f784361b9e6134adb694461b3aadf3c`; Scry still needs its matching
+   ownership-adaptation slice.
+2. **Resolved for Weld 2026-09-04:** Weld uses that exact immutable Graft rev
+   rather than following `branch = "main"`.
 3. **Resolved for the current row:** Graft acquires foreign DMABUF images into
    shader-readable layout and registers `RESOURCE` at the wgpu 30 HAL boundary.
    Rows 28 and 29 reject content-preserving foreign imports explicitly because
@@ -923,6 +926,21 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
 
 ## Progress
 
+- 2026-09-04: **Graft owned-frame adaptation.** Weld now pins Graft commit
+  `a9c6ee856f784361b9e6134adb694461b3aadf3c` and consumes Graft native frames
+  by value. DX12 converts the weld-owned Win32 handle into `OwnedHandle`
+  exactly once before building `Dx12SharedResource`, which disarms Weld's
+  handle-closing `Drop`. Metal moves the retained `MTLTexture` into Graft's
+  `MetalTextureRef`. Linux validates each plane fd, maps repeated raw fd
+  numbers before constructing `OwnedFd`, deduplicates distinct dup fds by kernel
+  identity, and builds Graft's buffer table plus per-plane buffer indices before
+  constructing `VulkanDmaBufImport`. Constructor/import failure paths close
+  descriptors through RAII. This supersedes the old manual-close-after-import
+  wording. The public raw handle/fd fields are private now; raw-owned entry
+  points are explicitly unsafe and metadata is exposed through getters. Fresh
+  DX12, Metal, and Vulkan hardware receipts are still required before
+  publication.
+
 - 2026-09-04: **pre-release hardening source slice.** The public
   `CefSurfaceProducer` trait no longer carries `Send`, matching the Linux and
   macOS producers' CEF UI-thread ownership; the Windows producer keeps its
@@ -940,10 +958,11 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
   pre-correction `cargo test -p welding` passed 48 unit tests plus 2 doctests,
   and the first final-shape `cef-runtime` check caught and fixed the generated
   CEF binding's `*mut u8` `sandbox_info` type, but the full compile/test matrix
-  is deferred to CI/hardware because of concurrent Cargo load. This slice
-  deliberately does not adapt to the pending Graft ownership API. A new commit
-  invalidates the prior headed receipts and needs CI plus DX12/Metal/Vulkan
-  hardware reruns before publication.
+  is deferred to CI/hardware because of concurrent Cargo load. This first
+  source slice deliberately did not adapt to the pending Graft ownership API;
+  the later ownership slice above does. It invalidates the prior headed
+  receipts and needs CI plus DX12/Metal/Vulkan hardware reruns before
+  publication.
 
 - 2026-08-31: **the triplet now has one native import boundary.** Graft commit
   `8106f7c6b16838eb9ec062f0293249b39c108907` owns the D3D12, Metal, and

@@ -104,9 +104,10 @@ impl D3d11CallbackFrameCopier {
         ),
         ImportError,
     > {
+        use std::os::windows::io::{AsRawHandle, FromRawHandle};
         use windows::{
             Win32::{
-                Foundation::{CloseHandle, GENERIC_ALL, HANDLE},
+                Foundation::{GENERIC_ALL, HANDLE},
                 Graphics::{
                     Direct3D11::{
                         D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE,
@@ -119,24 +120,13 @@ impl D3d11CallbackFrameCopier {
             core::{Interface, PCWSTR},
         };
 
-        struct OwnedHandle(HANDLE);
-        impl Drop for OwnedHandle {
-            fn drop(&mut self) {
-                if !self.0.is_invalid() {
-                    unsafe {
-                        let _ = CloseHandle(self.0);
-                    }
-                }
-            }
-        }
-
         let size = frame.size;
         let format = frame.format;
         let generation = frame.generation;
-        let source_handle = OwnedHandle(HANDLE(frame.into_raw_handle()));
+        let source_handle = frame.into_owned_handle()?;
         let source = unsafe {
             self.device1
-                .OpenSharedResource1::<ID3D11Texture2D>(source_handle.0)
+                .OpenSharedResource1::<ID3D11Texture2D>(HANDLE(source_handle.as_raw_handle()))
         }
         .map_err(|err| ImportError::D3d11OpenShared(err.to_string()))?;
         let mut desc = Default::default();
@@ -175,13 +165,10 @@ impl D3d11CallbackFrameCopier {
                 .CreateSharedHandle(None, GENERIC_ALL.0, PCWSTR::null())
                 .map_err(|err| ImportError::Hal(format!("DXGI CreateSharedHandle failed: {err}")))?
         };
+        let target_handle =
+            unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(target_handle.0) };
         Ok((
-            Dx12SharedTexture {
-                handle: target_handle.0,
-                size,
-                format,
-                generation,
-            },
+            Dx12SharedTexture::from_owned_handle(target_handle, size, format, generation),
             target,
         ))
     }
@@ -249,9 +236,8 @@ impl WgpuTextureImporter {
     }
 
     /// Import a callback-owned CEF frame and perform the cache-visible read
-    /// that the D3D11-to-D3D12 handoff requires. Consumes the frame, closing
-    /// its transferred Win32 handle after `OpenSharedHandle` has taken its own
-    /// resource reference.
+    /// that the D3D11-to-D3D12 handoff requires. Consumes the frame by moving
+    /// its Win32 handle into Graft's owned shared-resource wrapper.
     pub fn import_owned_dx12_callback_frame(
         frame: Dx12SharedTexture,
         ctx: &HostWgpuContext,
@@ -340,19 +326,26 @@ pub(super) fn import_dx12(
     // shared interop core). welding's CEF-specific callback copy + cache-flush
     // stay in `copy_dx12_callback_frame`, which calls this on the copied,
     // owned shared handle.
+    let frame_size = frame.size;
+    let frame_format = frame.format;
+    let frame_generation = frame.generation;
+    let owned_handle = frame.into_owned_handle()?;
     let g_host = grafting::HostWgpuContext::new(ctx.device.clone(), ctx.queue.clone());
-    let g_frame = grafting::Dx12SharedTexture {
-        handle: frame.handle,
-        size: frame.size,
-        format: frame.format,
-        generation: frame.generation,
-        // The handle is an already-synced owned copy; the low-level import
-        // ignores these sync fields (they drive grafting's high-level
-        // WgpuTextureImporter, which welding does not use here).
-        producer_sync: grafting::SyncMechanism::ImplicitGlFlush,
-        fence_value: 0,
-    };
-    let texture = grafting::import_dx12_shared_texture(&g_frame, &g_host)
+    let g_resource = grafting::Dx12SharedResource::from_owned_handle(owned_handle);
+    let g_frame = grafting::Dx12SharedTexture::new(
+        grafting::FrameMetadata {
+            size: frame_size,
+            format: frame_format,
+            generation: frame_generation,
+            // The frame has already passed through the D3D11 keyed mutex and
+            // GPU copy wait before it reaches this import boundary.
+            producer_sync: grafting::SyncMechanism::None,
+        },
+        g_resource,
+        // No external DX12 fence is currently exposed by the CEF copy path.
+        0,
+    );
+    let texture = grafting::import_dx12_shared_texture(g_frame, &g_host)
         .map_err(|err| ImportError::D3d12OpenShared(err.to_string()))?;
 
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -360,11 +353,11 @@ pub(super) fn import_dx12(
         texture,
         view,
         size: wgpu::Extent3d {
-            width: frame.size.width,
-            height: frame.size.height,
+            width: frame_size.width,
+            height: frame_size.height,
             depth_or_array_layers: 1,
         },
-        format: frame.format,
-        generation: frame.generation,
+        format: frame_format,
+        generation: frame_generation,
     })
 }

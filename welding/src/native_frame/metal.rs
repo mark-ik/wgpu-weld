@@ -10,7 +10,6 @@
 //! the backend-specific `MTLTexture` -> `wgpu::Texture` wrapper.
 
 use super::*;
-use std::ffi::c_void;
 
 /// The Apple half of [`WgpuTextureImporter::import`] for
 /// [`NativeFrame::MetalTextureRef`] frames.
@@ -18,7 +17,6 @@ pub(super) fn import_metal(
     frame: MetalTextureRef,
     ctx: &HostWgpuContext,
 ) -> Result<ImportedTexture, ImportError> {
-    use objc2::rc::Retained;
     use objc2_io_surface::IOSurfaceRef;
     use objc2_metal::{MTLDevice, MTLStorageMode, MTLTextureDescriptor, MTLTextureUsage};
 
@@ -73,14 +71,16 @@ pub(super) fn import_metal(
     };
 
     let graft_host = grafting::HostWgpuContext::new(ctx.device.clone(), ctx.queue.clone());
-    let graft_frame = grafting::MetalTextureRef {
-        size: frame.size,
-        format: frame.format,
-        generation: frame.generation,
-        producer_sync: grafting::SyncMechanism::None,
-        raw_metal_texture: Retained::as_ptr(&mtl_texture) as *mut c_void,
-    };
-    let texture = grafting::import_metal_texture_ref(&graft_frame, &graft_host)
+    let graft_frame = grafting::MetalTextureRef::new(
+        grafting::FrameMetadata {
+            size: frame.size,
+            format: frame.format,
+            generation: frame.generation,
+            producer_sync: grafting::SyncMechanism::None,
+        },
+        mtl_texture,
+    );
+    let texture = grafting::import_metal_texture_ref(graft_frame, &graft_host)
         .map_err(|error| ImportError::MetalImport(error.to_string()))?;
 
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());

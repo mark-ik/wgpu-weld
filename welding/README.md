@@ -32,7 +32,7 @@ How far each row has been taken:
 | `wgpu-29` | compiles on all three hosts; DX12 and Metal retain their live receipts, while content-preserving CEF DMABUF import now returns a typed version error |
 | `wgpu-28` | compiles on all three hosts; **not** exercised on hardware, and CEF DMABUF import returns the same typed version error |
 
-## State, 2026-08-31
+## State, 2026-09-04
 
 Version 0.13.0 is the published baseline; `main` is the 0.14.0 compatibility
 revision. Retained Metal frames are move-only, and each platform demo has an
@@ -43,12 +43,15 @@ ever worked on Intel/Mesa; AMD/RADV was refused with a typed error until
 0.12.0, for reasons the `[^linux]` note below explains.
 
 Welding now pins Graft commit
-`59cd8a3ec017aca46b0756d2ec90fd0a62550ef4` and delegates every native wgpu
-wrapper to it. CEF-specific callback ownership, the Windows copy, IOSurface
-construction, and Linux modifier policy remain here. Required CI jobs compile
-the real CEF demo on Windows, macOS, and Linux in addition to the nine-row
-library matrix. Trusted runners execute the pixel fixture on NVIDIA/DX12,
-RADV/native Wayland, Intel Metal, and Apple Silicon Metal.
+`a9c6ee856f784361b9e6134adb694461b3aadf3c` and delegates every native wgpu
+wrapper to its owned, value-consuming import API. CEF-specific callback
+ownership, the Windows copy, IOSurface construction, and Linux modifier policy
+remain here. DX12 converts Weld's owned handle into `OwnedHandle` once, Metal
+moves the retained `MTLTexture`, and Linux hands Graft a deduplicated `OwnedFd`
+buffer table with per-plane indices. Required CI jobs compile the real CEF demo
+on Windows, macOS, and Linux in addition to the nine-row library matrix. Trusted
+runners execute the pixel fixture on NVIDIA/DX12, RADV/native Wayland, Intel
+Metal, and Apple Silicon Metal.
 
 **0.13.0 builds against CEF 151** (`cef` `151.8.0+151.3.24`); 0.12.0 shipped
 CEF 147 and 0.12.1 moved the published line to 151. The library compiled

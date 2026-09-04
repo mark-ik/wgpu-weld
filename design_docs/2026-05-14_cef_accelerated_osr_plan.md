@@ -1,7 +1,7 @@
 # wgpu-weld: CEF accelerated OSR → wgpu
 
-**Date:** 2026-05-14 (revised 2026-06-02: Windows pooled-resource lifetime correction; revised 2026-08-10: module split and macOS validation; revised 2026-08-31: all native wgpu wrappers consolidated in Graft)
-**Status:** **All four phases complete.** Windows (Phase 1 + 2), macOS (Phase 3) and Linux (Phase 4) each render example.com into a host wgpu texture through accelerated OSR, verified on real hardware rather than by cross-compilation. Welding now owns producer policy and delegates D3D12, Metal, and Vulkan resource registration to exact Graft commit `8106f7c6b16838eb9ec062f0293249b39c108907`. Remaining work is the deferred list under Phase 4 (Wayland-native, NVIDIA proprietary, non-RGBA/disjoint multi-plane formats) plus macOS input parity.
+**Date:** 2026-05-14 (revised 2026-06-02: Windows pooled-resource lifetime correction; revised 2026-08-10: module split and macOS validation; revised 2026-08-31: all native wgpu wrappers consolidated in Graft; revised 2026-09-04: owned Graft frame handoff)
+**Status:** **All four phases complete.** Windows (Phase 1 + 2), macOS (Phase 3) and Linux (Phase 4) each render example.com into a host wgpu texture through accelerated OSR, verified on real hardware rather than by cross-compilation. Welding now owns producer policy and delegates D3D12, Metal, and Vulkan resource registration to exact Graft commit `a9c6ee856f784361b9e6134adb694461b3aadf3c`, using Graft's owned frame API for handle/fd custody after handoff. Remaining work is the deferred list under Phase 4 (Wayland-native, NVIDIA proprietary, non-RGBA/disjoint multi-plane formats) plus macOS input parity.
 **Sibling crates:** `wgpu-graft` (Servo / GL-FBO interop), `wgpu-scry` (system webviews / WGC / ScreenCaptureKit)
 
 ---
@@ -175,8 +175,9 @@ Every file is held under a 600-line ceiling, which is what drove the
         types where wgpu-hal 29 wants `objc2-metal`). Moved to
         `[target.'cfg(windows)'.dependencies]`, which matched the delegation at
         that time. The grafting side was fixed and shipped separately as grafting
-        0.4.0. The 2026-08-31 consolidation supersedes this historical dependency
-        shape: Graft is now common and pinned to exact commit `8106f7c`.
+        0.4.0. The 2026-08-31 consolidation superseded this historical dependency
+        shape, and the 2026-09-04 ownership revision now pins the common Graft
+        dependency to exact commit `a9c6ee8`.
       - `extern "C" { fn CFRelease(..); }` needs to be `unsafe extern` under edition 2024.
       - The `iosurface:` argument is a CoreFoundation `IOSurfaceRef`, not the ObjC
         `IOSurface` class. CEF hands over the CF pointer, so the cast target was wrong.

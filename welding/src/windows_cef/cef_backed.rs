@@ -79,6 +79,7 @@ cef::wrap_render_handler! {
                 DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE,
             };
             use windows::Win32::System::Threading::GetCurrentProcess;
+            use std::os::windows::io::FromRawHandle;
             let mut dup = HANDLE::default();
             let ok = unsafe {
                 DuplicateHandle(
@@ -107,12 +108,12 @@ cef::wrap_render_handler! {
             };
 
             let generation = self.handler.next_generation.fetch_add(1, Ordering::Relaxed) + 1;
-            let frame = Dx12SharedTexture {
-                    handle: dup.0,
-                    size: PhysicalSize::new(width, height),
-                    format,
-                    generation,
-                };
+            let frame = Dx12SharedTexture::from_owned_handle(
+                unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(dup.0) },
+                PhysicalSize::new(width, height),
+                format,
+                generation,
+            );
             match WgpuTextureImporter::copy_dx12_callback_frame_to_owned(
                 frame,
                 &self.handler.callback_copier,

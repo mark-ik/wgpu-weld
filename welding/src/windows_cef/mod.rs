@@ -338,10 +338,12 @@ impl WindowsCefProducer {
 
     /// Take the newest application-owned CEF frame without importing it.
     ///
-    /// This is the neutral-host path: the returned frame transfers its Win32
-    /// shared handle, so the caller imports it on its own wgpu device and then
-    /// closes the handle. Calling this and `CefSurfaceProducer::acquire_frame`
-    /// are alternatives; each consumes the single-slot mailbox.
+    /// This is the neutral-host path: the returned frame owns its Win32 shared
+    /// handle. Prefer handing it to `WgpuTextureImporter`, which converts the
+    /// handle into the next RAII owner exactly once. Callers that use the raw
+    /// escape hatch are responsible for closing the handle themselves. Calling
+    /// this and `CefSurfaceProducer::acquire_frame` are alternatives; each
+    /// consumes the single-slot mailbox.
     #[cfg(feature = "cef-runtime")]
     pub fn acquire_native_frame(&mut self) -> Option<Dx12SharedTexture> {
         self.frame_slot.lock().unwrap().take()
