@@ -50,6 +50,17 @@ impl PendingScripts {
         Ok(())
     }
 
+    /// Retract a request when a platform reports synchronous send refusal.
+    /// Windows' cef-rs binding exposes this send as unit, while Linux and
+    /// macOS preserve CEF's integer acceptance result.
+    #[allow(dead_code)]
+    pub(crate) fn abort(&self, id: WebRequestId) {
+        let mut ids = self.ids.lock().unwrap();
+        if let Some(index) = ids.iter().position(|pending| *pending == id) {
+            ids.remove(index);
+        }
+    }
+
     pub(crate) fn complete(&self, id: WebRequestId, result: Result<String, String>) {
         let accepted = {
             let mut ids = self.ids.lock().unwrap();
@@ -261,5 +272,17 @@ mod tests {
             ));
         }
         assert!(events.poll().is_none());
+    }
+
+    #[test]
+    fn synchronous_send_refusal_emits_no_completion() {
+        let events = Arc::new(WebEventQueue::default());
+        let scripts = PendingScripts::new(events.clone());
+        let id = WebRequestId::new(21);
+        scripts.begin(id).unwrap();
+        scripts.abort(id);
+        scripts.fail_all("renderer exited");
+        assert!(events.poll().is_none());
+        scripts.begin(id).unwrap();
     }
 }

@@ -452,10 +452,12 @@ impl CefSurfaceProducer for LinuxCefProducer {
             let script: cef::CefString = script.into();
             args.set_string(1, Some(&script));
             self.scripts.begin(id)?;
-            // cef-rs exposes this CEF send as unit, so construction and a live
-            // main frame are the synchronous acceptance boundary. Renderer
-            // loss settles every admitted request through the request handler.
-            frame.send_process_message(cef::ProcessId::RENDERER, Some(&mut message));
+            if frame.send_process_message(cef::ProcessId::RENDERER, Some(&mut message)) == 0 {
+                self.scripts.abort(id);
+                return Err(WeldError::BrowserOp(
+                    "CEF rejected the script process message".into(),
+                ));
+            }
             return Ok(());
         }
         #[cfg(not(feature = "cef-runtime"))]
