@@ -485,7 +485,7 @@ impl ApplicationHandler for DemoApp {
                     }
                     match s
                         .producer
-                        .request_cookies(WebRequestId::new(4_294_967_296), Some(&url))
+                        .request_cookies(WebRequestId::new(4_294_967_297), Some(&url))
                     {
                         Ok(()) => eprintln!("weld demo: requested cookies for {url}"),
                         Err(e) => eprintln!("weld demo: request_cookies failed: {e}"),
@@ -498,7 +498,7 @@ impl ApplicationHandler for DemoApp {
                     && let Ok(script) = std::env::var("WELD_SCRIPT")
                 {
                     s.script_requested = true;
-                    let id = WebRequestId::new(4_294_967_297);
+                    let id = WebRequestId::new(4_294_967_296);
                     match s.producer.request_script_result(id, &script) {
                         Ok(()) => eprintln!("weld demo: script request #{id}: {script}"),
                         Err(e) => eprintln!("weld demo: request_script_result failed: {e}"),

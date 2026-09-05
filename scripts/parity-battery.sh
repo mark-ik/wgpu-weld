@@ -290,6 +290,17 @@ run_case api 'print_to_pdf|title: "script:2"' \
   WELD_UA_PRODUCT=weld-battery \
   WELD_HISTORY=1
 
+# These IDs are deliberately one step beyond u32. The completion receipt proves
+# the caller's full u64 identity crossed the browser/renderer process boundary
+# and returned through the unified event stream without narrowing.
+run_case script-id 'SCRIPT #4294967296|script #4294967296' \
+  WELD_URL="$PROBES/weld_anim_probe.html" \
+  WELD_SCRIPT='({title: document.title, n: 2+2})'
+
+run_case cookie-id 'COOKIES #4294967297|cookies #4294967297' \
+  WELD_URL="$PROBES/weld_anim_probe.html" \
+  WELD_COOKIE_URL="https://example.com/"
+
 # CDP is execute_dev_tools_method, a different CEF call from the show_dev_tools
 # window that crashes on 151. Assert its response and the safe window refusal:
 # a host building its own inspector pane depends on CDP, not the native window.
