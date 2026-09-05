@@ -121,7 +121,7 @@ pub use error::WeldError;
 pub use native_frame::build_dmabuf_capable_device;
 pub use native_frame::{
     HostWgpuContext, ImportError, ImportedTexture, InteropBackend, NativeFrame, NativeFrameKind,
-    WgpuTextureImporter,
+    NativeFramePixelFormat, WgpuTextureImporter,
 };
 pub use permissions::{PermissionId, PermissionKind};
 #[cfg(all(feature = "cef-runtime", target_os = "windows"))]
