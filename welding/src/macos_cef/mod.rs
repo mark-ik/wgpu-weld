@@ -537,12 +537,7 @@ impl CefSurfaceProducer for MacosCefProducer {
             let script: cef::CefString = script.into();
             args.set_string(1, Some(&script));
             self.scripts.begin(id)?;
-            if frame.send_process_message(cef::ProcessId::RENDERER, Some(&mut message)) == 0 {
-                self.scripts.abort(id);
-                return Err(WeldError::BrowserOp(
-                    "CEF refused the script request".into(),
-                ));
-            }
+            frame.send_process_message(cef::ProcessId::RENDERER, Some(&mut message));
             return Ok(());
         }
         #[cfg(not(feature = "cef-runtime"))]

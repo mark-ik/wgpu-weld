@@ -114,6 +114,12 @@ impl NativeFrame {
         }
     }
 
+    /// Pixel format metadata without exposing the selected wgpu major in the
+    /// caller's type surface.
+    pub fn pixel_format(&self) -> NativeFramePixelFormat {
+        NativeFramePixelFormat::from_wgpu(self.format())
+    }
+
     pub fn generation(&self) -> u64 {
         match self {
             NativeFrame::Dx12SharedTexture(frame) => frame.generation(),
