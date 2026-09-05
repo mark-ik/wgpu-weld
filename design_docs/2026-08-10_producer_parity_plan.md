@@ -937,7 +937,7 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
   messages, script completions, and cookie completions.
 - [x] Accept caller-minted ids for result-bearing commands and settle each
   accepted command exactly once on that stream.
-- [ ] Add the version-pinned opt-in Mere adapter only after those Weld-owned
+- [x] Add the version-pinned opt-in Mere adapter only after those Weld-owned
   facts exist. Keep CEF bootstrap, runtime lifetime, profiles, and import-cache
   policy in the host factory.
 
@@ -947,11 +947,30 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
   Navigation, page messages, script results, and cookie results now enter one
   callback-owned `CefSurfaceEvent` queue on every producer. Script and cookie
   requests take caller-minted `WebRequestId` values across the full `u64`
-  range. Synchronous refusal clears the request without emitting an event;
-  accepted work completes once, including explicit failure settlement when a
-  renderer terminates or a producer closes. The old split poll methods and
-  producer-minted script ids were removed on the breaking 0.15 line. Platform
-  build and hardware receipts are recorded after the implementation gates run.
+  range. Validation and local precondition failures refuse synchronously
+  without emitting an event; accepted work completes once, including explicit
+  failure settlement when a renderer terminates or a producer closes. Windows
+  also observes CEF's dispatch refusal. The current macOS/Linux cef-rs binding
+  exposes dispatch as unit, so those producers cannot distinguish a queued send
+  from immediate CEF refusal. The old split poll methods and producer-minted
+  script ids were removed on the breaking 0.15 line.
+
+- 2026-09-04: **0.15 ordered-event platform receipts and Mere adapter.** Wgpu
+  matrix run `33937263551` passed all nine OS/wgpu rows, rustfmt, and the three
+  CEF demo builds at Weld commit
+  `4784d07c4064195c33136b9b91c8231913f08e06`. Headed parity run
+  `33935649650` passed 18/18 on M4 Metal, 17/18 on Intel Metal with the
+  documented popup skip, and 17/18 on RADV Vulkan with its documented skip.
+  All three preserved script id `4294967296` and cookie id `4294967297`.
+  NVIDIA DX12 remains queued without an assigned runner, so this run does not
+  add a Windows hardware receipt. Mere commit
+  `1f5ed2049d1948828a185ae54a1840b09fb0a21d` adds the opt-in, exact-revision
+  `welding-0-15` adapter. It preserves the owned native frame for the host
+  importer, consumes only Weld's ordered queue, maps structured find,
+  permission, auth, drag, script, cookie, and navigation events, and requires
+  the host's exact `CefSurfaceConfig` to report instance capability honestly.
+  CEF bootstrap, runtime/profile construction, and import-cache policy remain
+  in the host factory.
 
 - 2026-09-04: **0.15 neutral-adapter prerequisite, native frames.**
   `CefSurfaceProducer` now requires every platform producer to expose its newest
