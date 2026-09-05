@@ -8,46 +8,91 @@
 //!
 //! Every one of these is asynchronous in CEF: reads arrive one cookie at a
 //! time through a visitor, and writes report completion on a callback. So the
-//! host-facing shape is request-then-poll rather than a blocking getter.
+//! host-facing shape is request-then-event rather than a blocking getter.
 //!
 //! A blocking getter is not merely unidiomatic here, it deadlocks. On Linux and
 //! macOS the host thread *is* CEF's UI thread, so waiting on it stops the loop
 //! that would deliver the answer. `scrying` settled on request/poll for the
-//! same reason, and matching its shape is deliberate.
+//! same reason.
 
 use std::sync::Mutex;
 
-use crate::surface::Cookie;
 #[cfg(feature = "cef-runtime")]
 use crate::surface::SameSite;
+use crate::surface::{CefSurfaceEvent, Cookie, WebEventQueue, WebRequestId};
 
 /// Collects a visitor's cookies until the read finishes, then hands the batch
 /// to the host exactly once.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct CookieJar {
-    building: Mutex<Vec<Cookie>>,
-    ready: Mutex<Option<Vec<Cookie>>>,
+    state: Mutex<Option<(WebRequestId, Vec<Cookie>)>>,
+    events: std::sync::Arc<WebEventQueue>,
 }
 
 impl CookieJar {
+    pub(crate) fn new(events: std::sync::Arc<WebEventQueue>) -> Self {
+        Self {
+            state: Mutex::new(None),
+            events,
+        }
+    }
+
+    pub(crate) fn begin(&self, id: WebRequestId) -> Result<(), crate::error::WeldError> {
+        let mut state = self.state.lock().unwrap();
+        if state.is_some() {
+            return Err(crate::error::WeldError::BrowserOp(
+                "a cookie read is already in flight".into(),
+            ));
+        }
+        *state = Some((id, Vec::new()));
+        Ok(())
+    }
+
     pub(crate) fn push(&self, cookie: Cookie) {
-        self.building.lock().unwrap().push(cookie);
+        if let Some((_, batch)) = self.state.lock().unwrap().as_mut() {
+            batch.push(cookie);
+        }
     }
 
     /// Publish whatever has been collected as the answer.
-    pub(crate) fn finish(&self) {
-        let batch = std::mem::take(&mut *self.building.lock().unwrap());
-        *self.ready.lock().unwrap() = Some(batch);
+    pub(crate) fn finish(&self, id: WebRequestId) {
+        let completion = {
+            let mut state = self.state.lock().unwrap();
+            match state.take() {
+                Some((active_id, batch)) if active_id == id => Some(batch),
+                Some(active) => {
+                    *state = Some(active);
+                    None
+                }
+                None => None,
+            }
+        };
+        if let Some(batch) = completion {
+            self.events.push(CefSurfaceEvent::CookiesCompleted {
+                id,
+                result: Ok(batch),
+            });
+        }
     }
 
-    pub(crate) fn take(&self) -> Option<Vec<Cookie>> {
-        self.ready.lock().unwrap().take()
+    pub(crate) fn abort(&self, id: WebRequestId) {
+        let mut state = self.state.lock().unwrap();
+        if state
+            .as_ref()
+            .is_some_and(|(active_id, _)| *active_id == id)
+        {
+            *state = None;
+        }
     }
 
-    /// Drop anything half-collected. Called when a new read starts so a
-    /// previous partial visit cannot leak into it.
-    pub(crate) fn reset(&self) {
-        self.building.lock().unwrap().clear();
+    pub(crate) fn fail_active(&self, reason: &str) {
+        let active = self.state.lock().unwrap().take();
+        if let Some((id, _)) = active {
+            self.events.push(CefSurfaceEvent::CookiesCompleted {
+                id,
+                result: Err(reason.to_owned()),
+            });
+        }
     }
 }
 
@@ -65,21 +110,37 @@ impl CookieJar {
 pub(crate) struct FinishOnDrop(std::sync::Arc<FinishGuard>);
 
 #[derive(Debug)]
-struct FinishGuard(std::sync::Arc<CookieJar>);
+struct FinishGuard {
+    jar: std::sync::Arc<CookieJar>,
+    id: WebRequestId,
+    armed: std::sync::atomic::AtomicBool,
+}
 
 impl Drop for FinishGuard {
     fn drop(&mut self) {
-        self.0.finish();
+        if self.armed.load(std::sync::atomic::Ordering::Acquire) {
+            self.jar.finish(self.id);
+        }
     }
 }
 
 impl FinishOnDrop {
-    pub(crate) fn new(jar: std::sync::Arc<CookieJar>) -> Self {
-        Self(std::sync::Arc::new(FinishGuard(jar)))
+    pub(crate) fn new(jar: std::sync::Arc<CookieJar>, id: WebRequestId) -> Self {
+        Self(std::sync::Arc::new(FinishGuard {
+            jar,
+            id,
+            armed: std::sync::atomic::AtomicBool::new(true),
+        }))
     }
 
     pub(crate) fn jar(&self) -> &CookieJar {
-        &self.0.0
+        &self.0.jar
+    }
+
+    pub(crate) fn disarm(&self) {
+        self.0
+            .armed
+            .store(false, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -132,6 +193,21 @@ pub(crate) fn to_cef(c: &Cookie) -> cef::Cookie {
 mod tests {
     use super::*;
 
+    fn jar() -> (std::sync::Arc<CookieJar>, std::sync::Arc<WebEventQueue>) {
+        let events = std::sync::Arc::new(WebEventQueue::default());
+        (std::sync::Arc::new(CookieJar::new(events.clone())), events)
+    }
+
+    fn completed(events: &WebEventQueue) -> Option<(WebRequestId, Vec<Cookie>)> {
+        match events.poll()? {
+            CefSurfaceEvent::CookiesCompleted {
+                id,
+                result: Ok(cookies),
+            } => Some((id, cookies)),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
     fn cookie(name: &str) -> Cookie {
         Cookie {
             name: name.into(),
@@ -141,54 +217,85 @@ mod tests {
 
     #[test]
     fn a_batch_is_handed_over_once() {
-        let jar = CookieJar::default();
-        assert_eq!(jar.take(), None, "nothing was requested yet");
+        let (jar, events) = jar();
+        let id = WebRequestId::new(7);
+        jar.begin(id).unwrap();
         jar.push(cookie("a"));
         jar.push(cookie("b"));
-        assert_eq!(jar.take(), None, "an unfinished visit must not be readable");
+        assert!(events.poll().is_none(), "an unfinished visit must not emit");
 
-        jar.finish();
-        let batch = jar.take().expect("finished visit should be readable");
+        jar.finish(id);
+        let (completed_id, batch) = completed(&events).unwrap();
+        assert_eq!(completed_id, id);
         assert_eq!(batch.len(), 2);
-        assert_eq!(jar.take(), None, "a batch is delivered exactly once");
+        assert!(events.poll().is_none(), "a batch is delivered exactly once");
     }
 
     #[test]
-    fn a_new_read_does_not_inherit_a_partial_one() {
-        let jar = CookieJar::default();
-        jar.push(cookie("stale"));
-        jar.reset();
-        jar.push(cookie("fresh"));
-        jar.finish();
-        let batch = jar.take().unwrap();
-        assert_eq!(batch.len(), 1);
-        assert_eq!(batch[0].name, "fresh");
+    fn a_second_read_is_rejected_until_the_first_settles() {
+        let (jar, events) = jar();
+        let first = WebRequestId::new(1);
+        jar.begin(first).unwrap();
+        assert!(jar.begin(WebRequestId::new(2)).is_err());
+        jar.finish(first);
+        assert_eq!(completed(&events).unwrap().0, first);
+        jar.begin(WebRequestId::new(2)).unwrap();
     }
 
     #[test]
     fn an_empty_result_is_still_an_answer() {
         // "no cookies" and "not answered yet" must not look the same to a host.
-        let jar = CookieJar::default();
-        jar.finish();
-        assert_eq!(jar.take(), Some(Vec::new()));
+        let (jar, events) = jar();
+        let id = WebRequestId::new(9);
+        jar.begin(id).unwrap();
+        jar.finish(id);
+        assert_eq!(completed(&events), Some((id, Vec::new())));
     }
 
     #[test]
     fn dropping_the_visitor_publishes_the_answer() {
         // The case that bit in practice: a store with no cookies never calls
         // the visitor, so only its destruction can end the read.
-        let jar = std::sync::Arc::new(CookieJar::default());
-        let guard = FinishOnDrop::new(jar.clone());
+        let (jar, events) = jar();
+        let id = WebRequestId::new(11);
+        jar.begin(id).unwrap();
+        let guard = FinishOnDrop::new(jar.clone(), id);
         let copy = guard.clone();
-        assert_eq!(jar.take(), None);
         drop(guard);
-        assert_eq!(
-            jar.take(),
-            None,
-            "a surviving handle means the read is still open"
+        assert!(
+            events.poll().is_none(),
+            "a surviving handle keeps the read open"
         );
         drop(copy);
-        assert_eq!(jar.take(), Some(Vec::new()));
+        assert_eq!(completed(&events), Some((id, Vec::new())));
+    }
+
+    #[test]
+    fn a_refused_visit_emits_no_completion() {
+        let (jar, events) = jar();
+        let id = WebRequestId::new(13);
+        jar.begin(id).unwrap();
+        let guard = FinishOnDrop::new(jar.clone(), id);
+        guard.disarm();
+        jar.abort(id);
+        drop(guard);
+        assert!(events.poll().is_none());
+        jar.begin(WebRequestId::new(14)).unwrap();
+    }
+
+    #[test]
+    fn closing_settles_the_active_read_once() {
+        let (jar, events) = jar();
+        let id = WebRequestId::new(15);
+        jar.begin(id).unwrap();
+        jar.fail_active("browser closed");
+        jar.finish(id);
+        assert!(matches!(
+            events.poll(),
+            Some(CefSurfaceEvent::CookiesCompleted { id: seen, result: Err(reason) })
+                if seen == id && reason == "browser closed"
+        ));
+        assert!(events.poll().is_none());
     }
 }
 
@@ -225,8 +332,12 @@ mod cef_backed {
     }
 
     impl WeldCookieVisitor {
-        pub(crate) fn build(jar: Arc<CookieJar>) -> cef::CookieVisitor {
-            Self::new(FinishOnDrop::new(jar))
+        pub(crate) fn build(
+            jar: Arc<CookieJar>,
+            id: WebRequestId,
+        ) -> (cef::CookieVisitor, FinishOnDrop) {
+            let guard = FinishOnDrop::new(jar, id);
+            (Self::new(guard.clone()), guard)
         }
     }
 }
@@ -239,13 +350,14 @@ mod cef_backed {
 pub(crate) fn request(
     browser: &cef::Browser,
     jar: &std::sync::Arc<CookieJar>,
+    id: WebRequestId,
     url: Option<&str>,
 ) -> Result<(), crate::error::WeldError> {
     use cef::ImplCookieManager;
 
     let manager = manager(browser)?;
-    jar.reset();
-    let mut visitor = cef_backed::WeldCookieVisitor::build(jar.clone());
+    jar.begin(id)?;
+    let (mut visitor, guard) = cef_backed::WeldCookieVisitor::build(jar.clone(), id);
 
     let accepted = match url {
         Some(url) => {
@@ -255,9 +367,8 @@ pub(crate) fn request(
         None => manager.visit_all_cookies(Some(&mut visitor)),
     };
     if accepted == 0 {
-        // CEF refuses when the store cannot be read at all. Report an empty
-        // answer rather than leaving the host polling forever.
-        jar.finish();
+        guard.disarm();
+        jar.abort(id);
         return Err(crate::error::WeldError::BrowserOp(
             "CEF refused the cookie visit".into(),
         ));

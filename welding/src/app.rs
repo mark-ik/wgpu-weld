@@ -17,35 +17,60 @@
 //! because CEF hands the same object to both roles and takes the handlers each
 //! one needs.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-/// A finished `request_script_result`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ScriptResult {
-    pub id: u32,
-    /// `Ok` carries the value as JSON; `Err` carries the exception message.
-    ///
-    /// JSON rather than a bare string because a script can return anything and
-    /// the alternatives lose information: `document.title` arrives as
-    /// `"Example Domain"` quoted, `2+2` as `4`, an object as an object.
-    pub value: Result<String, String>,
+use crate::{
+    error::WeldError,
+    surface::{CefSurfaceEvent, WebEventQueue, WebRequestId},
+};
+
+/// Accepted script requests that have not settled yet.
+#[derive(Debug)]
+pub(crate) struct PendingScripts {
+    ids: Mutex<Vec<WebRequestId>>,
+    events: Arc<WebEventQueue>,
 }
 
-/// Results returned from the renderer, waiting to be polled.
-#[derive(Debug, Default)]
-pub(crate) struct ScriptResults(Mutex<Vec<ScriptResult>>);
-
-impl ScriptResults {
-    pub(crate) fn push(&self, result: ScriptResult) {
-        self.0.lock().unwrap().push(result);
+impl PendingScripts {
+    pub(crate) fn new(events: Arc<WebEventQueue>) -> Self {
+        Self {
+            ids: Mutex::new(Vec::new()),
+            events,
+        }
     }
 
-    pub(crate) fn take_one(&self) -> Option<ScriptResult> {
-        let mut queue = self.0.lock().unwrap();
-        if queue.is_empty() {
-            None
-        } else {
-            Some(queue.remove(0))
+    pub(crate) fn begin(&self, id: WebRequestId) -> Result<(), WeldError> {
+        let mut ids = self.ids.lock().unwrap();
+        if ids.contains(&id) {
+            return Err(WeldError::BrowserOp(
+                "that script request id is already in flight".into(),
+            ));
+        }
+        ids.push(id);
+        Ok(())
+    }
+
+    pub(crate) fn complete(&self, id: WebRequestId, result: Result<String, String>) {
+        let accepted = {
+            let mut ids = self.ids.lock().unwrap();
+            ids.iter()
+                .position(|pending| *pending == id)
+                .map(|index| ids.remove(index))
+                .is_some()
+        };
+        if accepted {
+            self.events
+                .push(CefSurfaceEvent::ScriptCompleted { id, result });
+        }
+    }
+
+    pub(crate) fn fail_all(&self, reason: &str) {
+        let ids = std::mem::take(&mut *self.ids.lock().unwrap());
+        for id in ids {
+            self.events.push(CefSurfaceEvent::ScriptCompleted {
+                id,
+                result: Err(reason.to_owned()),
+            });
         }
     }
 }
@@ -92,7 +117,7 @@ mod cef_backed {
                 let Some(args) = message.argument_list() else {
                     return 0;
                 };
-                let id = args.int(0);
+                let id = cef::CefString::from(&args.string(0)).to_string();
                 let script = cef::CefString::from(&args.string(1)).to_string();
 
                 // Evaluation has to happen inside the frame's V8 context, and
@@ -131,7 +156,8 @@ mod cef_backed {
                 let name: cef::CefString = EVAL_RESULT.into();
                 if let Some(mut reply) = cef::process_message_create(Some(&name)) {
                     if let Some(list) = reply.argument_list() {
-                        list.set_int(0, id);
+                        let id: cef::CefString = id.as_str().into();
+                        list.set_string(0, Some(&id));
                         list.set_int(1, ok);
                         let payload: cef::CefString = payload.as_str().into();
                         list.set_string(2, Some(&payload));
@@ -192,23 +218,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn results_are_delivered_once_each_in_order() {
-        let results = ScriptResults::default();
-        assert_eq!(results.take_one(), None);
-        results.push(ScriptResult {
-            id: 1,
-            value: Ok("4".into()),
-        });
-        results.push(ScriptResult {
-            id: 2,
-            value: Err("boom".into()),
-        });
-        assert_eq!(results.take_one().unwrap().id, 1);
-        assert_eq!(results.take_one().unwrap().id, 2);
-        assert_eq!(results.take_one(), None);
-    }
-
-    #[test]
     fn a_bare_expression_survives_wrapping() {
         assert!(wrap_script("2+2").contains("return (2+2)"));
     }
@@ -218,5 +227,39 @@ mod tests {
         // JSON.stringify(undefined) is undefined, not a string, so without this
         // the renderer would have nothing to send back.
         assert!(wrap_script("whatever").contains("__weld === undefined"));
+    }
+
+    #[test]
+    fn accepted_scripts_settle_once_and_duplicate_ids_are_refused() {
+        let events = Arc::new(WebEventQueue::default());
+        let scripts = PendingScripts::new(events.clone());
+        let id = WebRequestId::new(u64::MAX);
+        scripts.begin(id).unwrap();
+        assert!(scripts.begin(id).is_err());
+        scripts.complete(id, Ok("4".into()));
+        scripts.complete(id, Ok("duplicate".into()));
+        assert!(matches!(
+            events.poll(),
+            Some(CefSurfaceEvent::ScriptCompleted { id: seen, result: Ok(value) })
+                if seen == id && value == "4"
+        ));
+        assert!(events.poll().is_none());
+    }
+
+    #[test]
+    fn renderer_loss_fails_pending_scripts_in_acceptance_order() {
+        let events = Arc::new(WebEventQueue::default());
+        let scripts = PendingScripts::new(events.clone());
+        scripts.begin(WebRequestId::new(8)).unwrap();
+        scripts.begin(WebRequestId::new(3)).unwrap();
+        scripts.fail_all("renderer exited");
+        for expected in [8, 3] {
+            assert!(matches!(
+                events.poll(),
+                Some(CefSurfaceEvent::ScriptCompleted { id, result: Err(reason) })
+                    if id.get() == expected && reason == "renderer exited"
+            ));
+        }
+        assert!(events.poll().is_none());
     }
 }

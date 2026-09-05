@@ -12,6 +12,10 @@
 use super::*;
 use cef::*;
 
+fn push_navigation(events: &WebEventQueue, event: crate::surface::NavigationEvent) {
+    events.push(CefSurfaceEvent::Navigation(event));
+}
+
 cef::wrap_render_handler! {
     pub(super) struct WeldRenderHandler {
         handler: WeldRenderHandlerInner,
@@ -207,7 +211,7 @@ cef::wrap_render_handler! {
             // both into welding-owned values before the host starts its native
             // drag loop, which may outlive this callback by arbitrarily long.
             let scale = self.handler.metrics.lock().unwrap().scale();
-            self.handler.events.lock().unwrap().nav.push_back(
+            push_navigation(&self.handler.events,
                 crate::surface::NavigationEvent::DragStarted {
                     payload: crate::drag::payload_from_cef(drag_data),
                     allowed_operations: crate::DragOperations(allowed_ops.as_ref().0 as u32),
@@ -237,8 +241,8 @@ cef::wrap_client! {
         permission_handler: cef::PermissionHandler,
         context_menu_handler: cef::ContextMenuHandler,
         find_handler: cef::FindHandler,
-        scripts: Arc<crate::app::ScriptResults>,
-        events: Arc<Mutex<EventQueues>>,
+        scripts: Arc<crate::app::PendingScripts>,
+        events: Arc<WebEventQueue>,
     }
 
     impl Client {
@@ -291,20 +295,22 @@ cef::wrap_client! {
             if name == crate::app::EVAL_RESULT {
                 // The renderer answering a request_script_result.
                 if let Some(args) = msg.argument_list() {
-                    let id = args.int(0) as u32;
+                    let id = cef::CefString::from(&args.string(0)).to_string();
                     let ok = args.int(1) != 0;
                     let payload = cef::CefString::from(&args.string(2)).to_string();
-                    self.scripts.push(crate::app::ScriptResult {
-                        id,
-                        value: if ok { Ok(payload) } else { Err(payload) },
-                    });
+                    if let Ok(id) = id.parse::<u64>() {
+                        self.scripts.complete(
+                            WebRequestId::new(id),
+                            if ok { Ok(payload) } else { Err(payload) },
+                        );
+                    }
                 }
                 return 1;
             }
             if name != "weld.message" { return 0; }
             if let Some(args) = msg.argument_list() {
                 let text = cef::CefString::from(&args.string(0)).to_string();
-                self.events.lock().unwrap().web_messages.push_back(text);
+                self.events.push(CefSurfaceEvent::WebMessage(text));
             }
             1
         }
@@ -322,8 +328,8 @@ impl WeldClient {
         permission_handler: cef::PermissionHandler,
         context_menu_handler: cef::ContextMenuHandler,
         find_handler: cef::FindHandler,
-        scripts: Arc<crate::app::ScriptResults>,
-        events: Arc<Mutex<EventQueues>>,
+        scripts: Arc<crate::app::PendingScripts>,
+        events: Arc<WebEventQueue>,
     ) -> cef::Client {
         Self::new(
             render_handler,
@@ -345,7 +351,9 @@ impl WeldClient {
 
 cef::wrap_life_span_handler! {
     pub(super) struct WeldLifeSpanHandler {
-        events: Arc<Mutex<EventQueues>>,
+        events: Arc<WebEventQueue>,
+        scripts: Arc<crate::app::PendingScripts>,
+        cookies: Arc<crate::cookies::CookieJar>,
     }
 
     impl LifeSpanHandler {
@@ -370,7 +378,7 @@ cef::wrap_life_span_handler! {
             _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
             let url = target_url.map(|u| u.to_string()).unwrap_or_default();
-            self.events.lock().unwrap().nav.push_back(
+            push_navigation(&self.events,
                 crate::surface::NavigationEvent::NewWindowRequested {
                     url,
                     user_gesture: user_gesture != 0,
@@ -378,12 +386,22 @@ cef::wrap_life_span_handler! {
             );
             1 // cancel popup creation
         }
+
+        fn on_before_close(&self, _browser: Option<&mut cef::Browser>) {
+            log::debug!("CEF on_before_close");
+            self.scripts.fail_all("browser closed");
+            self.cookies.fail_active("browser closed");
+        }
     }
 }
 
 impl WeldLifeSpanHandler {
-    pub fn build(events: Arc<Mutex<EventQueues>>) -> cef::LifeSpanHandler {
-        Self::new(events)
+    pub fn build(
+        events: Arc<WebEventQueue>,
+        scripts: Arc<crate::app::PendingScripts>,
+        cookies: Arc<crate::cookies::CookieJar>,
+    ) -> cef::LifeSpanHandler {
+        Self::new(events, scripts, cookies)
     }
 }
 
@@ -391,8 +409,9 @@ impl WeldLifeSpanHandler {
 
 cef::wrap_request_handler! {
     pub(super) struct WeldRequestHandler {
-        events: Arc<Mutex<EventQueues>>,
+        events: Arc<WebEventQueue>,
         auth: Arc<crate::auth::AuthChallenges>,
+        scripts: Arc<crate::app::PendingScripts>,
     }
 
     impl RequestHandler {
@@ -417,7 +436,7 @@ cef::wrap_request_handler! {
                 scheme: scheme.map(|s| s.to_string()).unwrap_or_default(),
                 is_proxy: is_proxy != 0,
             };
-            self.events.lock().unwrap().nav.push_back(event);
+            push_navigation(&self.events, event);
 
             let Some(callback) = callback else { return 0 };
             if self.auth.is_enabled() {
@@ -445,23 +464,25 @@ cef::wrap_request_handler! {
             log::error!(
                 "weld: CEF render process terminated ({status:?}, code {error_code}, {error_string})"
             );
-            self.events.lock().unwrap().nav.push_back(
+            push_navigation(&self.events,
                 crate::surface::NavigationEvent::ContentProcessTerminated {
                     status,
                     error_code,
                     error_string,
                 }
             );
+            self.scripts.fail_all("renderer process terminated");
         }
     }
 }
 
 impl WeldRequestHandler {
     pub fn build(
-        events: Arc<Mutex<EventQueues>>,
+        events: Arc<WebEventQueue>,
         auth: Arc<crate::auth::AuthChallenges>,
+        scripts: Arc<crate::app::PendingScripts>,
     ) -> cef::RequestHandler {
-        Self::new(events, auth)
+        Self::new(events, auth, scripts)
     }
 }
 
@@ -482,7 +503,7 @@ cef::wrap_load_handler! {
             let is_main = frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false);
             if !is_main { return; }
             let url = frame.map(|f| cef::CefString::from(&f.url()).to_string()).unwrap_or_default();
-            self.inner.events.lock().unwrap().nav.push_back(
+            push_navigation(&self.inner.events,
                 crate::surface::NavigationEvent::LoadStart { url }
             );
         }
@@ -496,7 +517,7 @@ cef::wrap_load_handler! {
             let is_main = frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false);
             if !is_main { return; }
             let url = frame.map(|f| cef::CefString::from(&f.url()).to_string()).unwrap_or_default();
-            self.inner.events.lock().unwrap().nav.push_back(
+            push_navigation(&self.inner.events,
                 crate::surface::NavigationEvent::LoadEnd {
                     url,
                     http_status: http_status_code,
@@ -519,7 +540,7 @@ cef::wrap_load_handler! {
             // Safety: Errorcode wraps cef_errorcode_t which wraps c_int;
             // both are #[repr(transparent)] around a 4-byte integer.
             let code: i32 = unsafe { std::mem::transmute(_error_code) };
-            self.inner.events.lock().unwrap().nav.push_back(
+            push_navigation(&self.inner.events,
                 crate::surface::NavigationEvent::LoadError {
                     url,
                     error_code: code,
@@ -553,7 +574,7 @@ cef::wrap_display_handler! {
             let is_main = frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false);
             if !is_main { return; }
             let url = url.map(|u| u.to_string()).unwrap_or_default();
-            self.inner.events.lock().unwrap().nav.push_back(
+            push_navigation(&self.inner.events,
                 crate::surface::NavigationEvent::AddressChanged { url }
             );
         }
@@ -579,7 +600,7 @@ cef::wrap_display_handler! {
             source: Option<&cef::CefString>,
             line: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
-            self.inner.events.lock().unwrap().nav.push_back(
+            push_navigation(&self.inner.events,
                 crate::surface::NavigationEvent::ConsoleMessage {
                     // cef_log_severity_t is repr(u32) here and repr(i32) on
                     // Windows, so go through the reference rather than From.
@@ -598,7 +619,7 @@ cef::wrap_display_handler! {
             title: Option<&cef::CefString>,
         ) {
             let title = title.map(|t| t.to_string()).unwrap_or_default();
-            self.inner.events.lock().unwrap().nav.push_back(
+            push_navigation(&self.inner.events,
                 crate::surface::NavigationEvent::TitleChanged { title }
             );
         }
@@ -615,7 +636,7 @@ impl WeldDisplayHandler {
 
 cef::wrap_download_handler! {
     pub(super) struct WeldDownloadHandler {
-        events: Arc<Mutex<EventQueues>>,
+        events: Arc<WebEventQueue>,
         downloads: Arc<crate::downloads::Downloads>,
     }
 
@@ -651,7 +672,7 @@ cef::wrap_download_handler! {
             let url = cef_string(item.url());
             let total = item.total_bytes();
             self.downloads.mark_started(id);
-            self.events.lock().unwrap().nav.push_back(
+            push_navigation(&self.events,
                 crate::surface::NavigationEvent::DownloadStarted {
                     id,
                     url,
@@ -698,22 +719,21 @@ cef::wrap_download_handler! {
             let complete = item.is_complete() != 0;
             let canceled = item.is_canceled() != 0;
 
-            let mut events = self.events.lock().unwrap();
             if complete || canceled || self.downloads.due_for_progress(id, std::time::Instant::now()) {
-                events.nav.push_back(crate::surface::NavigationEvent::DownloadProgress {
+                push_navigation(&self.events, crate::surface::NavigationEvent::DownloadProgress {
                     id,
                     bytes_received: received,
                     total_bytes_expected,
                 });
             }
             if canceled {
-                events.nav.push_back(crate::surface::NavigationEvent::DownloadCancelled {
+                push_navigation(&self.events, crate::surface::NavigationEvent::DownloadCancelled {
                     id,
                     destination_path: path,
                 });
             } else if complete {
                 let interrupted = item.is_interrupted() != 0;
-                events.nav.push_back(crate::surface::NavigationEvent::DownloadFinished {
+                push_navigation(&self.events, crate::surface::NavigationEvent::DownloadFinished {
                     id,
                     destination_path: path,
                     error: interrupted.then(|| {
@@ -721,7 +741,6 @@ cef::wrap_download_handler! {
                     }),
                 });
             }
-            drop(events);
             if complete || canceled {
                 self.downloads.forget(id);
             }
@@ -738,7 +757,7 @@ fn cef_string(s: cef::CefStringUserfree) -> String {
 
 impl WeldDownloadHandler {
     pub fn build(
-        events: Arc<Mutex<EventQueues>>,
+        events: Arc<WebEventQueue>,
         downloads: Arc<crate::downloads::Downloads>,
     ) -> cef::DownloadHandler {
         Self::new(events, downloads)
@@ -749,7 +768,7 @@ impl WeldDownloadHandler {
 
 cef::wrap_permission_handler! {
     pub(super) struct WeldPermissionHandler {
-        events: Arc<Mutex<EventQueues>>,
+        events: Arc<WebEventQueue>,
         permissions: Arc<crate::permissions::Permissions>,
     }
 
@@ -763,7 +782,7 @@ cef::wrap_permission_handler! {
             callback: Option<&mut cef::PermissionPromptCallback>,
         ) -> ::std::os::raw::c_int {
             let id = self.permissions.next_id();
-            self.events.lock().unwrap().nav.push_back(
+            push_navigation(&self.events,
                 crate::surface::NavigationEvent::PermissionRequested {
                     id,
                     origin: requesting_origin.map(|s| s.to_string()).unwrap_or_default(),
@@ -791,7 +810,7 @@ cef::wrap_permission_handler! {
             callback: Option<&mut cef::MediaAccessCallback>,
         ) -> ::std::os::raw::c_int {
             let id = self.permissions.next_id();
-            self.events.lock().unwrap().nav.push_back(
+            push_navigation(&self.events,
                 crate::surface::NavigationEvent::PermissionRequested {
                     id,
                     origin: requesting_origin.map(|s| s.to_string()).unwrap_or_default(),
@@ -818,7 +837,7 @@ cef::wrap_permission_handler! {
 
 impl WeldPermissionHandler {
     pub fn build(
-        events: Arc<Mutex<EventQueues>>,
+        events: Arc<WebEventQueue>,
         permissions: Arc<crate::permissions::Permissions>,
     ) -> cef::PermissionHandler {
         Self::new(events, permissions)
@@ -829,7 +848,7 @@ impl WeldPermissionHandler {
 
 cef::wrap_context_menu_handler! {
     pub(super) struct WeldContextMenuHandler {
-        events: Arc<Mutex<EventQueues>>,
+        events: Arc<WebEventQueue>,
         metrics: Arc<Mutex<crate::view::ViewMetrics>>,
     }
 
@@ -846,7 +865,7 @@ cef::wrap_context_menu_handler! {
                 // is physical, so convert on the way out.
                 let scale = self.metrics.lock().unwrap().scale();
                 let flags = params.type_flags().as_ref().0 as u32;
-                self.events.lock().unwrap().nav.push_back(
+                push_navigation(&self.events,
                     crate::surface::NavigationEvent::ContextMenuRequested {
                         x: (params.xcoord() as f32 * scale).round() as i32,
                         y: (params.ycoord() as f32 * scale).round() as i32,
@@ -885,7 +904,7 @@ cef::wrap_context_menu_handler! {
 
 impl WeldContextMenuHandler {
     pub fn build(
-        events: Arc<Mutex<EventQueues>>,
+        events: Arc<WebEventQueue>,
         metrics: Arc<Mutex<crate::view::ViewMetrics>>,
     ) -> cef::ContextMenuHandler {
         Self::new(events, metrics)
@@ -944,7 +963,7 @@ impl WeldDevToolsObserver {
 
 cef::wrap_find_handler! {
     pub(super) struct WeldFindHandler {
-        events: Arc<Mutex<EventQueues>>,
+        events: Arc<WebEventQueue>,
     }
 
     impl FindHandler {
@@ -957,7 +976,7 @@ cef::wrap_find_handler! {
             active_match_ordinal: ::std::os::raw::c_int,
             final_update: ::std::os::raw::c_int,
         ) {
-            self.events.lock().unwrap().nav.push_back(
+            push_navigation(&self.events,
                 crate::surface::NavigationEvent::FindResult {
                     count,
                     active_match: active_match_ordinal,
@@ -969,7 +988,7 @@ cef::wrap_find_handler! {
 }
 
 impl WeldFindHandler {
-    pub fn build(events: Arc<Mutex<EventQueues>>) -> cef::FindHandler {
+    pub fn build(events: Arc<WebEventQueue>) -> cef::FindHandler {
         Self::new(events)
     }
 }
@@ -978,7 +997,7 @@ impl WeldFindHandler {
 
 cef::wrap_pdf_print_callback! {
     pub(super) struct WeldPdfCallback {
-        events: Arc<Mutex<EventQueues>>,
+        events: Arc<WebEventQueue>,
     }
 
     impl PdfPrintCallback {
@@ -987,7 +1006,7 @@ cef::wrap_pdf_print_callback! {
             path: Option<&cef::CefString>,
             ok: ::std::os::raw::c_int,
         ) {
-            self.events.lock().unwrap().nav.push_back(
+            push_navigation(&self.events,
                 crate::surface::NavigationEvent::PdfPrintFinished {
                     path: path.map(|p| p.to_string()).unwrap_or_default().into(),
                     ok: ok != 0,
@@ -998,7 +1017,7 @@ cef::wrap_pdf_print_callback! {
 }
 
 impl WeldPdfCallback {
-    pub fn build(events: Arc<Mutex<EventQueues>>) -> cef::PdfPrintCallback {
+    pub fn build(events: Arc<WebEventQueue>) -> cef::PdfPrintCallback {
         Self::new(events)
     }
 }

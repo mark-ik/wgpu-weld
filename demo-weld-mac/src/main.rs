@@ -53,9 +53,9 @@ use winit::{
 };
 
 use welding::{
-    CefRuntime, CefRuntimeConfig, CefSandboxMode, CefSurfaceConfig, CefSurfaceProducer,
-    EventModifiers, FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent, KeyEventKind,
-    MouseAction, MouseButton, MouseEvent, PopupSurface,
+    CefRuntime, CefRuntimeConfig, CefSandboxMode, CefSurfaceConfig, CefSurfaceEvent,
+    CefSurfaceProducer, EventModifiers, FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent,
+    KeyEventKind, MouseAction, MouseButton, MouseEvent, PopupSurface, WebRequestId,
     macos_cef::{MacosCefConfig, MacosCefProducer, PreparedMacosCefProfile},
 };
 
@@ -546,13 +546,46 @@ impl DemoApp {
             s.window.set_cursor(present::winit_cursor(&shape));
         }
 
-        while let Some(event) = s.producer.poll_navigation_event() {
-            log::info!("nav: {event:?}");
-            receipt(format_args!("nav: {event:?}"));
-            scripted::recover_if_crashed(&mut s.producer, &s.recover_url, &event);
-            scripted::answer_auth_if_challenged(&mut s.producer, &event);
-            scripted::answer_permission_if_asked(&mut s.producer, &event);
-            scripted::finish_page_drag_if_started(&mut s.producer, &event);
+        while let Some(event) = s.producer.poll_web_event() {
+            match event {
+                CefSurfaceEvent::Navigation(event) => {
+                    log::info!("nav: {event:?}");
+                    receipt(format_args!("nav: {event:?}"));
+                    scripted::recover_if_crashed(&mut s.producer, &s.recover_url, &event);
+                    scripted::answer_auth_if_challenged(&mut s.producer, &event);
+                    scripted::answer_permission_if_asked(&mut s.producer, &event);
+                    scripted::finish_page_drag_if_started(&mut s.producer, &event);
+                }
+                CefSurfaceEvent::WebMessage(message) => {
+                    log::info!("web message: {message}");
+                    receipt(format_args!("web message: {message}"));
+                }
+                CefSurfaceEvent::ScriptCompleted { id, result } => match result {
+                    Ok(json) => {
+                        log::info!("SCRIPT #{id} => {json}");
+                        receipt(format_args!("script #{id}: {json}"));
+                    }
+                    Err(err) => {
+                        log::error!("SCRIPT #{id} threw: {err}");
+                        receipt(format_args!("script #{id} failed: {err}"));
+                    }
+                },
+                CefSurfaceEvent::CookiesCompleted { id, result } => match result {
+                    Ok(cookies) => {
+                        log::info!("COOKIES #{id} n={}", cookies.len());
+                        for cookie in cookies.iter().take(3) {
+                            log::info!(
+                                "  {}={} domain={}",
+                                cookie.name,
+                                cookie.value,
+                                cookie.domain
+                            );
+                        }
+                    }
+                    Err(err) => log::error!("COOKIES #{id} failed: {err}"),
+                },
+                _ => {}
+            }
         }
 
         // Parity battery: one run reports frames, script results,
@@ -643,8 +676,9 @@ impl DemoApp {
         if !s.battery_started && s.ticks > 60 {
             s.battery_started = true;
             if let Ok(script) = std::env::var("WELD_SCRIPT") {
-                match s.producer.request_script_result(&script) {
-                    Ok(id) => log::info!("script request #{id}"),
+                let id = WebRequestId::new(u32::MAX as u64 + 1);
+                match s.producer.request_script_result(id, &script) {
+                    Ok(()) => log::info!("script request #{id}"),
                     Err(e) => log::error!("request_script_result failed: {e}"),
                 }
             }
@@ -660,20 +694,11 @@ impl DemoApp {
                     Ok(()) => log::info!("set_cookie accepted"),
                     Err(e) => log::error!("set_cookie failed: {e}"),
                 }
-                if let Err(e) = s.producer.request_cookies(Some(&url)) {
+                if let Err(e) = s
+                    .producer
+                    .request_cookies(WebRequestId::new(u32::MAX as u64 + 2), Some(&url))
+                {
                     log::error!("request_cookies failed: {e}");
-                }
-            }
-        }
-        if let Some(result) = s.producer.poll_script_result() {
-            match result.value {
-                Ok(json) => {
-                    log::info!("SCRIPT #{} => {json}", result.id);
-                    receipt(format_args!("script #{}: {json}", result.id));
-                }
-                Err(err) => {
-                    log::error!("SCRIPT #{} threw: {err}", result.id);
-                    receipt(format_args!("script #{} failed: {err}", result.id));
                 }
             }
         }
@@ -699,13 +724,6 @@ impl DemoApp {
                 Err(e) => eprintln!("weld demo: snapshot #{snapshot_id} failed: {e}"),
             }
         }
-        if let Some(cookies) = s.producer.poll_cookies() {
-            log::info!("COOKIES n={}", cookies.len());
-            for c in cookies.iter().take(3) {
-                log::info!("  {}={} domain={}", c.name, c.value, c.domain);
-            }
-        }
-
         // The scripted gestures, for a machine nobody is sitting at. Only
         // once the page has painted: the first paint can land before its own
         // scripts and layout have settled.

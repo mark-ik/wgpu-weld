@@ -499,23 +499,35 @@ producer.ime_commit_text("weldime")?;               // committed
 // compositionend, and the field ends up holding the text.
 ```
 
-Cookies and script results are request-then-poll, because CEF answers both
+Cookies and script results are request-then-event, because CEF answers both
 asynchronously and on Linux and macOS the calling thread *is* CEF's UI thread,
 so blocking would wait on the loop carrying the answer:
 
 ```rust,ignore
 producer.set_cookie("https://example.com/", &cookie)?;
-producer.request_cookies(Some("https://example.com/"))?;
-
-let id = producer.request_script_result("({title: document.title, n: 2+2})")?;
+producer.request_cookies(WebRequestId::new(41), Some("https://example.com/"))?;
+producer.request_script_result(
+    WebRequestId::new(42),
+    "({title: document.title, n: 2+2})",
+)?;
 
 // later, on ordinary ticks:
-if let Some(cookies) = producer.poll_cookies() { /* Some(vec![]) means none */ }
-if let Some(result) = producer.poll_script_result() {
-    // result.value is Ok(json) or Err(exception message)
-    // => {"title":"Example Domain","n":4}
+while let Some(event) = producer.poll_web_event() {
+    match event {
+        CefSurfaceEvent::CookiesCompleted { id, result } => { /* ... */ }
+        CefSurfaceEvent::ScriptCompleted { id, result } => {
+            // Ok => {"title":"Example Domain","n":4}
+        }
+        CefSurfaceEvent::Navigation(event) => { /* ... */ }
+        CefSurfaceEvent::WebMessage(message) => { /* ... */ }
+        _ => {}
+    }
 }
 ```
+
+The ID belongs to the caller and preserves the full `u64` range. Successful
+submission means exactly one matching completion will be emitted. Immediate
+failure emits none.
 
 When the renderer dies, the browser survives and the host gets told what
 happened. Recovering takes two steps, and the second one is easy to miss:

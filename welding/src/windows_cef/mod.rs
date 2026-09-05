@@ -24,12 +24,9 @@
 
 #[cfg(feature = "cef-runtime")]
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::{
-    collections::VecDeque,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicI32, Ordering},
-    },
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicI32, Ordering},
 };
 
 use dpi::PhysicalSize;
@@ -43,8 +40,8 @@ use crate::{
     },
     runtime::CefRuntime,
     surface::{
-        CefSurfaceConfig, CefSurfaceMode, CefSurfaceProducer, FocusDirection, KeyEvent, MouseEvent,
-        NavigationEvent,
+        CefSurfaceConfig, CefSurfaceEvent, CefSurfaceMode, CefSurfaceProducer, FocusDirection,
+        KeyEvent, MouseEvent, WebEventQueue, WebRequestId,
     },
 };
 
@@ -63,11 +60,6 @@ pub struct WindowsCefConfig {
 
 // ── Shared callback state ─────────────────────────────────────────────────────
 
-struct EventQueues {
-    nav: VecDeque<NavigationEvent>,
-    web_messages: VecDeque<String>,
-}
-
 // Under cef-runtime the render handler and the producer share this Arc so that
 // resize() can update the size the render handler reports in view_rect().
 #[cfg(feature = "cef-runtime")]
@@ -80,7 +72,7 @@ struct WeldRenderHandlerInner {
     ime: Arc<crate::ime::LatestComposition>,
     next_generation: Arc<AtomicU64>,
     callback_copier: Arc<D3d11CallbackFrameCopier>,
-    events: Arc<Mutex<EventQueues>>,
+    events: Arc<WebEventQueue>,
     metrics: Arc<Mutex<crate::view::ViewMetrics>>,
 }
 
@@ -94,6 +86,8 @@ struct WeldLifeSpanState {
     visible: Arc<AtomicBool>,
     browser_id: Arc<AtomicI32>,
     browser: Arc<Mutex<Option<cef::Browser>>>,
+    scripts: Arc<crate::app::PendingScripts>,
+    cookies: Arc<crate::cookies::CookieJar>,
 }
 
 // ── cef-runtime: render handler + client ─────────────────────────────────────
@@ -144,12 +138,10 @@ pub struct WindowsCefProducer {
     #[cfg(feature = "cef-runtime")]
     cookies: Arc<crate::cookies::CookieJar>,
     #[cfg(feature = "cef-runtime")]
-    scripts: Arc<crate::app::ScriptResults>,
-    #[cfg(feature = "cef-runtime")]
-    next_script_id: u32,
+    scripts: Arc<crate::app::PendingScripts>,
     #[cfg(feature = "cef-runtime")]
     next_snapshot_id: i32,
-    events: Arc<Mutex<EventQueues>>,
+    events: Arc<WebEventQueue>,
     size: PhysicalSize<u32>,
 }
 
@@ -183,10 +175,7 @@ impl WindowsCefProducer {
             let initial_size = config.surface.initial_size;
             let frame_slot = Arc::new(Mutex::new(None));
             let next_generation = Arc::new(AtomicU64::new(0));
-            let events = Arc::new(Mutex::new(EventQueues {
-                nav: VecDeque::new(),
-                web_messages: VecDeque::new(),
-            }));
+            let events = Arc::new(WebEventQueue::default());
             let metrics = Arc::new(Mutex::new(crate::view::ViewMetrics::new(
                 initial_size,
                 config.surface.scale_factor,
@@ -202,11 +191,11 @@ impl WindowsCefProducer {
             let popup = Arc::new(crate::popup::PopupState::default());
             let cursor = Arc::new(crate::cursor::LatestCursor::default());
             let ime = Arc::new(crate::ime::LatestComposition::default());
-            let cookies = Arc::new(crate::cookies::CookieJar::default());
+            let cookies = Arc::new(crate::cookies::CookieJar::new(events.clone()));
+            let scripts = Arc::new(crate::app::PendingScripts::new(events.clone()));
             let downloads = Arc::new(crate::downloads::Downloads::default());
             let auth = Arc::new(crate::auth::AuthChallenges::default());
             auth.set_enabled(config.surface.handle_auth_challenges);
-            let scripts = Arc::new(crate::app::ScriptResults::default());
 
             let inner = WeldRenderHandlerInner {
                 frame_slot: frame_slot.clone(),
@@ -225,6 +214,8 @@ impl WindowsCefProducer {
                 visible: visible.clone(),
                 browser_id: browser_id.clone(),
                 browser: browser.clone(),
+                scripts: scripts.clone(),
+                cookies: cookies.clone(),
             };
 
             let render_handler = cef_backed::WeldRenderHandler::build(inner.clone());
@@ -232,8 +223,11 @@ impl WindowsCefProducer {
                 cef_backed::WeldLifeSpanHandler::build(life_span_state, events.clone());
             let load_handler = cef_backed::WeldLoadHandler::build(inner.clone());
             let display_handler = cef_backed::WeldDisplayHandler::build(inner);
-            let request_handler =
-                cef_backed::WeldRequestHandler::build(events.clone(), auth.clone());
+            let request_handler = cef_backed::WeldRequestHandler::build(
+                events.clone(),
+                auth.clone(),
+                scripts.clone(),
+            );
             downloads.set_dir(config.surface.download_dir.clone());
             let download_handler =
                 cef_backed::WeldDownloadHandler::build(events.clone(), downloads.clone());
@@ -304,14 +298,13 @@ impl WindowsCefProducer {
                 cursor,
                 ime,
                 cookies,
+                scripts,
                 downloads,
                 auth,
                 permissions,
                 devtools: devtools.clone(),
                 snapshots,
                 _devtools_registration: None,
-                scripts,
-                next_script_id: 0,
                 next_snapshot_id: 1,
                 events,
                 size: initial_size,
@@ -535,42 +528,41 @@ impl CefSurfaceProducer for WindowsCefProducer {
         Err(pending("cef_browser_host_t::was_resized"))
     }
 
-    fn request_script_result(&mut self, script: &str) -> Result<u32, WeldError> {
+    fn request_script_result(&mut self, id: WebRequestId, script: &str) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
-            self.next_script_id = self.next_script_id.wrapping_add(1);
-            let id = self.next_script_id;
             let Some(frame) = self.browser().and_then(|b| b.main_frame()) else {
                 return Err(WeldError::BrowserOp("browser has no main frame yet".into()));
             };
             let name: cef::CefString = crate::app::EVAL_REQUEST.into();
-            let mut message = cef::process_message_create(Some(&name))
-                .ok_or_else(|| WeldError::BrowserOp("could not create a process message".into()))?;
-            if let Some(args) = message.argument_list() {
-                args.set_int(0, id as i32);
-                let script: cef::CefString = script.into();
-                args.set_string(1, Some(&script));
-            }
+            let Some(mut message) = cef::process_message_create(Some(&name)) else {
+                return Err(WeldError::BrowserOp(
+                    "could not create a process message".into(),
+                ));
+            };
+            let Some(args) = message.argument_list() else {
+                return Err(WeldError::BrowserOp(
+                    "script process message has no argument list".into(),
+                ));
+            };
+            let wire_id = id.to_string();
+            let wire_id: cef::CefString = wire_id.as_str().into();
+            args.set_string(0, Some(&wire_id));
+            let script: cef::CefString = script.into();
+            args.set_string(1, Some(&script));
+            self.scripts.begin(id)?;
+            // cef-rs exposes this CEF send as unit, so construction and a live
+            // main frame are the synchronous acceptance boundary. Renderer
+            // loss settles every admitted request through the request handler.
             frame.send_process_message(cef::ProcessId::RENDERER, Some(&mut message));
-            return Ok(id);
+            return Ok(());
         }
         #[cfg(not(feature = "cef-runtime"))]
         {
-            let _ = script;
+            let _ = (id, script);
             Err(WeldError::PlatformUnsupported(
                 "script results require the cef-runtime feature",
             ))
-        }
-    }
-
-    fn poll_script_result(&mut self) -> Option<crate::app::ScriptResult> {
-        #[cfg(feature = "cef-runtime")]
-        {
-            return self.scripts.take_one();
-        }
-        #[cfg(not(feature = "cef-runtime"))]
-        {
-            None
         }
     }
 
@@ -589,29 +581,18 @@ impl CefSurfaceProducer for WindowsCefProducer {
         }
     }
 
-    fn request_cookies(&mut self, url: Option<&str>) -> Result<(), WeldError> {
+    fn request_cookies(&mut self, id: WebRequestId, url: Option<&str>) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
             let browser = self.browser().ok_or_else(|| pending("cef browser"))?;
-            return crate::cookies::request(&browser, &self.cookies, url);
+            return crate::cookies::request(&browser, &self.cookies, id, url);
         }
         #[cfg(not(feature = "cef-runtime"))]
         {
-            let _ = url;
+            let _ = (id, url);
             Err(WeldError::PlatformUnsupported(
                 "cookies require the cef-runtime feature",
             ))
-        }
-    }
-
-    fn poll_cookies(&mut self) -> Option<Vec<crate::surface::Cookie>> {
-        #[cfg(feature = "cef-runtime")]
-        {
-            return self.cookies.take();
-        }
-        #[cfg(not(feature = "cef-runtime"))]
-        {
-            None
         }
     }
 
@@ -1176,12 +1157,8 @@ impl CefSurfaceProducer for WindowsCefProducer {
         self.execute_script(&script, "weld://post_web_message")
     }
 
-    fn poll_web_message(&mut self) -> Option<String> {
-        self.events.lock().unwrap().web_messages.pop_front()
-    }
-
-    fn poll_navigation_event(&mut self) -> Option<NavigationEvent> {
-        self.events.lock().unwrap().nav.pop_front()
+    fn poll_web_event(&mut self) -> Option<CefSurfaceEvent> {
+        self.events.poll()
     }
 
     fn execute_script(&mut self, script: &str, source_url: &str) -> Result<(), WeldError> {
@@ -1208,6 +1185,8 @@ impl CefSurfaceProducer for WindowsCefProducer {
     fn close(&mut self) -> Result<(), WeldError> {
         #[cfg(feature = "cef-runtime")]
         {
+            self.scripts.fail_all("browser closed");
+            self.cookies.fail_active("browser closed");
             self.closed.store(false, Ordering::Release);
             self.close_requested.store(true, Ordering::Release);
             if let Some(host) = self.browser().and_then(|browser| browser.host()) {

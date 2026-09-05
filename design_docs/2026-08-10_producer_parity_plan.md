@@ -933,15 +933,25 @@ pattern from demo-weld-mac generalizes). G1 whenever, it gates nothing local.
 
 - [x] Require a cross-platform owned-native-frame take path on
   `CefSurfaceProducer`; keep it mutually exclusive with direct wgpu import.
-- [ ] Add one callback-owned ordered event stream for navigation, page
+- [x] Add one callback-owned ordered event stream for navigation, page
   messages, script completions, and cookie completions.
-- [ ] Accept caller-minted ids for result-bearing commands and settle each
+- [x] Accept caller-minted ids for result-bearing commands and settle each
   accepted command exactly once on that stream.
 - [ ] Add the version-pinned opt-in Mere adapter only after those Weld-owned
   facts exist. Keep CEF bootstrap, runtime lifetime, profiles, and import-cache
   policy in the host factory.
 
 ## Progress
+
+- 2026-09-04: **0.15 neutral-adapter prerequisite, ordered web events.**
+  Navigation, page messages, script results, and cookie results now enter one
+  callback-owned `CefSurfaceEvent` queue on every producer. Script and cookie
+  requests take caller-minted `WebRequestId` values across the full `u64`
+  range. Synchronous refusal clears the request without emitting an event;
+  accepted work completes once, including explicit failure settlement when a
+  renderer terminates or a producer closes. The old split poll methods and
+  producer-minted script ids were removed on the breaking 0.15 line. Platform
+  build and hardware receipts are recorded after the implementation gates run.
 
 - 2026-09-04: **0.15 neutral-adapter prerequisite, native frames.**
   `CefSurfaceProducer` now requires every platform producer to expose its newest

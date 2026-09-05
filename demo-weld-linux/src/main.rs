@@ -590,12 +590,35 @@ impl ApplicationHandler for DemoApp {
                     s.window.set_cursor(winit_cursor(&shape));
                 }
 
-                while let Some(event) = s.producer.poll_navigation_event() {
-                    log::info!("nav: {event:?}");
-                    scripted::recover_if_crashed(&mut s.producer, &s.recover_url, &event);
-                    scripted::answer_auth_if_challenged(&mut s.producer, &event);
-                    scripted::answer_permission_if_asked(&mut s.producer, &event);
-                    scripted::finish_page_drag_if_started(&mut s.producer, &event);
+                while let Some(event) = s.producer.poll_web_event() {
+                    match event {
+                        welding::CefSurfaceEvent::Navigation(event) => {
+                            log::info!("nav: {event:?}");
+                            scripted::recover_if_crashed(&mut s.producer, &s.recover_url, &event);
+                            scripted::answer_auth_if_challenged(&mut s.producer, &event);
+                            scripted::answer_permission_if_asked(&mut s.producer, &event);
+                            scripted::finish_page_drag_if_started(&mut s.producer, &event);
+                        }
+                        welding::CefSurfaceEvent::WebMessage(message) => {
+                            log::info!("WEB MESSAGE => {message}");
+                        }
+                        welding::CefSurfaceEvent::ScriptCompleted { id, result } => match result {
+                            Ok(json) => log::info!("SCRIPT #{} => {json}", id.get()),
+                            Err(err) => log::error!("SCRIPT #{} threw: {err}", id.get()),
+                        },
+                        welding::CefSurfaceEvent::CookiesCompleted { id, result } => match result {
+                            Ok(cookies) => {
+                                log::info!("COOKIES #{} n={}", id.get(), cookies.len());
+                                for c in cookies.iter().take(3) {
+                                    log::info!("  {}={} domain={}", c.name, c.value, c.domain);
+                                }
+                            }
+                            Err(err) => {
+                                log::error!("COOKIES #{} failed: {err}", id.get());
+                            }
+                        },
+                        _ => {}
+                    }
                 }
 
                 // Parity battery: one run reports frames, script results,
@@ -661,8 +684,9 @@ impl ApplicationHandler for DemoApp {
                 if !s.battery_started && s.ticks > 60 {
                     s.battery_started = true;
                     if let Ok(script) = std::env::var("WELD_SCRIPT") {
-                        match s.producer.request_script_result(&script) {
-                            Ok(id) => log::info!("script request #{id}"),
+                        let id = welding::WebRequestId::new(4_294_967_296);
+                        match s.producer.request_script_result(id, &script) {
+                            Ok(()) => log::info!("script request #{}", id.get()),
                             Err(e) => log::error!("request_script_result failed: {e}"),
                         }
                     }
@@ -678,15 +702,10 @@ impl ApplicationHandler for DemoApp {
                             Ok(()) => log::info!("set_cookie accepted"),
                             Err(e) => log::error!("set_cookie failed: {e}"),
                         }
-                        if let Err(e) = s.producer.request_cookies(Some(&url)) {
+                        let id = welding::WebRequestId::new(4_294_967_297);
+                        if let Err(e) = s.producer.request_cookies(id, Some(&url)) {
                             log::error!("request_cookies failed: {e}");
                         }
-                    }
-                }
-                if let Some(result) = s.producer.poll_script_result() {
-                    match result.value {
-                        Ok(json) => log::info!("SCRIPT #{} => {json}", result.id),
-                        Err(err) => log::error!("SCRIPT #{} threw: {err}", result.id),
                     }
                 }
                 if let Some(completion) = s.producer.poll_snapshot_png() {
@@ -710,13 +729,6 @@ impl ApplicationHandler for DemoApp {
                         Err(e) => eprintln!("weld demo: snapshot #{snapshot_id} failed: {e}"),
                     }
                 }
-                if let Some(cookies) = s.producer.poll_cookies() {
-                    log::info!("COOKIES n={}", cookies.len());
-                    for c in cookies.iter().take(3) {
-                        log::info!("  {}={} domain={}", c.name, c.value, c.domain);
-                    }
-                }
-
                 // Unattended verdict, the same instrument demo-weld-mac uses:
                 // a window nobody is watching proves nothing, so read the
                 // imported pixels back and say what they were.

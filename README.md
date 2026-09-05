@@ -129,10 +129,10 @@ call before any CEF code runs.
 - Cursor shape, IME composition, and visibility are reported to the host.
   Cursor changes are verified on all three platforms, by clicking a known
   element and reading back the shape CEF asked for.
-- Cookies (`set_cookie`, `request_cookies` / `poll_cookies`, `delete_cookies`)
-  and script results (`request_script_result` / `poll_script_result`, values
-  returned as JSON from the renderer) both work, request-then-poll because CEF
-  answers asynchronously.
+- Cookies and script results are asynchronous. The caller supplies a
+  `WebRequestId`, and completions join navigation and page messages in one
+  ordered `poll_web_event` stream. An accepted request settles exactly once;
+  a synchronous error means it was not accepted.
 - A dead renderer is survivable: `ContentProcessTerminated` now carries CEF's
   termination status, and `request_repaint()` is the nudge that gets the
   replacement renderer painting again (navigating alone leaves the host on its

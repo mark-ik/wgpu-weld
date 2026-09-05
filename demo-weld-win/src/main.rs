@@ -32,9 +32,9 @@ use winit::{
 };
 
 use welding::{
-    CefRuntime, CefRuntimeConfig, CefSandboxMode, CefSurfaceConfig, CefSurfaceProducer,
-    EventModifiers, FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent, KeyEventKind,
-    MouseAction, MouseButton, MouseEvent, PopupSurface,
+    CefRuntime, CefRuntimeConfig, CefSandboxMode, CefSurfaceConfig, CefSurfaceEvent,
+    CefSurfaceProducer, EventModifiers, FocusDirection, HostWgpuContext, ImportedTexture, KeyEvent,
+    KeyEventKind, MouseAction, MouseButton, MouseEvent, PopupSurface, WebRequestId,
     windows_cef::{WindowsCefConfig, WindowsCefProducer},
 };
 
@@ -483,7 +483,10 @@ impl ApplicationHandler for DemoApp {
                         Ok(()) => eprintln!("weld demo: set_cookie accepted"),
                         Err(e) => eprintln!("weld demo: set_cookie failed: {e}"),
                     }
-                    match s.producer.request_cookies(Some(&url)) {
+                    match s
+                        .producer
+                        .request_cookies(WebRequestId::new(4_294_967_296), Some(&url))
+                    {
                         Ok(()) => eprintln!("weld demo: requested cookies for {url}"),
                         Err(e) => eprintln!("weld demo: request_cookies failed: {e}"),
                     }
@@ -495,18 +498,12 @@ impl ApplicationHandler for DemoApp {
                     && let Ok(script) = std::env::var("WELD_SCRIPT")
                 {
                     s.script_requested = true;
-                    match s.producer.request_script_result(&script) {
-                        Ok(id) => eprintln!("weld demo: script request #{id}: {script}"),
+                    let id = WebRequestId::new(4_294_967_297);
+                    match s.producer.request_script_result(id, &script) {
+                        Ok(()) => eprintln!("weld demo: script request #{id}: {script}"),
                         Err(e) => eprintln!("weld demo: request_script_result failed: {e}"),
                     }
                 }
-                if let Some(result) = s.producer.poll_script_result() {
-                    match result.value {
-                        Ok(json) => eprintln!("weld demo: SCRIPT #{} => {json}", result.id),
-                        Err(err) => eprintln!("weld demo: SCRIPT #{} threw: {err}", result.id),
-                    }
-                }
-
                 if let Some(completion) = s.producer.poll_snapshot_png() {
                     let snapshot_id = completion.id;
                     match completion.result {
@@ -529,22 +526,36 @@ impl ApplicationHandler for DemoApp {
                     }
                 }
 
-                if let Some(cookies) = s.producer.poll_cookies() {
-                    eprintln!("weld demo: COOKIES n={}", cookies.len());
-                    for c in cookies.iter().take(5) {
-                        eprintln!(
-                            "weld demo:   {}={} domain={} path={} secure={} http_only={}",
-                            c.name, c.value, c.domain, c.path, c.secure, c.http_only
-                        );
+                while let Some(event) = s.producer.poll_web_event() {
+                    match event {
+                        CefSurfaceEvent::Navigation(event) => {
+                            eprintln!("weld demo: navigation event: {event:?}");
+                            scripted::recover_if_crashed(&mut s.producer, &s.recover_url, &event);
+                            scripted::answer_auth_if_challenged(&mut s.producer, &event);
+                            scripted::answer_permission_if_asked(&mut s.producer, &event);
+                            scripted::finish_page_drag_if_started(&mut s.producer, &event);
+                        }
+                        CefSurfaceEvent::WebMessage(message) => {
+                            eprintln!("weld demo: web message: {message}");
+                        }
+                        CefSurfaceEvent::ScriptCompleted { id, result } => match result {
+                            Ok(json) => eprintln!("weld demo: SCRIPT #{id} => {json}"),
+                            Err(err) => eprintln!("weld demo: SCRIPT #{id} threw: {err}"),
+                        },
+                        CefSurfaceEvent::CookiesCompleted { id, result } => match result {
+                            Ok(cookies) => {
+                                eprintln!("weld demo: COOKIES #{id} n={}", cookies.len());
+                                for c in cookies.iter().take(5) {
+                                    eprintln!(
+                                        "weld demo:   {}={} domain={} path={} secure={} http_only={}",
+                                        c.name, c.value, c.domain, c.path, c.secure, c.http_only
+                                    );
+                                }
+                            }
+                            Err(err) => eprintln!("weld demo: COOKIES #{id} failed: {err}"),
+                        },
+                        _ => {}
                     }
-                }
-
-                while let Some(event) = s.producer.poll_navigation_event() {
-                    eprintln!("weld demo: navigation event: {event:?}");
-                    scripted::recover_if_crashed(&mut s.producer, &s.recover_url, &event);
-                    scripted::answer_auth_if_challenged(&mut s.producer, &event);
-                    scripted::answer_permission_if_asked(&mut s.producer, &event);
-                    scripted::finish_page_drag_if_started(&mut s.producer, &event);
                 }
 
                 // The scripted gestures, for a machine nobody is sitting at:

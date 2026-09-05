@@ -4,6 +4,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // SPDX-License-Identifier: MPL-2.0
 
+use std::{collections::VecDeque, sync::Mutex};
+
 use dpi::PhysicalSize;
 
 use crate::{
@@ -47,6 +49,113 @@ pub struct SnapshotPngCompletion {
     pub id: SnapshotRequestId,
     /// Validated PNG bytes, or Chromium's capture/encoding error.
     pub result: Result<Vec<u8>, WeldError>,
+}
+
+/// Caller-minted identity for one asynchronous web operation.
+///
+/// Welding never allocates or interprets this value. A host can use one ID
+/// space across surfaces and recover its own request context when the matching
+/// completion arrives through [`CefSurfaceProducer::poll_web_event`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WebRequestId(u64);
+
+impl WebRequestId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for WebRequestId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// Browser callbacks in the order welding observed them.
+///
+/// Script and cookie requests that return `Ok(())` settle exactly once in
+/// this stream. A synchronous `Err` means the request was not accepted and no
+/// completion will follow.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum CefSurfaceEvent {
+    Navigation(NavigationEvent),
+    WebMessage(String),
+    ScriptCompleted {
+        id: WebRequestId,
+        /// `Ok` carries JSON; `Err` carries the exception message.
+        result: Result<String, String>,
+    },
+    CookiesCompleted {
+        id: WebRequestId,
+        result: Result<Vec<Cookie>, String>,
+    },
+}
+
+/// Shared callback queue used by every platform producer.
+#[derive(Debug, Default)]
+pub(crate) struct WebEventQueue(Mutex<VecDeque<CefSurfaceEvent>>);
+
+impl WebEventQueue {
+    pub(crate) fn push(&self, event: CefSurfaceEvent) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push_back(event);
+    }
+
+    pub(crate) fn poll(&self) -> Option<CefSurfaceEvent> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop_front()
+    }
+}
+
+#[cfg(test)]
+mod web_event_tests {
+    use super::*;
+
+    #[test]
+    fn mixed_callbacks_keep_observation_order() {
+        let events = WebEventQueue::default();
+        let id = WebRequestId::new(u64::MAX);
+        events.push(CefSurfaceEvent::WebMessage("first".into()));
+        events.push(CefSurfaceEvent::ScriptCompleted {
+            id,
+            result: Ok("4".into()),
+        });
+        events.push(CefSurfaceEvent::Navigation(NavigationEvent::TitleChanged {
+            title: "last".into(),
+        }));
+
+        assert!(matches!(
+            events.poll(),
+            Some(CefSurfaceEvent::WebMessage(message)) if message == "first"
+        ));
+        assert!(matches!(
+            events.poll(),
+            Some(CefSurfaceEvent::ScriptCompleted { id: seen, result: Ok(value) })
+                if seen == id && value == "4"
+        ));
+        assert!(matches!(
+            events.poll(),
+            Some(CefSurfaceEvent::Navigation(NavigationEvent::TitleChanged { title }))
+                if title == "last"
+        ));
+        assert!(events.poll().is_none());
+    }
+
+    #[test]
+    fn request_ids_preserve_the_full_u64_space() {
+        let id = WebRequestId::new(u64::MAX);
+        assert_eq!(id.get(), u64::MAX);
+        assert_eq!(id.to_string(), u64::MAX.to_string());
+    }
 }
 
 /// How CEF can participate in a host compositor on the current platform.
@@ -992,19 +1101,19 @@ pub trait CefSurfaceProducer {
     fn move_focus(&mut self, direction: FocusDirection) -> Result<(), WeldError>;
 
     fn post_web_message(&mut self, message: &str) -> Result<(), WeldError>;
-    fn poll_web_message(&mut self) -> Option<String>;
 
-    fn poll_navigation_event(&mut self) -> Option<NavigationEvent>;
+    /// Take the next browser callback in producer-observed order.
+    fn poll_web_event(&mut self) -> Option<CefSurfaceEvent>;
 
     /// Execute a JavaScript expression in the browser's main frame. CEF
     /// provides this natively (`cef_frame_t::execute_java_script`) without
     /// requiring a CDP round-trip.
     fn execute_script(&mut self, script: &str, source_url: &str) -> Result<(), WeldError>;
 
-    /// Evaluate `script` and ask for its value back. Returns the request id.
+    /// Evaluate `script` and return its value later under caller-minted `id`.
     ///
     /// The answer arrives through
-    /// [`poll_script_result`](Self::poll_script_result), because the value has
+    /// [`poll_web_event`](Self::poll_web_event), because the value has
     /// to be fetched from the renderer process over CEF's process-message
     /// channel. A blocking call would wait on the very loop that carries the
     /// reply.
@@ -1012,16 +1121,10 @@ pub trait CefSurfaceProducer {
     /// Results come back as JSON: `2+2` yields `4`, `document.title` yields a
     /// quoted string, an object yields an object. A script that throws yields
     /// `Err` with the exception message.
-    fn request_script_result(&mut self, _script: &str) -> Result<u32, WeldError> {
+    fn request_script_result(&mut self, _id: WebRequestId, _script: &str) -> Result<(), WeldError> {
         Err(WeldError::BrowserOp(
             "script results are not wired for this producer".into(),
         ))
-    }
-
-    /// The next finished [`request_script_result`](Self::request_script_result),
-    /// in the order the renderer answered.
-    fn poll_script_result(&mut self) -> Option<crate::app::ScriptResult> {
-        None
     }
 
     /// Write a cookie, as if `url` had sent it in a `Set-Cookie` header.
@@ -1036,21 +1139,14 @@ pub trait CefSurfaceProducer {
 
     /// Start reading cookies. `url` of `None` reads the whole store.
     ///
-    /// The answer arrives later through [`poll_cookies`](Self::poll_cookies);
+    /// The answer arrives later through [`poll_web_event`](Self::poll_web_event);
     /// CEF delivers cookies through a visitor, one at a time, and on Linux and
     /// macOS the calling thread is CEF's own UI thread, so a blocking getter
     /// would wait on the loop that produces the answer.
-    fn request_cookies(&mut self, _url: Option<&str>) -> Result<(), WeldError> {
+    fn request_cookies(&mut self, _id: WebRequestId, _url: Option<&str>) -> Result<(), WeldError> {
         Err(WeldError::BrowserOp(
             "cookies are not wired for this producer".into(),
         ))
-    }
-
-    /// The result of a [`request_cookies`](Self::request_cookies), once the
-    /// read has finished. An empty `Vec` means the store had none, which is a
-    /// different answer from `None`.
-    fn poll_cookies(&mut self) -> Option<Vec<Cookie>> {
-        None
     }
 
     /// Delete cookies. `url` of `None` means every URL, `name` of `None` means
